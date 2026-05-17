@@ -38,6 +38,7 @@ func Reference(data ReferenceData) string {
 	fmt.Fprintf(&b, "- Structured output: send `format:\"json\"` or a JSON Schema object in `format`, then validate the returned content.\n")
 	fmt.Fprintf(&b, "- Thinking: send `think:true` or a model-specific level when required; read `message.thinking` separately from `message.content`.\n")
 	fmt.Fprintf(&b, "- Embeddings: `POST /api/embed` with text input; response contains `embeddings`.\n\n")
+	fmt.Fprintf(&b, "- Running models and memory: `GET /api/ps` returns loaded models with `size_vram`, `expires_at`, and active `context_length`.\n\n")
 	fmt.Fprintf(&b, "## Minimal Payloads\n\n")
 	fmt.Fprintf(&b, "### Text\n\n```json\n%s\n```\n\n", textPayload)
 	fmt.Fprintf(&b, "### Image\n\n`images` values must be raw base64, not a `data:image/...` URI.\n\n```json\n%s\n```\n\n", imagePayload)
@@ -109,6 +110,7 @@ var sources = []source{
 	{"Ollama API introduction", "https://docs.ollama.com/api/introduction"},
 	{"Chat API", "https://docs.ollama.com/api/chat"},
 	{"List models", "https://docs.ollama.com/api/tags"},
+	{"List running models", "https://docs.ollama.com/api/ps"},
 	{"Vision", "https://docs.ollama.com/capabilities/vision"},
 	{"Tool calling", "https://docs.ollama.com/capabilities/tool-calling"},
 	{"Structured outputs", "https://docs.ollama.com/capabilities/structured-outputs"},

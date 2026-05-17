@@ -1,6 +1,6 @@
 # Ollama API Reference
 
-Generated: 2026-05-16T23:27:50-03:00
+Generated: 2026-05-17T00:47:13-03:00
 
 Base URL: `http://localhost:11434`
 
@@ -11,6 +11,7 @@ Ollama version: `0.24.0`
 - [Ollama API introduction](https://docs.ollama.com/api/introduction)
 - [Chat API](https://docs.ollama.com/api/chat)
 - [List models](https://docs.ollama.com/api/tags)
+- [List running models](https://docs.ollama.com/api/ps)
 - [Vision](https://docs.ollama.com/capabilities/vision)
 - [Tool calling](https://docs.ollama.com/capabilities/tool-calling)
 - [Structured outputs](https://docs.ollama.com/capabilities/structured-outputs)
@@ -28,6 +29,8 @@ Ollama version: `0.24.0`
 - Structured output: send `format:"json"` or a JSON Schema object in `format`, then validate the returned content.
 - Thinking: send `think:true` or a model-specific level when required; read `message.thinking` separately from `message.content`.
 - Embeddings: `POST /api/embed` with text input; response contains `embeddings`.
+
+- Running models and memory: `GET /api/ps` returns loaded models with `size_vram`, `expires_at`, and active `context_length`.
 
 ## Minimal Payloads
 

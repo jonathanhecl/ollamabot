@@ -37,6 +37,12 @@ func (c *Client) Tags(ctx context.Context) (TagsResponse, error) {
 	return out, err
 }
 
+func (c *Client) Ps(ctx context.Context) (PsResponse, error) {
+	var out PsResponse
+	err := c.do(ctx, http.MethodGet, "/api/ps", nil, &out)
+	return out, err
+}
+
 func (c *Client) Show(ctx context.Context, model string) (ShowResponse, error) {
 	var out ShowResponse
 	err := c.do(ctx, http.MethodPost, "/api/show", map[string]string{"model": model}, &out)

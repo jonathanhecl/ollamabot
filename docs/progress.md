@@ -17,15 +17,20 @@ Hecho:
 - Mapeo de capacidades en `internal/capabilities`.
 - Probes en `internal/probe`.
 - Generador Markdown en `internal/docs`.
+- Cache JSON de resultados esperados en `internal/cache`.
+- Servidor web local en `internal/web`.
 - `.env.example` con claves iniciales.
 - Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
 - Documentacion local generada en `docs/ollama-reference.md`.
 - Inventario local generado en `docs/local-model-inventory.md`.
+- Snapshot cacheado generado en `docs/probe-cache.json`.
+- Web validada en `http://localhost:8080`.
 
 Comandos disponibles:
 
 ```powershell
 go run ./cmd/ollamabot probe models
+go run ./cmd/ollamabot probe snapshot --out docs/probe-cache.json
 go run ./cmd/ollamabot probe chat --model qwen3:8b
 go run ./cmd/ollamabot probe tools --model qwen3:8b
 go run ./cmd/ollamabot probe json --model qwen3:8b
@@ -34,6 +39,7 @@ go run ./cmd/ollamabot probe thinking --model qwen3:8b
 go run ./cmd/ollamabot probe embeddings --model nomic-embed-text:latest
 go run ./cmd/ollamabot probe audio --model test-gemma4-vision:latest
 go run ./cmd/ollamabot docs generate --out docs
+go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ```
 
 ## Decisiones Tomadas
@@ -42,14 +48,15 @@ go run ./cmd/ollamabot docs generate --out docs
 - Primera fase: documentacion + probes, antes de Telegram/web/agente completo.
 - Sin dependencias externas por ahora; parser `.env` propio y CLI basada en `flag`.
 - Las capacidades reportadas por `/api/show.capabilities` se consideran `comprobado`.
+- El consumo de memoria en vivo sale de `GET /api/ps`, especificamente `size_vram` para modelos cargados.
 - Los encoders vistos en `projector_info`, como audio o vision, se consideran `inferido` si no hay prueba end-to-end.
 - Audio queda experimental hasta confirmar un payload REST estable.
 - Video queda pendiente; la estrategia inicial sera extraer frames y enviarlos a modelos de vision.
 
 ## Pendiente
 
-- Agregar persistencia de resultados de probes en JSON/Markdown sin depender de copiar salida de consola.
-- Crear canal web local para enviar prompts, imagenes y ver metadata de modelos.
+- Mejorar persistencia de probes para registrar tambien ejecuciones individuales de chat/tools/json/vision.
+- Agregar envio de imagenes desde la web.
 - Crear canal Telegram.
 - Crear router de modelos por capacidad: texto, tools, vision, embeddings, thinking.
 - Definir interfaz de tools internas del agente.
@@ -63,3 +70,4 @@ go run ./cmd/ollamabot docs generate --out docs
 - Algunos modelos reportan capacidades que pueden fallar en prompts reales; por eso los probes end-to-end son necesarios.
 - El probe de chat con `qwen3:8b` respondio `ok /think`; el transporte funciona, pero hay que limpiar tokens de control si aparecen en respuestas finales.
 - El acceso a `192.168.0.121:11434` no se valido desde el sandbox en la primera exploracion; queda cubierto por `OLLAMA_BASE_URL`, pero requiere prueba en entorno normal.
+- La web usa datos vivos cuando Ollama responde y puede caer al snapshot cacheado si el inventario vivo falla.

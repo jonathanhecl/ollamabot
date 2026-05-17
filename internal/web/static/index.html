@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OllamaBot Console</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="models-panel">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">OllamaBot</p>
+            <h1>Model Console</h1>
+          </div>
+          <button id="refreshModels" class="icon-button" title="Refresh models">↻</button>
+        </header>
+
+        <div class="meta-strip">
+          <span id="baseUrl">Ollama</span>
+          <span id="version">version</span>
+          <span id="cacheState">live</span>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Model</th>
+                <th>Caps</th>
+                <th>Memory</th>
+                <th>Context</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="modelsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="chat-panel">
+        <header class="chat-header">
+          <div>
+            <p class="eyebrow">Main model</p>
+            <h2 id="activeModel">Select a model</h2>
+          </div>
+          <label class="think-toggle">
+            <input id="thinkToggle" type="checkbox" />
+            <span>think</span>
+          </label>
+        </header>
+
+        <div id="messages" class="messages"></div>
+
+        <form id="chatForm" class="composer">
+          <textarea id="prompt" rows="3" placeholder="Write a message to the selected model"></textarea>
+          <button type="submit">Send</button>
+        </form>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

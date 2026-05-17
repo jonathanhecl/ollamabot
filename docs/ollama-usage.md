@@ -50,6 +50,21 @@ Campos importantes:
 - `model_info`: permite obtener contexto, arquitectura y metadata tecnica.
 - `projector_info`: puede indicar encoders multimodales como `clip.has_audio_encoder` o `clip.has_vision_encoder`.
 
+### Modelos Cargados y Memoria
+
+```http
+GET /api/ps
+```
+
+Devuelve modelos actualmente cargados en memoria. Campos usados por la web:
+
+- `size`: tamanio del modelo.
+- `size_vram`: memoria VRAM/RAM usada por el modelo cargado.
+- `expires_at`: momento en que Ollama podria descargarlo si no se usa.
+- `context_length`: contexto activo para esa carga.
+
+Si un modelo aparece en `/api/tags` pero no en `/api/ps`, la web lo muestra como disponible pero no cargado.
+
 ## Chat de Texto
 
 ```json
@@ -207,3 +222,19 @@ projector_info.clip.has_audio_encoder = true
 Eso se guarda como `inferido`, no como `comprobado`, porque falta confirmar un payload REST estable.
 
 Video queda pendiente. La estrategia inicial sera procesar video fuera de Ollama, extraer frames relevantes y enviarlos como imagenes a un modelo con vision.
+
+## Web Local
+
+Comando:
+
+```powershell
+go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
+```
+
+La web expone:
+
+- `GET /api/health`: verifica conexion con Ollama.
+- `GET /api/models`: lista modelos disponibles, capacidades, memoria cargada y estado de cache.
+- `POST /api/chat`: envia mensajes al modelo seleccionado.
+
+La interfaz permite seleccionar un modelo como `Main` en el navegador y conversar con el.

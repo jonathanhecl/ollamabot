@@ -22,6 +22,7 @@ WEB_ADDR=:8080
 
 ```powershell
 go run ./cmd/ollamabot probe models
+go run ./cmd/ollamabot probe snapshot --out docs/probe-cache.json
 go run ./cmd/ollamabot probe chat --model qwen3:8b
 go run ./cmd/ollamabot probe tools --model qwen3:8b
 go run ./cmd/ollamabot probe json --model qwen3:8b
@@ -30,6 +31,7 @@ go run ./cmd/ollamabot probe thinking --model qwen3:8b
 go run ./cmd/ollamabot probe embeddings --model nomic-embed-text:latest
 go run ./cmd/ollamabot probe audio --model test-gemma4-vision:latest
 go run ./cmd/ollamabot docs generate --out docs
+go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ```
 
 Generated references live in `docs/ollama-reference.md` and

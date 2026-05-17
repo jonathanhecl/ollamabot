@@ -1,6 +1,6 @@
 # Local Model Inventory
 
-Generated: 2026-05-16T23:27:50-03:00
+Generated: 2026-05-17T00:47:13-03:00
 
 Base URL: `http://localhost:11434`
 

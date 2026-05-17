@@ -33,6 +33,22 @@ go vet ./...
 go build ./cmd/ollamabot
 ```
 
+## Snapshot Cacheado
+
+Comando:
+
+```powershell
+go run ./cmd/ollamabot probe snapshot --out docs/probe-cache.json
+```
+
+Resultado:
+
+```text
+wrote docs/probe-cache.json
+```
+
+Estado: comprobado. Este archivo guarda inventario, modelos cargados y resultados esperados base para no repetir todos los probes en cada arranque.
+
 ## Probes Manuales
 
 ### Modelos
@@ -170,6 +186,78 @@ audio test-gemma4-vision:latest inferido audio encoder detected in projector_inf
 
 Estado: inferido. No se marca como comprobado hasta probar un payload REST estable.
 
+### Web Local
+
+Comando:
+
+```powershell
+go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
+```
+
+Health:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8080/api/health
+```
+
+Resultado:
+
+```json
+{
+  "ollama_version": "0.24.0",
+  "status": "ok"
+}
+```
+
+Modelos:
+
+```powershell
+Invoke-RestMethod -Uri http://localhost:8080/api/models
+```
+
+Resultado resumido:
+
+```json
+{
+  "base_url": "http://localhost:11434",
+  "ollama_version": "0.24.0",
+  "from_cache": false,
+  "models": 21
+}
+```
+
+Chat:
+
+```powershell
+POST http://localhost:8080/api/chat
+```
+
+Payload:
+
+```json
+{
+  "model": "qwen3:8b",
+  "messages": [
+    {"role": "user", "content": "Reply with only: pong"}
+  ],
+  "think": false
+}
+```
+
+Resultado:
+
+```json
+{
+  "message": {
+    "role": "assistant",
+    "content": "pong"
+  },
+  "model": "qwen3:8b"
+}
+```
+
+Estado: comprobado.
+
 ## Pruebas Pendientes
 
 - Ejecutar probes contra `192.168.0.121:11434` con `--base-url` o `OLLAMA_BASE_URL`.
@@ -177,3 +265,4 @@ Estado: inferido. No se marca como comprobado hasta probar un payload REST estab
 - Probar modelos vision con imagenes reales de distintos formatos: JPG, PNG valido, WebP si Ollama lo acepta.
 - Confirmar audio cuando exista flujo REST documentado o verificable.
 - Registrar resultados automaticamente desde la CLI para no depender de copiar salidas manuales.
+- Agregar pruebas visuales de la web con navegador.

@@ -10,6 +10,10 @@ type TagsResponse struct {
 	Models []ModelTag `json:"models"`
 }
 
+type PsResponse struct {
+	Models []RunningModel `json:"models"`
+}
+
 type ModelTag struct {
 	Name       string       `json:"name"`
 	Model      string       `json:"model"`
@@ -17,6 +21,17 @@ type ModelTag struct {
 	Size       int64        `json:"size"`
 	Digest     string       `json:"digest"`
 	Details    ModelDetails `json:"details"`
+}
+
+type RunningModel struct {
+	Name          string       `json:"name"`
+	Model         string       `json:"model"`
+	Size          int64        `json:"size"`
+	Digest        string       `json:"digest"`
+	Details       ModelDetails `json:"details"`
+	ExpiresAt     string       `json:"expires_at"`
+	SizeVRAM      int64        `json:"size_vram"`
+	ContextLength int64        `json:"context_length"`
 }
 
 type ModelDetails struct {

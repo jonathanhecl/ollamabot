@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/docs"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
+	"github.com/jonathanhecl/ollamabot/internal/web"
 )
 
 func main() {
@@ -54,16 +56,18 @@ func run(args []string) error {
 
 	switch remaining[0] {
 	case "probe":
-		return runProbe(ctx, remaining[1:], cfg, runner)
+		return runProbe(ctx, remaining[1:], cfg, client, runner)
 	case "docs":
 		return runDocs(ctx, remaining[1:], cfg, client, runner)
+	case "serve":
+		return runServe(remaining[1:], cfg, client, runner)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", remaining[0])
 	}
 }
 
-func runProbe(ctx context.Context, args []string, cfg config.Config, runner *probe.Runner) error {
+func runProbe(ctx context.Context, args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
 	if len(args) == 0 {
 		probeUsage()
 		return nil
@@ -78,6 +82,13 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, runner *pro
 			fmt.Printf("%s\t%s\t%s\n", report.Name, report.Parameters, capabilities.StatusList(report.Capabilities))
 		}
 		return nil
+	case "snapshot":
+		flags := flag.NewFlagSet("probe snapshot", flag.ContinueOnError)
+		out := flags.String("out", web.SnapshotPath(""), "snapshot output path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		return writeSnapshot(ctx, *out, cfg, client, runner)
 	case "chat", "tools", "json", "thinking", "embeddings", "audio":
 		flags := flag.NewFlagSet("probe "+args[0], flag.ContinueOnError)
 		model := flags.String("model", cfg.OllamaDefaultModel, "model name")
@@ -165,6 +176,46 @@ func runDocs(ctx context.Context, args []string, cfg config.Config, client *olla
 	return nil
 }
 
+func runServe(args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	addr := flags.String("addr", cfg.WebAddr, "web listen address")
+	cachePath := flags.String("cache", web.SnapshotPath(""), "probe snapshot cache path")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg.WebAddr = *addr
+	return web.NewServer(cfg, client, runner, *cachePath).ListenAndServe()
+}
+
+func writeSnapshot(ctx context.Context, out string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
+	version, _ := client.Version(ctx)
+	reports, err := runner.Inventory(ctx, cfg.OllamaProbeModels)
+	if err != nil {
+		return err
+	}
+	ps, _ := client.Ps(ctx)
+	snapshot := cache.Snapshot{
+		GeneratedAt:   time.Now(),
+		BaseURL:       cfg.OllamaBaseURL,
+		OllamaVersion: version.Version,
+		Models:        reports,
+		Running:       ps.Models,
+		Expected: []cache.ExpectedProbe{
+			{Name: "models", Status: capabilities.Confirmed, Details: "Inventory from /api/tags and /api/show"},
+			{Name: "audio", Status: capabilities.Pending, Details: "Audio remains pending unless an end-to-end REST payload is confirmed"},
+			{Name: "video", Status: capabilities.Pending, Details: "Video remains pending; planned path is frame extraction plus vision"},
+		},
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	if err := cache.Save(out, snapshot); err != nil {
+		return err
+	}
+	fmt.Println("wrote", out)
+	return nil
+}
+
 func printResult(result probe.Result) {
 	fmt.Printf("%s\t%s\t%s\t%s\n", result.Name, result.Model, result.Status, strings.TrimSpace(result.Details))
 }
@@ -174,11 +225,14 @@ func usage() {
 	probeUsage()
 	fmt.Println("docs:")
 	fmt.Println("  docs generate [--out docs]")
+	fmt.Println("web:")
+	fmt.Println("  serve [--addr :8080] [--cache docs/probe-cache.json]")
 }
 
 func probeUsage() {
 	fmt.Println("probes:")
 	fmt.Println("  probe models")
+	fmt.Println("  probe snapshot [--out docs/probe-cache.json]")
 	fmt.Println("  probe chat --model MODEL")
 	fmt.Println("  probe tools --model MODEL")
 	fmt.Println("  probe json --model MODEL")

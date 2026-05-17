@@ -15,6 +15,8 @@ func TestClientEndpoints(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(VersionResponse{Version: "0.24.0"})
 		case "/api/tags":
 			_ = json.NewEncoder(w).Encode(TagsResponse{Models: []ModelTag{{Name: "qwen3:8b"}}})
+		case "/api/ps":
+			_ = json.NewEncoder(w).Encode(PsResponse{Models: []RunningModel{{Name: "qwen3:8b", SizeVRAM: 1024}}})
 		case "/api/show":
 			_ = json.NewEncoder(w).Encode(ShowResponse{Capabilities: []string{"completion", "tools"}})
 		case "/api/chat":
@@ -34,6 +36,9 @@ func TestClientEndpoints(t *testing.T) {
 	}
 	if tags, err := client.Tags(ctx); err != nil || len(tags.Models) != 1 {
 		t.Fatalf("tags = %#v err=%v", tags, err)
+	}
+	if ps, err := client.Ps(ctx); err != nil || len(ps.Models) != 1 || ps.Models[0].SizeVRAM != 1024 {
+		t.Fatalf("ps = %#v err=%v", ps, err)
 	}
 	if show, err := client.Show(ctx, "qwen3:8b"); err != nil || len(show.Capabilities) != 2 {
 		t.Fatalf("show = %#v err=%v", show, err)
