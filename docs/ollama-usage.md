@@ -4,7 +4,21 @@ Esta guia resume como se usa Ollama desde este proyecto. La URL base sale de `.e
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
+WEB_ENABLED=true
+WEB_ADDR=:8080
 ```
+
+Uso normal:
+
+```powershell
+go run ./cmd/ollamabot
+```
+
+Si no existe `.env`, el programa pregunta por terminal:
+
+- URL de Ollama.
+- Si se debe levantar servidor web.
+- Puerto web.
 
 La CLI tambien permite override:
 
@@ -213,13 +227,19 @@ Se considera valido si `embeddings[0]` existe y tiene longitud mayor a cero.
 
 ## Audio y Video
 
-Audio no esta marcado como funcional todavia. Algunos modelos exponen:
+Algunos modelos exponen audio directamente en `/api/show.capabilities`, por ejemplo `gemma4:e2b` reporta `audio`. Otros modelos pueden exponer solo metadata de encoder:
 
 ```text
 projector_info.clip.has_audio_encoder = true
 ```
 
-Eso se guarda como `inferido`, no como `comprobado`, porque falta confirmar un payload REST estable.
+Si `audio` aparece en `capabilities`, el inventario lo marca como `comprobado` a nivel metadata. Para validar end-to-end:
+
+```powershell
+go run ./cmd/ollamabot probe audio --model gemma4:e2b --audio C:\path\audio.wav
+```
+
+La prueba local realizada con un WAV corto envio el audio como base64 crudo en `messages[].images`, siguiendo ejemplos observados en issues de Ollama/Gemma 4. En esta maquina el runner de Ollama devolvio error 500 y se detuvo, por lo que el uso real de audio queda pendiente aunque la capacidad este reportada por metadata.
 
 Video queda pendiente. La estrategia inicial sera procesar video fuera de Ollama, extraer frames relevantes y enviarlos como imagenes a un modelo con vision.
 

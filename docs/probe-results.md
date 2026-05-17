@@ -7,7 +7,37 @@ Registro de pruebas manuales ejecutadas contra Ollama local.
 - Base URL: `http://localhost:11434`
 - Ollama version: `0.24.0`
 - Fecha de prueba inicial: `2026-05-16`
+- Ultima actualizacion: `2026-05-17`
 - Sistema: Windows, Go `1.24.1`
+
+## Ejecucion Normal sin Parametros
+
+Comando probado con `.env` temporal inexistente:
+
+```powershell
+go run ./cmd/ollamabot -env C:\tmp\ollamabot-test.env
+```
+
+Entradas:
+
+```text
+http://localhost:11434
+n
+9090
+```
+
+Resultado:
+
+```text
+No encontre C:\tmp\ollamabot-test.env. Vamos a crearlo con la configuracion basica.
+Ollama URL [http://localhost:11434]:
+Levantar servidor web? (s/n) [s]:
+Puerto web [8080]:
+Listo, guarde C:\tmp\ollamabot-test.env.
+Servidor web desactivado en .env (WEB_ENABLED=false).
+```
+
+Estado: comprobado.
 
 ## Suite Go
 
@@ -185,6 +215,29 @@ audio test-gemma4-vision:latest inferido audio encoder detected in projector_inf
 ```
 
 Estado: inferido. No se marca como comprobado hasta probar un payload REST estable.
+
+### Audio con gemma4:e2b
+
+`gemma4:e2b` fue instalado localmente y `/api/show` reporto estas capacidades:
+
+```text
+completion, vision, audio, tools, thinking
+```
+
+Prueba end-to-end con WAV temporal de 1 segundo:
+
+```powershell
+go run ./cmd/ollamabot probe audio --model gemma4:e2b --audio C:\tmp\ollamabot-tone.wav
+```
+
+Resultado en dos intentos:
+
+```text
+audio gemma4:e2b pendiente ollama POST /api/chat failed: status 500:
+{"error":"model runner has unexpectedly stopped, this may be due to resource limitations or an internal error, check ollama server logs for details"}
+```
+
+Estado: pendiente para uso real. Metadata confirma audio, pero el runner local falla al procesar el archivo.
 
 ### Web Local
 

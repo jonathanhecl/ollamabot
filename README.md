@@ -1,8 +1,8 @@
 # ollamabot
 
-OllamaBot is starting as a modular Go probe layer for local Ollama models.
-This first phase loads `.env`, talks to Ollama's REST API, inventories local
-models, detects reported/inferred capabilities, and generates reference docs.
+OllamaBot is a modular Go console for local Ollama models. By default, run it
+without parameters: it loads `.env`, creates one interactively if missing, and
+starts the local web UI when enabled.
 
 ## Configuration
 
@@ -10,13 +10,23 @@ Copy `.env.example` to `.env` and adjust as needed:
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
+WEB_ENABLED=true
+WEB_ADDR=:8080
 OLLAMA_PROBE_MODELS=
 OLLAMA_DEFAULT_MODEL=
 TELEGRAM_BOT_TOKEN=
-WEB_ADDR=:8080
 ```
 
 `TELEGRAM_BOT_TOKEN` and `WEB_ADDR` are reserved for the next phase.
+
+Normal use:
+
+```powershell
+go run ./cmd/ollamabot
+```
+
+If `.env` does not exist, the app asks for Ollama URL, whether to start the web
+server, and the web port.
 
 ## Commands
 

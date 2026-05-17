@@ -1,6 +1,6 @@
 # Local Model Inventory
 
-Generated: 2026-05-17T00:47:13-03:00
+Generated: 2026-05-17T04:40:21-03:00
 
 Base URL: `http://localhost:11434`
 
@@ -10,10 +10,9 @@ Ollama version: `0.24.0`
 | --- | --- | --- | --- | ---: | --- | --- |
 | `deepseek-ocr:latest` | deepseekocr | 3.3B | F16 | 8192 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `functiongemma:latest` | gemma3 | 268.10M | Q8_0 | 32768 | completion=comprobado, tools=comprobado, thinking=pendiente, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
+| `gemma4:e2b` | gemma4 | 5.1B | Q4_K_M | 131072 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=comprobado, embedding=pendiente, audio=comprobado, video=pendiente | - |
 | `granite3.2-vision:latest` | granite,clip | 2.5B | Q4_K_M | 16384 | completion=comprobado, tools=comprobado, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | vision |
 | `granite4:latest` | granite | 3.4B | Q4_K_M | 131072 | completion=comprobado, tools=comprobado, thinking=pendiente, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
-| `hf.co/HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive:Q6_K_P` | gemma4 | 4.65B | unknown | 131072 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=inferido, video=pendiente | vision,audio |
-| `hf.co/HauhauCS/Gemma-4-E2B-Uncensored-HauhauCS-Aggressive:fixed` | gemma4 | 4.6B | Q6_K | 131072 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `lfm2.5-thinking:latest` | lfm2 | 1.2B | Q4_K_M | 128000 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `llama3.2-vision:latest` | mllama | 10.7B | Q4_K_M | 131072 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `minicpm-v:latest` | qwen2,clip | 7.6B | Q4_0 | 32768 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | vision |
@@ -26,8 +25,6 @@ Ollama version: `0.24.0`
 | `qwen3.5:4b` | qwen35 | 4.7B | Q4_K_M | 262144 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `qwen3.5:9b` | qwen35 | 9.7B | Q4_K_M | 262144 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `qwen3:8b` | qwen3 | 8.2B | Q4_K_M | 40960 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
-| `test-gemma4-vision:latest` | clip,gemma4 | 475.73M | F16 | 131072 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=inferido, video=pendiente | vision,audio |
-| `test-gemma4:latest` | gemma4 | 4.6B | Q6_K | 131072 | completion=comprobado, tools=comprobado, thinking=comprobado, vision=pendiente, embedding=pendiente, audio=pendiente, video=pendiente | - |
 | `translategemma:4b` | gemma3 | 4.3B | Q4_K_M | 131072 | completion=comprobado, tools=pendiente, thinking=pendiente, vision=comprobado, embedding=pendiente, audio=pendiente, video=pendiente | - |
 
 ## Status Semantics

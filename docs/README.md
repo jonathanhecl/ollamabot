@@ -15,6 +15,8 @@ Esta carpeta guarda el estado vivo del proyecto: lo hecho, lo pendiente, la refe
 
 La fase 1 esta implementada en Go. El sistema ya puede:
 
+- Ejecutarse sin parametros como flujo normal.
+- Crear `.env` interactivamente si falta.
 - Leer configuracion desde `.env`.
 - Conectarse a Ollama via REST.
 - Listar modelos instalados.

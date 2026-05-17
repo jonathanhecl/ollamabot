@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -28,10 +29,32 @@ func TestLoadDefaultsAndEnvFile(t *testing.T) {
 	if cfg.WebAddr != ":9000" {
 		t.Fatalf("web addr = %q", cfg.WebAddr)
 	}
+	if !cfg.WebEnabled {
+		t.Fatal("web should default to enabled")
+	}
 }
 
 func TestNormalizeBaseURLRejectsHostlessValue(t *testing.T) {
 	if _, err := NormalizeBaseURL("localhost:11434"); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestCreateInteractive(t *testing.T) {
+	path := t.TempDir() + "/.env"
+	input := strings.NewReader("http://localhost:11434\nn\n9090\n")
+	var output strings.Builder
+	if err := CreateInteractive(path, input, &output); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WebEnabled {
+		t.Fatal("web should be disabled")
+	}
+	if cfg.WebAddr != ":9090" {
+		t.Fatalf("web addr = %q", cfg.WebAddr)
 	}
 }

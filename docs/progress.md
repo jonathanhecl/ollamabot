@@ -20,6 +20,7 @@ Hecho:
 - Cache JSON de resultados esperados en `internal/cache`.
 - Servidor web local en `internal/web`.
 - `.env.example` con claves iniciales.
+- Ejecucion normal sin parametros: carga `.env`, lo crea interactivamente si falta, y levanta la web si `WEB_ENABLED=true`.
 - Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
 - Documentacion local generada en `docs/ollama-reference.md`.
 - Inventario local generado en `docs/local-model-inventory.md`.
@@ -51,6 +52,7 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - El consumo de memoria en vivo sale de `GET /api/ps`, especificamente `size_vram` para modelos cargados.
 - Los encoders vistos en `projector_info`, como audio o vision, se consideran `inferido` si no hay prueba end-to-end.
 - Audio queda experimental hasta confirmar un payload REST estable.
+- `gemma4:e2b` reporta `audio` en `/api/show.capabilities`, pero la prueba local end-to-end con WAV hizo caer el runner de Ollama con error 500.
 - Video queda pendiente; la estrategia inicial sera extraer frames y enviarlos a modelos de vision.
 
 ## Pendiente
@@ -63,6 +65,7 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - Implementar memoria/conversaciones por canal.
 - Definir seguridad para tools: allowlist, timeouts, auditoria y confirmacion de acciones riesgosas.
 - Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
+- Reprobar audio de `gemma4:e2b` cuando Ollama actualice el runner o haya logs que indiquen el motivo del crash.
 - Definir soporte de video como pipeline de frames.
 
 ## Riesgos y Notas

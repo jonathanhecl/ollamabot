@@ -197,10 +197,37 @@ func (r *Runner) Embeddings(ctx context.Context, model string) (Result, error) {
 	return result("embeddings", model, capabilities.Confirmed, fmt.Sprintf("vector length %d", len(response.Embeddings[0]))), nil
 }
 
-func (r *Runner) Audio(ctx context.Context, model string) (Result, error) {
+func (r *Runner) Audio(ctx context.Context, model string, audioPath string) (Result, error) {
+	if strings.TrimSpace(audioPath) != "" {
+		payload, err := os.ReadFile(audioPath)
+		if err != nil {
+			return result("audio", model, capabilities.Pending, err.Error()), err
+		}
+		encoded := base64.StdEncoding.EncodeToString(payload)
+		response, err := r.client.Chat(ctx, ollama.ChatRequest{
+			Model: model,
+			Messages: []ollama.Message{
+				{Role: "user", Content: "Describe what you hear in one short sentence.", Images: []string{encoded}},
+			},
+			Options: map[string]any{"temperature": 0, "num_ctx": 8000},
+		})
+		if err != nil {
+			return result("audio", model, capabilities.Pending, err.Error()), err
+		}
+		if strings.TrimSpace(response.Message.Content) == "" {
+			return result("audio", model, capabilities.Pending, "empty audio response"), nil
+		}
+		return result("audio", model, capabilities.Confirmed, response.Message.Content), nil
+	}
+
 	show, err := r.client.Show(ctx, model)
 	if err != nil {
 		return result("audio", model, capabilities.Pending, err.Error()), err
+	}
+	for _, capability := range show.Capabilities {
+		if capability == "audio" {
+			return result("audio", model, capabilities.Confirmed, "model reports audio capability; pass --audio PATH for end-to-end validation"), nil
+		}
 	}
 	if hasAudio, _ := show.ProjectorInfo["clip.has_audio_encoder"].(bool); hasAudio {
 		return result("audio", model, capabilities.Inferred, "audio encoder detected in projector_info; REST payload remains unconfirmed"), nil

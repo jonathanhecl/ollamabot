@@ -33,9 +33,12 @@ func run(args []string) error {
 		return err
 	}
 	remaining := global.Args()
-	if len(remaining) == 0 {
-		usage()
-		return nil
+	if len(remaining) == 0 && !config.Exists(*envPath) {
+		fmt.Printf("No encontre %s. Vamos a crearlo con la configuracion basica.\n", *envPath)
+		if err := config.CreateInteractive(*envPath, os.Stdin, os.Stdout); err != nil {
+			return err
+		}
+		fmt.Printf("Listo, guarde %s.\n", *envPath)
 	}
 
 	cfg, err := config.Load(*envPath)
@@ -53,6 +56,16 @@ func run(args []string) error {
 	client := ollama.NewClient(cfg.OllamaBaseURL)
 	runner := probe.NewRunner(client)
 	ctx := context.Background()
+
+	if len(remaining) == 0 {
+		if cfg.WebEnabled {
+			fmt.Printf("OllamaBot web: http://localhost%s\n", cfg.WebAddr)
+			return web.NewServer(cfg, client, runner, web.SnapshotPath("")).ListenAndServe()
+		}
+		fmt.Println("Servidor web desactivado en .env (WEB_ENABLED=false).")
+		usage()
+		return nil
+	}
 
 	switch remaining[0] {
 	case "probe":
@@ -89,7 +102,7 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 			return err
 		}
 		return writeSnapshot(ctx, *out, cfg, client, runner)
-	case "chat", "tools", "json", "thinking", "embeddings", "audio":
+	case "chat", "tools", "json", "thinking", "embeddings":
 		flags := flag.NewFlagSet("probe "+args[0], flag.ContinueOnError)
 		model := flags.String("model", cfg.OllamaDefaultModel, "model name")
 		if err := flags.Parse(args[1:]); err != nil {
@@ -113,9 +126,20 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 			result, err = runner.Thinking(ctx, *model)
 		case "embeddings":
 			result, err = runner.Embeddings(ctx, *model)
-		case "audio":
-			result, err = runner.Audio(ctx, *model)
 		}
+		printResult(result)
+		return err
+	case "audio":
+		flags := flag.NewFlagSet("probe audio", flag.ContinueOnError)
+		model := flags.String("model", cfg.OllamaDefaultModel, "model name")
+		audioPath := flags.String("audio", "", "audio file path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *model == "" {
+			return fmt.Errorf("--model is required")
+		}
+		result, err := runner.Audio(ctx, *model, *audioPath)
 		printResult(result)
 		return err
 	case "vision":
@@ -240,4 +264,5 @@ func probeUsage() {
 	fmt.Println("  probe thinking --model MODEL")
 	fmt.Println("  probe embeddings --model MODEL")
 	fmt.Println("  probe audio --model MODEL")
+	fmt.Println("  probe audio --model MODEL --audio PATH")
 }

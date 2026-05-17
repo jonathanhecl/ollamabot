@@ -47,7 +47,7 @@ func Reference(data ReferenceData) string {
 	fmt.Fprintf(&b, "### Thinking\n\n```json\n%s\n```\n\n", thinkingPayload)
 	fmt.Fprintf(&b, "### Embeddings\n\n```json\n%s\n```\n\n", embeddingPayload)
 	fmt.Fprintf(&b, "## Pending Confirmation\n\n")
-	fmt.Fprintf(&b, "- Audio: some models expose `projector_info.clip.has_audio_encoder`, but this project does not mark audio as confirmed until a stable REST payload is verified locally.\n")
+	fmt.Fprintf(&b, "- Audio: models that report `audio` in `/api/show.capabilities` are marked as metadata-confirmed. End-to-end audio still requires `probe audio --audio PATH`; local `gemma4:e2b` WAV testing currently fails with an Ollama runner 500.\n")
 	fmt.Fprintf(&b, "- Video: no native Ollama REST video input is treated as confirmed; future support should start as frame extraction into vision models.\n")
 	return b.String()
 }

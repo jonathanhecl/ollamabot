@@ -1,6 +1,6 @@
 # Ollama API Reference
 
-Generated: 2026-05-17T00:47:13-03:00
+Generated: 2026-05-17T04:40:21-03:00
 
 Base URL: `http://localhost:11434`
 
@@ -119,5 +119,5 @@ Ollama version: `0.24.0`
 
 ## Pending Confirmation
 
-- Audio: some models expose `projector_info.clip.has_audio_encoder`, but this project does not mark audio as confirmed until a stable REST payload is verified locally.
+- Audio: models that report `audio` in `/api/show.capabilities` are marked as metadata-confirmed. End-to-end audio still requires `probe audio --audio PATH`; local `gemma4:e2b` WAV testing currently fails with an Ollama runner 500.
 - Video: no native Ollama REST video input is treated as confirmed; future support should start as frame extraction into vision models.
