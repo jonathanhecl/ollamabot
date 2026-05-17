@@ -264,6 +264,8 @@ La interfaz permite seleccionar un modelo como `Main` desde un modal y conversar
 - `thinking`: muestra toggle `think` y renderiza el bloque de thinking.
 - `vision`: habilita adjuntar/pegar imagenes.
 - `audio`: habilita adjuntar/pegar audio.
+- Si una capacidad no esta disponible en el modelo activo, la UI oculta el control y descarta ese tipo de adjunto.
+- Los adjuntos se muestran como preview antes de enviar y quedan visibles en el chat; imagenes se abren en grande con click y audios se reproducen con controles nativos.
 - `tools`: si Ollama devuelve `tool_calls`, se muestran nombre y parametros; la ejecucion real de tools queda para la capa de agente.
 
 Eventos SSE actuales:

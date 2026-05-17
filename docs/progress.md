@@ -26,6 +26,8 @@ Hecho:
 - Chat web con streaming SSE desde Ollama.
 - Visualizacion incremental de `thinking` en bloque separado.
 - Adjuntos multimodales desde archivo o paste: imagenes y audio usan el payload multimodal de Ollama.
+- Previews de imagen/audio antes de enviar y dentro del chat despues del envio.
+- Animacion de espera antes del primer token y brillo/cursor mientras la respuesta sigue en streaming.
 - Preparacion visual para tool calls: si el modelo devuelve `tool_calls`, la web muestra nombre y parametros.
 - Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
 - Documentacion local generada en `docs/ollama-reference.md`.
@@ -67,6 +69,7 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - Agregar ejecucion real de tools internas y retorno automatico al modelo.
 - Agregar historial/memoria por conversacion y canal.
 - Agregar drag and drop de archivos a la web.
+- Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
 - Crear canal Telegram.
 - Crear router de modelos por capacidad: texto, tools, vision, embeddings, thinking.
 - Definir interfaz de tools internas del agente.

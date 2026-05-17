@@ -121,6 +121,8 @@ function setCapabilityVisibility() {
   els.imageControl.hidden = !canImage;
   els.audioControl.hidden = !canAudio;
   if (!canThink) els.think.checked = false;
+  state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
+  renderAttachments();
 }
 
 function renderModels() {
@@ -158,8 +160,14 @@ async function addFiles(files, expectedKind = "") {
   for (const file of files) {
     const kind = file.type.startsWith("audio/") ? "audio" : file.type.startsWith("image/") ? "image" : expectedKind;
     if (!kind) continue;
-    const base64 = await fileToBase64(file);
-    state.attachments.push({ name: file.name, mime: file.type || `${kind}/*`, kind, data: base64 });
+    if (!capabilityFor(kind)) {
+      addSystemMessage(`${kind} is not supported by the selected model.`);
+      renderMessages();
+      continue;
+    }
+    const dataURL = await fileToDataURL(file);
+    const base64 = dataURL.split(",")[1] || "";
+    state.attachments.push({ name: file.name, mime: file.type || `${kind}/*`, kind, data: base64, url: dataURL });
   }
   els.imageInput.value = "";
   els.audioInput.value = "";
@@ -176,23 +184,24 @@ function handlePaste(event) {
   }
   if (files.length > 0) {
     event.preventDefault();
-    addFiles(files);
+    addFiles(files.filter((file) => {
+      const kind = file.type.startsWith("audio/") ? "audio" : file.type.startsWith("image/") ? "image" : "";
+      return kind && capabilityFor(kind);
+    }));
   }
 }
 
 function renderAttachments() {
   els.attachments.innerHTML = "";
   for (const [index, attachment] of state.attachments.entries()) {
-    const chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = `attachment ${attachment.kind}`;
-    chip.textContent = `${attachment.kind}: ${attachment.name || "pasted file"}`;
-    chip.title = "Remove attachment";
-    chip.addEventListener("click", () => {
+    const card = document.createElement("article");
+    card.className = `attachment ${attachment.kind}`;
+    card.innerHTML = `${attachmentPreview(attachment)}<button type="button" title="Remove attachment">Remove</button>`;
+    card.querySelector("button").addEventListener("click", () => {
       state.attachments.splice(index, 1);
       renderAttachments();
     });
-    els.attachments.appendChild(chip);
+    els.attachments.appendChild(card);
   }
 }
 
@@ -200,10 +209,11 @@ async function sendMessage(event) {
   event.preventDefault();
   const content = els.prompt.value.trim();
   if ((!content && state.attachments.length === 0) || !state.activeModel) return;
+  state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
   const images = state.attachments.map((attachment) => attachment.data);
-  const userMessage = { role: "user", content, images };
-  state.messages.push(userMessage);
   const visibleAttachments = [...state.attachments];
+  const userMessage = { role: "user", content, images, attachments: visibleAttachments };
+  state.messages.push(userMessage);
   state.attachments = [];
   els.prompt.value = "";
   renderAttachments();
@@ -217,7 +227,7 @@ async function sendMessage(event) {
     content: msg.content || "",
     images: msg.images || undefined,
   }));
-  const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [] };
+  const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [], streaming: true, waiting: true };
   state.messages.push(assistant);
   renderMessages();
 
@@ -237,22 +247,32 @@ async function sendMessage(event) {
   }
   await readEventStream(response.body, {
     thinking: (value) => {
+      assistant.waiting = false;
       assistant.thinking += value;
       renderMessages();
     },
     content: (value) => {
+      assistant.waiting = false;
       assistant.content += value;
       renderMessages();
     },
     tool_call: (value) => {
+      assistant.waiting = false;
       assistant.toolCalls.push(value);
       renderMessages();
     },
     error: (value) => {
+      assistant.waiting = false;
+      assistant.streaming = false;
       assistant.content += `\nError: ${value}`;
       renderMessages();
     },
-    done: () => loadModels(),
+    done: () => {
+      assistant.waiting = false;
+      assistant.streaming = false;
+      renderMessages();
+      loadModels();
+    },
   });
 }
 
@@ -284,10 +304,13 @@ function renderMessages() {
   for (const message of state.messages) {
     if (message.role === "system") continue;
     const div = document.createElement("article");
-    div.className = `message ${message.role}`;
+    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""}`;
     const thinking = message.thinking ? `<details class="thinking" open><summary>thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>` : "";
     const tools = message.toolCalls?.length ? `<div class="tool-calls">${message.toolCalls.map(renderToolCall).join("")}</div>` : "";
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${thinking}<div class="markdown">${renderMarkdown(message.content || "")}</div>${tools}`;
+    const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
+    const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
+    const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
+    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${thinking}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${tools}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -300,6 +323,13 @@ function renderToolCall(call) {
 
 function addSystemMessage(content) {
   state.messages.push({ role: "system", content });
+}
+
+function capabilityFor(kind) {
+  const caps = activeModel()?.capabilities || {};
+  if (kind === "image") return caps.vision === "comprobado" || caps.vision === "inferido";
+  if (kind === "audio") return caps.audio === "comprobado" || caps.audio === "inferido";
+  return false;
 }
 
 function capBadges(caps = {}) {
@@ -343,10 +373,21 @@ function inlineMd(text) {
     .replace(/`(.+?)`/g, "<code>$1</code>");
 }
 
-function fileToBase64(file) {
+function attachmentPreview(attachment) {
+  const label = escapeHtml(attachment.name || attachment.mime || attachment.kind);
+  if (attachment.kind === "image") {
+    return `<a class="media-preview image" href="${escapeAttr(attachment.url)}" target="_blank" rel="noreferrer"><img src="${escapeAttr(attachment.url)}" alt="${label}"><span>${label}</span></a>`;
+  }
+  if (attachment.kind === "audio") {
+    return `<div class="media-preview audio"><span>${label}</span><audio controls src="${escapeAttr(attachment.url)}"></audio></div>`;
+  }
+  return `<div class="media-preview"><span>${label}</span></div>`;
+}
+
+function fileToDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result).split(",")[1] || "");
+    reader.onload = () => resolve(String(reader.result));
     reader.onerror = reject;
     reader.readAsDataURL(file);
   });

@@ -375,6 +375,9 @@ Navegador integrado:
 - `gemma4:e2b` muestra `completion`, `tools`, `thinking`, `vision`, `audio`.
 - Controles de adjuntos aparecen segun capacidades del modelo activo.
 - Bloque `thinking` visible como panel separado.
+- Con `mistral:latest`, que no reporta vision/audio/thinking, se ocultan los controles de imagen, audio y think.
+- Se agregaron previews de imagen/audio con `data:` URLs; el runtime del navegador integrado no expuso `setInputFiles`, por lo que la prueba automatizada de upload queda pendiente.
+- Se agregaron animaciones de espera y streaming en la tarjeta de respuesta.
 
 Estado: comprobado.
 
