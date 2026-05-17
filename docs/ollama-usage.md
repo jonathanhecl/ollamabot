@@ -254,7 +254,30 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 La web expone:
 
 - `GET /api/health`: verifica conexion con Ollama.
+- `GET /api/settings`: lee configuracion runtime.
+- `POST /api/settings`: actualiza URL de Ollama y persiste `.env`.
 - `GET /api/models`: lista modelos disponibles, capacidades, memoria cargada y estado de cache.
-- `POST /api/chat`: envia mensajes al modelo seleccionado.
+- `POST /api/chat/stream`: envia mensajes al modelo seleccionado y devuelve Server-Sent Events.
 
-La interfaz permite seleccionar un modelo como `Main` en el navegador y conversar con el.
+La interfaz permite seleccionar un modelo como `Main` desde un modal y conversar con el. Segun capacidades:
+
+- `thinking`: muestra toggle `think` y renderiza el bloque de thinking.
+- `vision`: habilita adjuntar/pegar imagenes.
+- `audio`: habilita adjuntar/pegar audio.
+- `tools`: si Ollama devuelve `tool_calls`, se muestran nombre y parametros; la ejecucion real de tools queda para la capa de agente.
+
+Eventos SSE actuales:
+
+```text
+event: thinking
+data: "..."
+
+event: content
+data: "..."
+
+event: tool_call
+data: {"function": {"name": "...", "arguments": {...}}}
+
+event: done
+data: {"model": "...", "reason": "..."}
+```

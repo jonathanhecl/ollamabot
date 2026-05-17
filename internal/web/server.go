@@ -5,12 +5,14 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/cache"
@@ -24,7 +26,9 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
+	mu        sync.RWMutex
 	cfg       config.Config
+	envPath   string
 	client    *ollama.Client
 	runner    *probe.Runner
 	cachePath string
@@ -56,25 +60,32 @@ type ModelsResponse struct {
 	FromCache     bool        `json:"from_cache"`
 }
 
+type SettingsResponse struct {
+	OllamaBaseURL string `json:"ollama_base_url"`
+	WebAddr       string `json:"web_addr"`
+	WebEnabled    bool   `json:"web_enabled"`
+}
+
 type ChatRequest struct {
 	Model    string           `json:"model"`
 	Messages []ollama.Message `json:"messages"`
 	Think    bool             `json:"think"`
 }
 
-type ChatResponse struct {
-	Message ollama.Message `json:"message"`
-	Model   string         `json:"model"`
+func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
+	return NewServerWithEnv(cfg, client, runner, cachePath, ".env")
 }
 
-func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
-	return &Server{cfg: cfg, client: client, runner: runner, cachePath: cachePath}
+func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
+	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, cachePath: cachePath}
 }
 
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/models", s.handleModels)
-	mux.HandleFunc("POST /api/chat", s.handleChat)
+	mux.HandleFunc("GET /api/settings", s.handleSettings)
+	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
+	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	static, err := fs.Sub(staticFiles, "static")
@@ -83,17 +94,61 @@ func (s *Server) ListenAndServe() error {
 	}
 	mux.Handle("/", http.FileServer(http.FS(static)))
 
-	log.Printf("ollamabot web listening on %s", s.cfg.WebAddr)
-	return http.ListenAndServe(s.cfg.WebAddr, mux)
+	cfg := s.config()
+	log.Printf("ollamabot web listening on %s", cfg.WebAddr)
+	return http.ListenAndServe(cfg.WebAddr, mux)
+}
+
+func (s *Server) config() config.Config {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg
+}
+
+func (s *Server) deps() (config.Config, *ollama.Client, *probe.Runner) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg, s.client, s.runner
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	version, err := s.client.Version(r.Context())
+	_, client, _ := s.deps()
+	version, err := client.Version(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ollama_version": version.Version})
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config()
+	writeJSON(w, http.StatusOK, SettingsResponse{OllamaBaseURL: cfg.OllamaBaseURL, WebAddr: cfg.WebAddr, WebEnabled: cfg.WebEnabled})
+}
+
+func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
+	var input SettingsResponse
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	baseURL, err := config.NormalizeBaseURL(input.OllamaBaseURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	s.mu.Lock()
+	s.cfg.OllamaBaseURL = baseURL
+	s.client = ollama.NewClient(baseURL)
+	s.runner = probe.NewRunner(s.client)
+	cfg := s.cfg
+	s.mu.Unlock()
+
+	if strings.TrimSpace(s.envPath) != "" {
+		_ = config.SaveBasic(s.envPath, cfg)
+	}
+	writeJSON(w, http.StatusOK, SettingsResponse{OllamaBaseURL: cfg.OllamaBaseURL, WebAddr: cfg.WebAddr, WebEnabled: cfg.WebEnabled})
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -105,7 +160,7 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var input ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -120,21 +175,47 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("messages are required"))
 		return
 	}
-	resp, err := s.client.Chat(r.Context(), ollama.ChatRequest{
+
+	_, client, _ := s.deps()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+
+	err := client.ChatStream(r.Context(), ollama.ChatRequest{
 		Model:    input.Model,
 		Messages: input.Messages,
 		Think:    input.Think,
+	}, func(chunk ollama.ChatResponse) error {
+		if chunk.Message.Thinking != "" {
+			writeSSE(w, "thinking", chunk.Message.Thinking)
+		}
+		if chunk.Message.Content != "" {
+			writeSSE(w, "content", chunk.Message.Content)
+		}
+		for _, call := range chunk.Message.ToolCalls {
+			writeSSE(w, "tool_call", call)
+		}
+		if chunk.Done {
+			writeSSE(w, "done", map[string]any{"model": chunk.Model, "reason": chunk.DoneReason})
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
 	})
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		return
+		writeSSE(w, "error", err.Error())
+		if flusher != nil {
+			flusher.Flush()
+		}
 	}
-	writeJSON(w, http.StatusOK, ChatResponse{Model: resp.Model, Message: resp.Message})
 }
 
 func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
-	version, _ := s.client.Version(ctx)
-	reports, err := s.runner.Inventory(ctx, s.cfg.OllamaProbeModels)
+	cfg, client, runner := s.deps()
+	version, _ := client.Version(ctx)
+	reports, err := runner.Inventory(ctx, cfg.OllamaProbeModels)
 	if err != nil {
 		if cached, cacheErr := cache.Load(s.cachePath); cacheErr == nil {
 			return s.modelsFromCache(cached), nil
@@ -142,13 +223,13 @@ func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
 		return ModelsResponse{}, err
 	}
 
-	ps, _ := s.client.Ps(ctx)
+	ps, _ := client.Ps(ctx)
 	running := runningByName(ps.Models)
 	views := make([]ModelView, 0, len(reports))
 	for _, report := range reports {
-		view := modelView(report, nil, s.cfg.OllamaDefaultModel, "live")
+		view := modelView(report, nil, cfg.OllamaDefaultModel, "live")
 		if current, ok := running[report.Name]; ok {
-			view = modelView(report, &current, s.cfg.OllamaDefaultModel, "live")
+			view = modelView(report, &current, cfg.OllamaDefaultModel, "live")
 		}
 		views = append(views, view)
 	}
@@ -159,7 +240,7 @@ func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
 		return views[i].Name < views[j].Name
 	})
 	return ModelsResponse{
-		BaseURL:       s.cfg.OllamaBaseURL,
+		BaseURL:       cfg.OllamaBaseURL,
 		OllamaVersion: version.Version,
 		GeneratedAt:   time.Now(),
 		Models:        views,
@@ -167,12 +248,13 @@ func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
 }
 
 func (s *Server) modelsFromCache(snapshot cache.Snapshot) ModelsResponse {
+	cfg := s.config()
 	running := runningByName(snapshot.Running)
 	views := make([]ModelView, 0, len(snapshot.Models))
 	for _, report := range snapshot.Models {
-		view := modelView(report, nil, s.cfg.OllamaDefaultModel, "cache")
+		view := modelView(report, nil, cfg.OllamaDefaultModel, "cache")
 		if current, ok := running[report.Name]; ok {
-			view = modelView(report, &current, s.cfg.OllamaDefaultModel, "cache")
+			view = modelView(report, &current, cfg.OllamaDefaultModel, "cache")
 		}
 		views = append(views, view)
 	}
@@ -218,6 +300,12 @@ func modelView(report capabilities.ModelReport, running *ollama.RunningModel, de
 		}
 	}
 	return view
+}
+
+func writeSSE(w http.ResponseWriter, event string, value any) {
+	payload, _ := json.Marshal(value)
+	fmt.Fprintf(w, "event: %s\n", event)
+	fmt.Fprintf(w, "data: %s\n\n", payload)
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

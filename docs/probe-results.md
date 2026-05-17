@@ -311,6 +311,73 @@ Resultado:
 
 Estado: comprobado.
 
+### Web Agente: Modal, Settings y Streaming
+
+Se reinicio la web en el puerto usado por el navegador:
+
+```powershell
+go run ./cmd/ollamabot serve --addr :8088 --cache docs/probe-cache.json
+```
+
+Settings:
+
+```powershell
+GET http://localhost:8088/api/settings
+```
+
+Resultado:
+
+```json
+{
+  "ollama_base_url": "http://localhost:11434",
+  "web_addr": ":8088",
+  "web_enabled": true
+}
+```
+
+Modelos:
+
+```powershell
+GET http://localhost:8088/api/models
+```
+
+Resultado resumido:
+
+```json
+{
+  "base_url": "http://localhost:11434",
+  "ollama_version": "0.24.0",
+  "models": 18,
+  "audioModels": 1
+}
+```
+
+Streaming:
+
+```powershell
+POST http://localhost:8088/api/chat/stream
+```
+
+Resultado observado:
+
+```text
+event: content
+data: "-"
+
+event: content
+data: " Agents"
+```
+
+Navegador integrado:
+
+- UI recargada en `http://localhost:8088/`.
+- Modal `Models` visible y funcional.
+- `gemma4:e2b` muestra `completion`, `tools`, `thinking`, `vision`, `audio`.
+- Controles de adjuntos aparecen segun capacidades del modelo activo.
+- Bloque `thinking` visible como panel separado.
+
+Estado: comprobado.
+
 ## Pruebas Pendientes
 
 - Ejecutar probes contra `192.168.0.121:11434` con `--base-url` o `OLLAMA_BASE_URL`.

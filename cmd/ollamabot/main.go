@@ -60,7 +60,7 @@ func run(args []string) error {
 	if len(remaining) == 0 {
 		if cfg.WebEnabled {
 			fmt.Printf("OllamaBot web: http://localhost%s\n", cfg.WebAddr)
-			return web.NewServer(cfg, client, runner, web.SnapshotPath("")).ListenAndServe()
+			return web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath).ListenAndServe()
 		}
 		fmt.Println("Servidor web desactivado en .env (WEB_ENABLED=false).")
 		usage()
@@ -73,7 +73,7 @@ func run(args []string) error {
 	case "docs":
 		return runDocs(ctx, remaining[1:], cfg, client, runner)
 	case "serve":
-		return runServe(remaining[1:], cfg, client, runner)
+		return runServe(remaining[1:], cfg, client, runner, *envPath)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", remaining[0])
@@ -200,7 +200,7 @@ func runDocs(ctx context.Context, args []string, cfg config.Config, client *olla
 	return nil
 }
 
-func runServe(args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
+func runServe(args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner, envPath string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	addr := flags.String("addr", cfg.WebAddr, "web listen address")
 	cachePath := flags.String("cache", web.SnapshotPath(""), "probe snapshot cache path")
@@ -208,7 +208,7 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		return err
 	}
 	cfg.WebAddr = *addr
-	return web.NewServer(cfg, client, runner, *cachePath).ListenAndServe()
+	return web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath).ListenAndServe()
 }
 
 func writeSnapshot(ctx context.Context, out string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {

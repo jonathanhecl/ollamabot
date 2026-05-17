@@ -21,6 +21,12 @@ Hecho:
 - Servidor web local en `internal/web`.
 - `.env.example` con claves iniciales.
 - Ejecucion normal sin parametros: carga `.env`, lo crea interactivamente si falta, y levanta la web si `WEB_ENABLED=true`.
+- Configuracion de URL de Ollama desde la web, persistida en `.env`.
+- Modal de modelos en la web en lugar de tabla permanente.
+- Chat web con streaming SSE desde Ollama.
+- Visualizacion incremental de `thinking` en bloque separado.
+- Adjuntos multimodales desde archivo o paste: imagenes y audio usan el payload multimodal de Ollama.
+- Preparacion visual para tool calls: si el modelo devuelve `tool_calls`, la web muestra nombre y parametros.
 - Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
 - Documentacion local generada en `docs/ollama-reference.md`.
 - Inventario local generado en `docs/local-model-inventory.md`.
@@ -58,7 +64,9 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ## Pendiente
 
 - Mejorar persistencia de probes para registrar tambien ejecuciones individuales de chat/tools/json/vision.
-- Agregar envio de imagenes desde la web.
+- Agregar ejecucion real de tools internas y retorno automatico al modelo.
+- Agregar historial/memoria por conversacion y canal.
+- Agregar drag and drop de archivos a la web.
 - Crear canal Telegram.
 - Crear router de modelos por capacidad: texto, tools, vision, embeddings, thinking.
 - Definir interfaz de tools internas del agente.

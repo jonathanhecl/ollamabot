@@ -49,3 +49,7 @@ Generated references live in `docs/ollama-reference.md` and
 
 See `docs/README.md` for the project progress log, pending work, Ollama usage
 notes, and local probe results.
+
+The web UI supports runtime Ollama URL configuration, model selection from a
+modal, streamed chat responses, thinking blocks, multimodal file/paste inputs,
+and visible future tool-call events.

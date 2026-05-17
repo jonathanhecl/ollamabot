@@ -94,6 +94,18 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
+func SaveBasic(path string, cfg Config) error {
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nTELEGRAM_BOT_TOKEN=%s\n",
+		cfg.OllamaBaseURL,
+		cfg.WebEnabled,
+		cfg.WebAddr,
+		strings.Join(cfg.OllamaProbeModels, ","),
+		cfg.OllamaDefaultModel,
+		cfg.TelegramBotToken,
+	)
+	return os.WriteFile(path, []byte(content), 0o600)
+}
+
 func Parse(file *os.File) (map[string]string, error) {
 	values := map[string]string{}
 	scanner := bufio.NewScanner(file)

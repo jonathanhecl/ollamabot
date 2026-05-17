@@ -8,57 +8,78 @@
   </head>
   <body>
     <main class="app">
-      <section class="models-panel">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">OllamaBot</p>
-            <h1>Model Console</h1>
-          </div>
-          <button id="refreshModels" class="icon-button" title="Refresh models">↻</button>
-        </header>
-
-        <div class="meta-strip">
-          <span id="baseUrl">Ollama</span>
-          <span id="version">version</span>
-          <span id="cacheState">live</span>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OllamaBot</p>
+          <h1 id="activeModel">Select a model</h1>
         </div>
-
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Model</th>
-                <th>Caps</th>
-                <th>Memory</th>
-                <th>Context</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="modelsBody"></tbody>
-          </table>
+        <div class="actions">
+          <button id="openSettings" class="ghost-button" type="button">Settings</button>
+          <button id="openModels" class="primary-button" type="button">Models</button>
         </div>
+      </header>
+
+      <section class="status-strip">
+        <span id="baseUrl">Ollama</span>
+        <span id="version">version</span>
+        <span id="memoryState">memory</span>
+        <span id="cacheState">live</span>
       </section>
 
-      <section class="chat-panel">
-        <header class="chat-header">
-          <div>
-            <p class="eyebrow">Main model</p>
-            <h2 id="activeModel">Select a model</h2>
-          </div>
-          <label class="think-toggle">
-            <input id="thinkToggle" type="checkbox" />
+      <section id="capabilityBar" class="capability-bar"></section>
+
+      <section id="messages" class="messages"></section>
+
+      <section id="attachments" class="attachments"></section>
+
+      <form id="chatForm" class="composer">
+        <div class="composer-tools">
+          <label id="imageControl" class="tool-button">
+            Image
+            <input id="imageInput" type="file" accept="image/*" multiple />
+          </label>
+          <label id="audioControl" class="tool-button">
+            Audio
+            <input id="audioInput" type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a,.flac" multiple />
+          </label>
+          <label id="thinkControl" class="think-toggle">
+            <input id="thinkToggle" type="checkbox" checked />
             <span>think</span>
           </label>
-        </header>
-
-        <div id="messages" class="messages"></div>
-
-        <form id="chatForm" class="composer">
-          <textarea id="prompt" rows="3" placeholder="Write a message to the selected model"></textarea>
-          <button type="submit">Send</button>
-        </form>
-      </section>
+        </div>
+        <textarea id="prompt" rows="3" placeholder="Message the selected model. Paste images/audio or attach files when supported."></textarea>
+        <button type="submit">Send</button>
+      </form>
     </main>
+
+    <dialog id="modelsDialog" class="modal">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Available models</p>
+          <h2>Choose main model</h2>
+        </div>
+        <button class="ghost-button" value="close">Close</button>
+      </form>
+      <div id="modelsBody" class="model-list"></div>
+    </dialog>
+
+    <dialog id="settingsDialog" class="modal compact">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Runtime</p>
+          <h2>Ollama settings</h2>
+        </div>
+        <button class="ghost-button" value="close">Close</button>
+      </form>
+      <form id="settingsForm" class="settings-form">
+        <label>
+          Ollama URL
+          <input id="ollamaUrl" type="url" placeholder="http://localhost:11434" />
+        </label>
+        <button class="primary-button" type="submit">Save and reload models</button>
+      </form>
+    </dialog>
+
     <script src="/app.js"></script>
   </body>
 </html>
