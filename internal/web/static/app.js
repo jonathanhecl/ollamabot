@@ -1,6 +1,9 @@
 const state = {
   models: [],
   activeModel: localStorage.getItem("ollamabot.mainModel") || "",
+  visionModel: localStorage.getItem("ollamabot.visionModel") || "",
+  audioModel: localStorage.getItem("ollamabot.audioModel") || "",
+  embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
   messages: [],
   attachments: [],
   settings: {},
@@ -58,6 +61,12 @@ async function loadSettings() {
   if (!response.ok) return;
   state.settings = await response.json();
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
+  if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
+  if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
+  localStorage.setItem("ollamabot.visionModel", state.visionModel);
+  localStorage.setItem("ollamabot.audioModel", state.audioModel);
+  localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
 }
 
 async function saveSettings(event) {
@@ -65,7 +74,12 @@ async function saveSettings(event) {
   const response = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ollama_base_url: els.ollamaUrl.value.trim() }),
+    body: JSON.stringify({
+      ollama_base_url: els.ollamaUrl.value.trim(),
+      model_vision: state.visionModel,
+      model_audio: state.audioModel,
+      model_embeddings: state.embeddingsModel,
+    }),
   });
   const data = await response.json();
   if (!response.ok) {
@@ -75,6 +89,19 @@ async function saveSettings(event) {
   state.settings = data;
   els.settingsDialog.close();
   await loadModels();
+}
+
+async function saveRoleModels() {
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ollama_base_url: state.settings.ollama_base_url || "",
+      model_vision: state.visionModel,
+      model_audio: state.audioModel,
+      model_embeddings: state.embeddingsModel,
+    }),
+  });
 }
 
 async function loadModels() {
@@ -108,15 +135,27 @@ function renderActive() {
   const model = activeModel();
   els.activeModel.textContent = state.activeModel || "Select a model";
   const caps = model?.capabilities || {};
-  els.capabilityBar.innerHTML = capBadges(caps);
+  let html = capBadges(caps);
+  const roleLabels = [
+    { key: "visionModel", label: "vision" },
+    { key: "audioModel", label: "audio" },
+    { key: "embeddingsModel", label: "embed" },
+  ];
+  for (const { key, label } of roleLabels) {
+    const name = state[key];
+    if (name && name !== state.activeModel) {
+      html += `<span class="cap role-badge" title="${label} model: ${escapeHtml(name)}">${label}: ${escapeHtml(name.split(":")[0])}</span>`;
+    }
+  }
+  els.capabilityBar.innerHTML = html;
   setCapabilityVisibility();
 }
 
 function setCapabilityVisibility() {
   const caps = activeModel()?.capabilities || {};
   const canThink = caps.thinking === "comprobado";
-  const canImage = caps.vision === "comprobado" || caps.vision === "inferido";
-  const canAudio = caps.audio === "comprobado" || caps.audio === "inferido";
+  const canImage = modelForRole("vision") !== null;
+  const canAudio = modelForRole("audio") !== null;
   els.thinkControl.hidden = !canThink;
   els.imageControl.hidden = !canImage;
   els.audioControl.hidden = !canAudio;
@@ -125,11 +164,31 @@ function setCapabilityVisibility() {
   renderAttachments();
 }
 
+// Returns the model name that handles a given role, or null if unavailable.
+// Priority: dedicated role model (if set) → main model (if capable) → null.
+function modelForRole(role) {
+  const capKey = role === "vision" ? "vision" : "audio";
+  const dedicated = role === "vision" ? state.visionModel : state.audioModel;
+  if (dedicated) {
+    const m = state.models.find((m) => m.name === dedicated);
+    if (m) return dedicated;
+  }
+  const main = activeModel();
+  if (!main) return null;
+  const status = main.capabilities?.[capKey];
+  if (status === "comprobado" || status === "inferido") return main.name;
+  return null;
+}
+
 function renderModels() {
   els.modelsBody.innerHTML = "";
   for (const model of state.models) {
+    const isMain = model.name === state.activeModel;
+    const isVision = model.name === state.visionModel;
+    const isAudio = model.name === state.audioModel;
+    const isEmbed = model.name === state.embeddingsModel;
     const card = document.createElement("article");
-    card.className = `model-card ${model.name === state.activeModel ? "selected" : ""}`;
+    card.className = `model-card ${isMain ? "selected" : ""}`;
     card.innerHTML = `
       <div>
         <div class="model-name">${escapeHtml(model.name)}</div>
@@ -141,17 +200,39 @@ function renderModels() {
         <span>${model.loaded ? formatBytes(model.size_vram) : "not in memory"}</span>
         <span>ctx ${model.context_length || "-"}</span>
       </div>
-      <button class="choose ${model.name === state.activeModel ? "active" : ""}" data-model="${escapeAttr(model.name)}">Main</button>
+      <div class="role-buttons">
+        <button class="choose ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">Main</button>
+        <button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">Vision</button>
+        <button class="choose role-btn ${isAudio ? "active" : ""}" data-role="audio" data-model="${escapeAttr(model.name)}">Audio</button>
+        <button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">Embed</button>
+      </div>
     `;
     els.modelsBody.appendChild(card);
   }
   document.querySelectorAll(".choose").forEach((button) => {
     button.addEventListener("click", () => {
-      state.activeModel = button.dataset.model;
-      localStorage.setItem("ollamabot.mainModel", state.activeModel);
-      renderActive();
-      renderModels();
-      els.modelsDialog.close();
+      const role = button.dataset.role;
+      const model = button.dataset.model;
+      if (role === "main") {
+        state.activeModel = model;
+        localStorage.setItem("ollamabot.mainModel", state.activeModel);
+        renderActive();
+        renderModels();
+        els.modelsDialog.close();
+      } else {
+        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : "embeddingsModel";
+        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : "ollamabot.embeddingsModel";
+        if (state[stateKey] === model) {
+          state[stateKey] = "";
+          localStorage.setItem(lsKey, "");
+        } else {
+          state[stateKey] = model;
+          localStorage.setItem(lsKey, model);
+        }
+        saveRoleModels();
+        renderActive();
+        renderModels();
+      }
     });
   });
 }
@@ -326,9 +407,8 @@ function addSystemMessage(content) {
 }
 
 function capabilityFor(kind) {
-  const caps = activeModel()?.capabilities || {};
-  if (kind === "image") return caps.vision === "comprobado" || caps.vision === "inferido";
-  if (kind === "audio") return caps.audio === "comprobado" || caps.audio === "inferido";
+  if (kind === "image") return modelForRole("vision") !== null;
+  if (kind === "audio") return modelForRole("audio") !== null;
   return false;
 }
 

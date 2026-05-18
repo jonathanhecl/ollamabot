@@ -486,6 +486,33 @@ textarea {
   border-color: var(--accent);
 }
 
+.role-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.role-btn {
+  font-size: 12px;
+  min-height: 30px;
+  padding: 0 10px;
+  opacity: 0.6;
+}
+
+.role-btn.active {
+  background: var(--accent-2);
+  color: #102129;
+  border-color: var(--accent-2);
+  opacity: 1;
+}
+
+.role-badge {
+  background: #102129;
+  color: var(--accent-2);
+  border-color: var(--accent-2);
+  font-style: italic;
+}
+
 .settings-form {
   display: grid;
   gap: 14px;

@@ -14,6 +14,9 @@ type Config struct {
 	OllamaBaseURL      string
 	OllamaProbeModels  []string
 	OllamaDefaultModel string
+	OllamaModelVision  string
+	OllamaModelAudio   string
+	OllamaModelEmbed   string
 	TelegramBotToken   string
 	WebAddr            string
 	WebEnabled         bool
@@ -53,6 +56,9 @@ func Load(path string) (Config, error) {
 	}
 	cfg.OllamaProbeModels = splitCSV(apply("OLLAMA_PROBE_MODELS"))
 	cfg.OllamaDefaultModel = apply("OLLAMA_DEFAULT_MODEL")
+	cfg.OllamaModelVision = apply("OLLAMA_MODEL_VISION")
+	cfg.OllamaModelAudio = apply("OLLAMA_MODEL_AUDIO")
+	cfg.OllamaModelEmbed = apply("OLLAMA_MODEL_EMBED")
 	cfg.TelegramBotToken = apply("TELEGRAM_BOT_TOKEN")
 	if value := apply("WEB_ENABLED"); value != "" {
 		cfg.WebEnabled = parseBool(value)
@@ -95,12 +101,16 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 }
 
 func SaveBasic(path string, cfg Config) error {
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nTELEGRAM_BOT_TOKEN=%s\n",
+	content := fmt.Sprintf(
+		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.WebEnabled,
 		cfg.WebAddr,
 		strings.Join(cfg.OllamaProbeModels, ","),
 		cfg.OllamaDefaultModel,
+		cfg.OllamaModelVision,
+		cfg.OllamaModelAudio,
+		cfg.OllamaModelEmbed,
 		cfg.TelegramBotToken,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)

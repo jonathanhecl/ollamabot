@@ -35,6 +35,7 @@ Hecho:
 - Snapshot cacheado generado en `docs/probe-cache.json`.
 - Persistencia de probes individuales: cada ejecucion de `probe chat/tools/json/vision/thinking/embeddings/audio` graba un `ProbeRun` (nombre, modelo, estado, detalles, timestamp) en el campo `probe_runs` del snapshot JSON, haciendo upsert por `name+model`.
 - Web validada en `http://localhost:8080`.
+- Router de modelos por rol: modelo main (fallback), mas modelos opcionales dedicados para vision, audio y embeddings. Seleccion por botones en el modal de modelos. Si el main ya tiene la capacidad no hace falta asignar uno dedicado; si no hay ninguno con esa capacidad, el control de adjunto se oculta. Persistido en `.env` (`OLLAMA_MODEL_VISION`, `OLLAMA_MODEL_AUDIO`, `OLLAMA_MODEL_EMBED`) y en localStorage. Badges de rol en la barra de capacidades cuando el modelo dedicado difiere del main.
 
 Comandos disponibles:
 
@@ -71,12 +72,10 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - Agregar drag and drop de archivos a la web.
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
 - Crear canal Telegram.
-- Crear router de modelos por capacidad: texto, tools, vision, embeddings, thinking.
 - Definir interfaz de tools internas del agente.
 - Implementar memoria/conversaciones por canal.
 - Definir seguridad para tools: allowlist, timeouts, auditoria y confirmacion de acciones riesgosas.
 - Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
-- Reprobar audio de `gemma4:e2b` cuando Ollama actualice el runner o haya logs que indiquen el motivo del crash.
 - Definir soporte de video como pipeline de frames.
 
 ## Riesgos y Notas

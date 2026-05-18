@@ -61,9 +61,12 @@ type ModelsResponse struct {
 }
 
 type SettingsResponse struct {
-	OllamaBaseURL string `json:"ollama_base_url"`
-	WebAddr       string `json:"web_addr"`
-	WebEnabled    bool   `json:"web_enabled"`
+	OllamaBaseURL   string `json:"ollama_base_url"`
+	WebAddr         string `json:"web_addr"`
+	WebEnabled      bool   `json:"web_enabled"`
+	ModelVision     string `json:"model_vision"`
+	ModelAudio      string `json:"model_audio"`
+	ModelEmbeddings string `json:"model_embeddings"`
 }
 
 type ChatRequest struct {
@@ -123,7 +126,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 	cfg := s.config()
-	writeJSON(w, http.StatusOK, SettingsResponse{OllamaBaseURL: cfg.OllamaBaseURL, WebAddr: cfg.WebAddr, WebEnabled: cfg.WebEnabled})
+	writeJSON(w, http.StatusOK, settingsResponse(cfg))
 }
 
 func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
@@ -140,6 +143,9 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
+	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
+	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
+	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	cfg := s.cfg
@@ -148,7 +154,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(s.envPath) != "" {
 		_ = config.SaveBasic(s.envPath, cfg)
 	}
-	writeJSON(w, http.StatusOK, SettingsResponse{OllamaBaseURL: cfg.OllamaBaseURL, WebAddr: cfg.WebAddr, WebEnabled: cfg.WebEnabled})
+	writeJSON(w, http.StatusOK, settingsResponse(cfg))
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -316,6 +322,17 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, map[string]string{"error": err.Error()})
+}
+
+func settingsResponse(cfg config.Config) SettingsResponse {
+	return SettingsResponse{
+		OllamaBaseURL:   cfg.OllamaBaseURL,
+		WebAddr:         cfg.WebAddr,
+		WebEnabled:      cfg.WebEnabled,
+		ModelVision:     cfg.OllamaModelVision,
+		ModelAudio:      cfg.OllamaModelAudio,
+		ModelEmbeddings: cfg.OllamaModelEmbed,
+	}
 }
 
 func SnapshotPath(path string) string {
