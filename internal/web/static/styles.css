@@ -486,6 +486,11 @@ textarea {
   border-color: var(--accent);
 }
 
+.choose[disabled] {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 .role-buttons {
   display: flex;
   gap: 6px;

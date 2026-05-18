@@ -114,7 +114,7 @@ async function loadModels() {
   }
   state.models = data.models || [];
   if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
-    const preferred = state.models.find((m) => m.is_default) || state.models.find((m) => m.capabilities?.completion === "comprobado");
+    const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
     state.activeModel = preferred?.name || "";
   }
   els.baseUrl.textContent = data.base_url;
@@ -164,6 +164,12 @@ function setCapabilityVisibility() {
   renderAttachments();
 }
 
+// Returns true if a model meets the minimum requirements for the main role.
+function canBeMain(model) {
+  const caps = model?.capabilities || {};
+  return caps.completion === "comprobado" && caps.tools === "comprobado";
+}
+
 // Returns the model name that handles a given role, or null if unavailable.
 // Priority: dedicated role model (if set) → main model (if capable) → null.
 function modelForRole(role) {
@@ -201,7 +207,7 @@ function renderModels() {
         <span>ctx ${model.context_length || "-"}</span>
       </div>
       <div class="role-buttons">
-        <button class="choose ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">Main</button>
+        <button class="choose ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}" ${canBeMain(model) ? "" : "disabled title=\"Requires completion + tools\""}>${canBeMain(model) ? "Main" : "Main ✗"}</button>
         <button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">Vision</button>
         <button class="choose role-btn ${isAudio ? "active" : ""}" data-role="audio" data-model="${escapeAttr(model.name)}">Audio</button>
         <button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">Embed</button>
@@ -209,7 +215,7 @@ function renderModels() {
     `;
     els.modelsBody.appendChild(card);
   }
-  document.querySelectorAll(".choose").forEach((button) => {
+  document.querySelectorAll(".choose:not([disabled])").forEach((button) => {
     button.addEventListener("click", () => {
       const role = button.dataset.role;
       const model = button.dataset.model;
