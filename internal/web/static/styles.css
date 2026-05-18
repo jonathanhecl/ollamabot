@@ -38,6 +38,12 @@ input {
   min-height: 100vh;
 }
 
+.app.drag-over {
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+
 .topbar {
   display: flex;
   align-items: center;

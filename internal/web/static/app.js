@@ -49,6 +49,26 @@ els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.file
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
 document.addEventListener("paste", handlePaste);
 
+const dropZone = document.querySelector(".app");
+dropZone.addEventListener("dragover", (e) => {
+  const hasFiles = [...(e.dataTransfer?.items || [])].some((i) => i.kind === "file");
+  if (!hasFiles) return;
+  e.preventDefault();
+  dropZone.classList.add("drag-over");
+});
+dropZone.addEventListener("dragleave", (e) => {
+  if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove("drag-over");
+});
+dropZone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropZone.classList.remove("drag-over");
+  const files = [...(e.dataTransfer?.files || [])].filter((f) => {
+    const kind = f.type.startsWith("audio/") ? "audio" : f.type.startsWith("image/") ? "image" : "";
+    return kind && capabilityFor(kind);
+  });
+  if (files.length > 0) addFiles(files);
+});
+
 bootstrap();
 
 async function bootstrap() {
