@@ -20,6 +20,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
+	"github.com/jonathanhecl/ollamabot/internal/router"
 )
 
 //go:embed static
@@ -31,6 +32,7 @@ type Server struct {
 	envPath   string
 	client    *ollama.Client
 	runner    *probe.Runner
+	mediaro   *router.Router
 	cachePath string
 }
 
@@ -69,10 +71,17 @@ type SettingsResponse struct {
 	ModelEmbeddings string `json:"model_embeddings"`
 }
 
+// MediaMessage extends ollama.Message with per-image kind metadata sent by the
+// frontend. ImageKinds[i] is "image" or "audio" for Images[i].
+type MediaMessage struct {
+	ollama.Message
+	ImageKinds []string `json:"image_kinds,omitempty"`
+}
+
 type ChatRequest struct {
-	Model    string           `json:"model"`
-	Messages []ollama.Message `json:"messages"`
-	Think    bool             `json:"think"`
+	Model    string         `json:"model"`
+	Messages []MediaMessage `json:"messages"`
+	Think    bool           `json:"think"`
 }
 
 func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
@@ -80,7 +89,8 @@ func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, c
 }
 
 func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
-	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, cachePath: cachePath}
+	mr := router.New(client, routerConfig(cfg))
+	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -108,14 +118,14 @@ func (s *Server) config() config.Config {
 	return s.cfg
 }
 
-func (s *Server) deps() (config.Config, *ollama.Client, *probe.Runner) {
+func (s *Server) deps() (config.Config, *ollama.Client, *probe.Runner, *router.Router) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg, s.client, s.runner
+	return s.cfg, s.client, s.runner, s.mediaro
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	_, client, _ := s.deps()
+	_, client, _, _ := s.deps()
 	version, err := client.Version(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
@@ -148,6 +158,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
+	s.mediaro = router.New(s.client, routerConfig(s.cfg))
 	cfg := s.cfg
 	s.mu.Unlock()
 
@@ -166,6 +177,14 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
+func routerConfig(cfg config.Config) router.Config {
+	return router.Config{
+		MainModel:   cfg.OllamaDefaultModel,
+		VisionModel: cfg.OllamaModelVision,
+		AudioModel:  cfg.OllamaModelAudio,
+	}
+}
+
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var input ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -182,15 +201,23 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, client, _ := s.deps()
+	_, client, _, mr := s.deps()
+
+	// Pre-process media attachments using role models before sending to main.
+	ollama_messages, err := resolveMedia(r.Context(), mr, input.Messages)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
 
-	err := client.ChatStream(r.Context(), ollama.ChatRequest{
+	err = client.ChatStream(r.Context(), ollama.ChatRequest{
 		Model:    input.Model,
-		Messages: input.Messages,
+		Messages: ollama_messages,
 		Think:    input.Think,
 	}, func(chunk ollama.ChatResponse) error {
 		if chunk.Message.Thinking != "" {
@@ -218,8 +245,56 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// resolveMedia iterates the messages, and for any user message that has media
+// attachments handled by a dedicated role model, it replaces the raw media data
+// with a textual analysis injected into the message content. The returned slice
+// contains plain ollama.Message values safe to forward to the main model.
+func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage) ([]ollama.Message, error) {
+	out := make([]ollama.Message, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role != "user" || len(msg.Images) == 0 {
+			out = append(out, msg.Message)
+			continue
+		}
+
+		var analyses []string
+		var passthrough []string
+
+		for i, b64 := range msg.Images {
+			kind := "image"
+			if i < len(msg.ImageKinds) {
+				kind = msg.ImageKinds[i]
+			}
+			if mr.NeedsMediaRouting(kind) {
+				var analysis string
+				var err error
+				if kind == "audio" {
+					analysis, err = mr.AnalyzeAudio(ctx, b64)
+				} else {
+					analysis, err = mr.AnalyzeImage(ctx, b64)
+				}
+				if err != nil {
+					return nil, err
+				}
+				analyses = append(analyses, fmt.Sprintf("[%s analysis]\n%s", kind, analysis))
+			} else {
+				passthrough = append(passthrough, b64)
+			}
+		}
+
+		resolved := msg.Message
+		resolved.Images = passthrough
+		if len(analyses) > 0 {
+			prefix := strings.Join(analyses, "\n\n") + "\n\n"
+			resolved.Content = prefix + resolved.Content
+		}
+		out = append(out, resolved)
+	}
+	return out, nil
+}
+
 func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
-	cfg, client, runner := s.deps()
+	cfg, client, runner, _ := s.deps()
 	version, _ := client.Version(ctx)
 	reports, err := runner.Inventory(ctx, cfg.OllamaProbeModels)
 	if err != nil {

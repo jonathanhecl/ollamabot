@@ -313,6 +313,7 @@ async function sendMessage(event) {
     role: msg.role,
     content: msg.content || "",
     images: msg.images || undefined,
+    image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
   }));
   const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [], streaming: true, waiting: true };
   state.messages.push(assistant);
