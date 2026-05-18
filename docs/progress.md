@@ -33,6 +33,7 @@ Hecho:
 - Documentacion local generada en `docs/ollama-reference.md`.
 - Inventario local generado en `docs/local-model-inventory.md`.
 - Snapshot cacheado generado en `docs/probe-cache.json`.
+- Persistencia de probes individuales: cada ejecucion de `probe chat/tools/json/vision/thinking/embeddings/audio` graba un `ProbeRun` (nombre, modelo, estado, detalles, timestamp) en el campo `probe_runs` del snapshot JSON, haciendo upsert por `name+model`.
 - Web validada en `http://localhost:8080`.
 
 Comandos disponibles:
@@ -65,7 +66,6 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 ## Pendiente
 
-- Mejorar persistencia de probes para registrar tambien ejecuciones individuales de chat/tools/json/vision.
 - Agregar ejecucion real de tools internas y retorno automatico al modelo.
 - Agregar historial/memoria por conversacion y canal.
 - Agregar drag and drop de archivos a la web.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -69,7 +70,7 @@ func run(args []string) error {
 
 	switch remaining[0] {
 	case "probe":
-		return runProbe(ctx, remaining[1:], cfg, client, runner)
+		return runProbe(ctx, remaining[1:], cfg, client, runner, web.SnapshotPath(""))
 	case "docs":
 		return runDocs(ctx, remaining[1:], cfg, client, runner)
 	case "serve":
@@ -80,7 +81,7 @@ func run(args []string) error {
 	}
 }
 
-func runProbe(ctx context.Context, args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
+func runProbe(ctx context.Context, args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) error {
 	if len(args) == 0 {
 		probeUsage()
 		return nil
@@ -128,6 +129,7 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 			result, err = runner.Embeddings(ctx, *model)
 		}
 		printResult(result)
+		saveRun(cachePath, result)
 		return err
 	case "audio":
 		flags := flag.NewFlagSet("probe audio", flag.ContinueOnError)
@@ -141,6 +143,7 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 		}
 		result, err := runner.Audio(ctx, *model, *audioPath)
 		printResult(result)
+		saveRun(cachePath, result)
 		return err
 	case "vision":
 		flags := flag.NewFlagSet("probe vision", flag.ContinueOnError)
@@ -157,6 +160,7 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 		}
 		result, err := runner.Vision(ctx, *model, *imagePath)
 		printResult(result)
+		saveRun(cachePath, result)
 		return err
 	default:
 		probeUsage()
@@ -242,6 +246,19 @@ func writeSnapshot(ctx context.Context, out string, cfg config.Config, client *o
 
 func printResult(result probe.Result) {
 	fmt.Printf("%s\t%s\t%s\t%s\n", result.Name, result.Model, result.Status, strings.TrimSpace(result.Details))
+}
+
+func saveRun(cachePath string, result probe.Result) {
+	run := cache.ProbeRun{
+		Name:    result.Name,
+		Model:   result.Model,
+		Status:  result.Status,
+		Details: strings.TrimSpace(result.Details),
+		RunAt:   time.Now(),
+	}
+	if err := cache.SaveProbeRun(cachePath, run); err != nil {
+		log.Printf("warn: could not persist probe run: %v", err)
+	}
 }
 
 func usage() {
