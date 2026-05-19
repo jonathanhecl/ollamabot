@@ -28,6 +28,8 @@ const els = {
   attachments: document.querySelector("#attachments"),
   modelsDialog: document.querySelector("#modelsDialog"),
   settingsDialog: document.querySelector("#settingsDialog"),
+  imageDialog: document.querySelector("#imageDialog"),
+  imageDialogImg: document.querySelector("#imageDialogImg"),
   modelsBody: document.querySelector("#modelsBody"),
   openModels: document.querySelector("#openModels"),
   openSettings: document.querySelector("#openSettings"),
@@ -48,6 +50,52 @@ els.form.addEventListener("submit", sendMessage);
 els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.files], "image"));
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
 document.addEventListener("paste", handlePaste);
+
+els.prompt.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    els.form.dispatchEvent(new Event("submit", { cancelable: true }));
+  }
+});
+
+document.addEventListener("click", (e) => {
+  const preview = e.target.closest(".media-preview.image");
+  if (!preview) return;
+  const url = preview.dataset.url;
+  if (!url) return;
+  els.imageDialogImg.src = url;
+  els.imageDialog.showModal();
+});
+
+// Close image lightbox wiring
+const closeBtn = document.getElementById("imageDialogClose");
+if (closeBtn) {
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    els.imageDialog.close();
+  });
+}
+
+// Close on Escape key
+els.imageDialog.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    els.imageDialog.close();
+  }
+});
+
+// Close image lightbox on backdrop click (click outside dialog content)
+els.imageDialog.addEventListener("click", (e) => {
+  const rect = els.imageDialog.getBoundingClientRect();
+  const isInDialog = (
+    rect.top <= e.clientY &&
+    e.clientY <= rect.top + rect.height &&
+    rect.left <= e.clientX &&
+    e.clientX <= rect.left + rect.width
+  );
+  if (!isInDialog) {
+    els.imageDialog.close();
+  }
+});
 
 const dropZone = document.querySelector(".app");
 dropZone.addEventListener("dragover", (e) => {
@@ -483,7 +531,7 @@ function inlineMd(text) {
 function attachmentPreview(attachment) {
   const label = escapeHtml(attachment.name || attachment.mime || attachment.kind);
   if (attachment.kind === "image") {
-    return `<a class="media-preview image" href="${escapeAttr(attachment.url)}" target="_blank" rel="noreferrer"><img src="${escapeAttr(attachment.url)}" alt="${label}"><span>${label}</span></a>`;
+    return `<div class="media-preview image" data-url="${escapeAttr(attachment.url)}"><img src="${escapeAttr(attachment.url)}" alt="${label}"><span>${label}</span></div>`;
   }
   if (attachment.kind === "audio") {
     return `<div class="media-preview audio"><span>${label}</span><audio controls src="${escapeAttr(attachment.url)}"></audio></div>`;
