@@ -246,9 +246,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 }
 
 // resolveMedia iterates the messages, and for any user message that has media
-// attachments handled by a dedicated role model, it replaces the raw media data
-// with a textual analysis injected into the message content. The returned slice
-// contains plain ollama.Message values safe to forward to the main model.
+// attachments handled by a dedicated role model, it invokes the role model to
+// produce a textual analysis. The analysis is injected as an assistant message,
+// followed by the original user message (with the user's text, if any, and any
+// media that did not need routing). This ensures the main model understands the
+// analysis as context from another model, not as text sent by the user.
 func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage) ([]ollama.Message, error) {
 	out := make([]ollama.Message, 0, len(messages))
 	for _, msg := range messages {
@@ -276,18 +278,22 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 				if err != nil {
 					return nil, err
 				}
-				analyses = append(analyses, fmt.Sprintf("[%s analysis]\n%s", kind, analysis))
+				analyses = append(analyses, analysis)
 			} else {
 				passthrough = append(passthrough, b64)
 			}
 		}
 
+		if len(analyses) > 0 {
+			assistantContent := "The user has attached media. The analysis says the following:\n\n" + strings.Join(analyses, "\n\n")
+			out = append(out, ollama.Message{
+				Role:    "assistant",
+				Content: assistantContent,
+			})
+		}
+
 		resolved := msg.Message
 		resolved.Images = passthrough
-		if len(analyses) > 0 {
-			prefix := strings.Join(analyses, "\n\n") + "\n\n"
-			resolved.Content = prefix + resolved.Content
-		}
 		out = append(out, resolved)
 	}
 	return out, nil
