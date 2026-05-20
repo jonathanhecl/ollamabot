@@ -42,6 +42,9 @@
             Audio
             <input id="audioInput" type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a,.flac" multiple />
           </label>
+          <button id="recordControl" class="tool-button recording-btn" type="button" hidden>
+            <span class="record-icon">🎤</span> <span class="record-label">Record</span>
+          </button>
           <label id="thinkControl" class="think-toggle">
             <input id="thinkToggle" type="checkbox" checked />
             <span>think</span>
@@ -75,6 +78,12 @@
         <label>
           Ollama URL
           <input id="ollamaUrl" type="url" placeholder="http://localhost:11434" />
+        </label>
+        <label>
+          Default Microphone
+          <select id="micSelect">
+            <option value="">Default system microphone</option>
+          </select>
         </label>
         <button class="primary-button" type="submit">Save and reload models</button>
       </form>

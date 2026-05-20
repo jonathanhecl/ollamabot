@@ -583,7 +583,8 @@ textarea {
   color: var(--muted);
 }
 
-.settings-form input {
+.settings-form input,
+.settings-form select {
   min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -610,6 +611,34 @@ textarea {
 }
 
 .tool-button[hidden],
-.think-toggle[hidden] {
+.think-toggle[hidden],
+.recording-btn[hidden] {
   display: none !important;
+}
+
+.recording-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  transition: all 0.2s ease;
+}
+
+.recording-btn.active {
+  background: var(--bad) !important;
+  color: #11140f !important;
+  border-color: var(--bad) !important;
+  animation: record-pulse 1.5s infinite;
+}
+
+@keyframes record-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(255, 111, 111, 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 8px rgba(255, 111, 111, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(255, 111, 111, 0);
+  }
 }

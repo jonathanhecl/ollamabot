@@ -7,6 +7,11 @@ const state = {
   messages: [],
   attachments: [],
   settings: {},
+  mediaRecorder: null,
+  audioChunks: [],
+  isRecording: false,
+  selectedMicId: localStorage.getItem("ollamabot.selectedMicId") || "",
+  audioStream: null,
 };
 
 const els = {
@@ -35,20 +40,31 @@ const els = {
   openSettings: document.querySelector("#openSettings"),
   settingsForm: document.querySelector("#settingsForm"),
   ollamaUrl: document.querySelector("#ollamaUrl"),
+  recordControl: document.querySelector("#recordControl"),
+  micSelect: document.querySelector("#micSelect"),
 };
 
 els.openModels.addEventListener("click", () => {
   renderModels();
   els.modelsDialog.showModal();
 });
-els.openSettings.addEventListener("click", () => {
+els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.settingsDialog.showModal();
+  // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
+  try {
+    const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    tempStream.getTracks().forEach(track => track.stop());
+  } catch (e) {
+    console.warn("Could not prompt mic permission on settings open:", e);
+  }
+  await populateMicrophones();
 });
 els.settingsForm.addEventListener("submit", saveSettings);
 els.form.addEventListener("submit", sendMessage);
 els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.files], "image"));
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
+els.recordControl.addEventListener("click", toggleRecording);
 document.addEventListener("paste", handlePaste);
 
 els.prompt.addEventListener("keydown", (e) => {
@@ -139,6 +155,8 @@ async function loadSettings() {
 
 async function saveSettings(event) {
   event.preventDefault();
+  state.selectedMicId = els.micSelect.value;
+  localStorage.setItem("ollamabot.selectedMicId", state.selectedMicId);
   const response = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -227,6 +245,7 @@ function setCapabilityVisibility() {
   els.thinkControl.hidden = !canThink;
   els.imageControl.hidden = !canImage;
   els.audioControl.hidden = !canAudio;
+  els.recordControl.hidden = !canAudio;
   if (!canThink) els.think.checked = false;
   state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
   renderAttachments();
@@ -572,4 +591,93 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
+async function populateMicrophones() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    els.micSelect.innerHTML = `<option value="">Microphone API not supported</option>`;
+    return;
+  }
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const audioMics = devices.filter((d) => d.kind === "audioinput");
+    els.micSelect.innerHTML = `<option value="">Default system microphone</option>`;
+    for (const mic of audioMics) {
+      const option = document.createElement("option");
+      option.value = mic.deviceId;
+      option.textContent = mic.label || `Microphone (${mic.deviceId.slice(0, 5)})`;
+      if (mic.deviceId === state.selectedMicId) {
+        option.selected = true;
+      }
+      els.micSelect.appendChild(option);
+    }
+  } catch (err) {
+    console.warn("enumerateDevices failed:", err);
+  }
+}
+
+async function toggleRecording() {
+  if (state.isRecording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    addSystemMessage("Audio recording is not supported on this browser.");
+    renderMessages();
+    return;
+  }
+  state.audioChunks = [];
+  const constraints = {
+    audio: state.selectedMicId ? { deviceId: { exact: state.selectedMicId } } : true,
+  };
+  try {
+    state.audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+    state.mediaRecorder = new MediaRecorder(state.audioStream);
+    state.mediaRecorder.ondataavailable = (event) => {
+      if (event.data.size > 0) {
+        state.audioChunks.push(event.data);
+      }
+    };
+    state.mediaRecorder.onstop = async () => {
+      const blob = new Blob(state.audioChunks, { type: state.mediaRecorder.mimeType || "audio/webm" });
+      const mimeType = state.mediaRecorder.mimeType || "audio/webm";
+      const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("webm") ? "webm" : mimeType.includes("wav") ? "wav" : "mp3";
+      const file = new File([blob], `mic_record_${Date.now()}.${extension}`, { type: mimeType });
+      await addFiles([file], "audio");
+      if (state.audioStream) {
+        state.audioStream.getTracks().forEach((t) => t.stop());
+        state.audioStream = null;
+      }
+    };
+    state.mediaRecorder.start();
+    state.isRecording = true;
+    updateRecordUI();
+  } catch (err) {
+    addSystemMessage(`Could not start voice recording: ${err.message}`);
+    renderMessages();
+  }
+}
+
+function stopRecording() {
+  if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
+    state.mediaRecorder.stop();
+  }
+  state.isRecording = false;
+  updateRecordUI();
+}
+
+function updateRecordUI() {
+  if (state.isRecording) {
+    els.recordControl.classList.add("active");
+    els.recordControl.querySelector(".record-label").textContent = "Recording...";
+    els.recordControl.querySelector(".record-icon").textContent = "🔴";
+  } else {
+    els.recordControl.classList.remove("active");
+    els.recordControl.querySelector(".record-label").textContent = "Record";
+    els.recordControl.querySelector(".record-icon").textContent = "🎤";
+  }
 }
