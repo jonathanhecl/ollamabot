@@ -7,8 +7,11 @@ const state = {
   messages: [],
   attachments: [],
   settings: {},
-  mediaRecorder: null,
-  audioChunks: [],
+  audioContext: null,
+  audioSource: null,
+  audioProcessor: null,
+  audioBuffers: [],
+  audioSampleRate: 0,
   isRecording: false,
   selectedMicId: localStorage.getItem("ollamabot.selectedMicId") || "",
   audioStream: null,
@@ -419,6 +422,8 @@ async function sendMessage(event) {
   });
   if (!response.ok || !response.body) {
     assistant.content = `Error: ${response.statusText}`;
+    assistant.waiting = false;
+    assistant.streaming = false;
     renderMessages();
     return;
   }
@@ -632,30 +637,21 @@ async function startRecording() {
     renderMessages();
     return;
   }
-  state.audioChunks = [];
   const constraints = {
     audio: state.selectedMicId ? { deviceId: { exact: state.selectedMicId } } : true,
   };
   try {
     state.audioStream = await navigator.mediaDevices.getUserMedia(constraints);
-    state.mediaRecorder = new MediaRecorder(state.audioStream);
-    state.mediaRecorder.ondataavailable = (event) => {
-      if (event.data.size > 0) {
-        state.audioChunks.push(event.data);
-      }
+    state.audioContext = new AudioContext();
+    state.audioSampleRate = state.audioContext.sampleRate;
+    state.audioBuffers = [];
+    state.audioSource = state.audioContext.createMediaStreamSource(state.audioStream);
+    state.audioProcessor = state.audioContext.createScriptProcessor(4096, 1, 1);
+    state.audioProcessor.onaudioprocess = (event) => {
+      state.audioBuffers.push(new Float32Array(event.inputBuffer.getChannelData(0)));
     };
-    state.mediaRecorder.onstop = async () => {
-      const blob = new Blob(state.audioChunks, { type: state.mediaRecorder.mimeType || "audio/webm" });
-      const mimeType = state.mediaRecorder.mimeType || "audio/webm";
-      const extension = mimeType.includes("ogg") ? "ogg" : mimeType.includes("webm") ? "webm" : mimeType.includes("wav") ? "wav" : "mp3";
-      const file = new File([blob], `mic_record_${Date.now()}.${extension}`, { type: mimeType });
-      await addFiles([file], "audio");
-      if (state.audioStream) {
-        state.audioStream.getTracks().forEach((t) => t.stop());
-        state.audioStream = null;
-      }
-    };
-    state.mediaRecorder.start();
+    state.audioSource.connect(state.audioProcessor);
+    state.audioProcessor.connect(state.audioContext.destination);
     state.isRecording = true;
     updateRecordUI();
   } catch (err) {
@@ -664,12 +660,34 @@ async function startRecording() {
   }
 }
 
-function stopRecording() {
-  if (state.mediaRecorder && state.mediaRecorder.state !== "inactive") {
-    state.mediaRecorder.stop();
-  }
+async function stopRecording() {
   state.isRecording = false;
   updateRecordUI();
+  if (state.audioProcessor) {
+    state.audioProcessor.disconnect();
+    state.audioProcessor.onaudioprocess = null;
+    state.audioProcessor = null;
+  }
+  if (state.audioSource) {
+    state.audioSource.disconnect();
+    state.audioSource = null;
+  }
+  if (state.audioContext) {
+    await state.audioContext.close();
+    state.audioContext = null;
+  }
+  if (state.audioStream) {
+    state.audioStream.getTracks().forEach((t) => t.stop());
+    state.audioStream = null;
+  }
+  const blob = createWavBlob(state.audioBuffers, state.audioSampleRate);
+  state.audioBuffers = [];
+  state.audioSampleRate = 0;
+  if (blob.size === 0) {
+    return;
+  }
+  const file = new File([blob], `mic_record_${Date.now()}.wav`, { type: "audio/wav" });
+  await addFiles([file], "audio");
 }
 
 function updateRecordUI() {
@@ -681,5 +699,51 @@ function updateRecordUI() {
     els.recordControl.classList.remove("active");
     els.recordControl.querySelector(".record-label").textContent = "Record";
     els.recordControl.querySelector(".record-icon").textContent = "🎤";
+  }
+}
+
+function createWavBlob(buffers, sampleRate) {
+  if (!buffers.length || !sampleRate) return new Blob([], { type: "audio/wav" });
+  const samples = mergeAudioBuffers(buffers);
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  writeAscii(view, 0, "RIFF");
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeAscii(view, 8, "WAVE");
+  writeAscii(view, 12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeAscii(view, 36, "data");
+  view.setUint32(40, samples.length * 2, true);
+  writePcm16(view, 44, samples);
+  return new Blob([view], { type: "audio/wav" });
+}
+
+function mergeAudioBuffers(buffers) {
+  const length = buffers.reduce((sum, buffer) => sum + buffer.length, 0);
+  const merged = new Float32Array(length);
+  let offset = 0;
+  for (const buffer of buffers) {
+    merged.set(buffer, offset);
+    offset += buffer.length;
+  }
+  return merged;
+}
+
+function writePcm16(view, offset, samples) {
+  for (let i = 0; i < samples.length; i++) {
+    const sample = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset + i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+  }
+}
+
+function writeAscii(view, offset, value) {
+  for (let i = 0; i < value.length; i++) {
+    view.setUint8(offset + i, value.charCodeAt(i));
   }
 }
