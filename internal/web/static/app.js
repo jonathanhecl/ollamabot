@@ -264,12 +264,14 @@ function modelForRole(role) {
   const dedicated = role === "vision" ? state.visionModel : state.audioModel;
   if (dedicated) {
     const m = state.models.find((m) => m.name === dedicated);
-    if (m) return dedicated;
+    const status = m?.capabilities?.[capKey];
+    if (status === "comprobado" || (role === "vision" && status === "inferido")) return dedicated;
+    return null;
   }
   const main = activeModel();
   if (!main) return null;
   const status = main.capabilities?.[capKey];
-  if (status === "comprobado" || status === "inferido") return main.name;
+  if (status === "comprobado" || (role === "vision" && status === "inferido")) return main.name;
   return null;
 }
 
