@@ -276,10 +276,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Augment with retrieved memory (RAG) if embedding model is configured.
-	ollamaMessages = s.augmentWithMemory(r.Context(), cfg, ollamaMessages)
-
-	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace)
+	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -293,50 +290,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
-}
-
-// augmentWithMemory performs semantic search over the memory store using the
-// last user message as query. If results are found, it prepends a system message
-// with the retrieved context.
-func (s *Server) augmentWithMemory(ctx context.Context, cfg config.Config, messages []ollama.Message) []ollama.Message {
-	embedModel := cfg.OllamaModelEmbed
-	if embedModel == "" || s.memoryStore.Count() == 0 {
-		return messages
-	}
-
-	// Use the last user message as the query.
-	var query string
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" && messages[i].Content != "" {
-			query = messages[i].Content
-			break
-		}
-	}
-	if query == "" {
-		return messages
-	}
-
-	resp, err := s.client.Embed(ctx, ollama.EmbedRequest{Model: embedModel, Input: query})
-	if err != nil || len(resp.Embeddings) == 0 {
-		return messages
-	}
-
-	results := s.memoryStore.Search(resp.Embeddings[0], 3)
-	if len(results) == 0 {
-		return messages
-	}
-
-	var sb strings.Builder
-	sb.WriteString("The following relevant information was retrieved from memory:\n")
-	for i, r := range results {
-		sb.WriteString(fmt.Sprintf("\n[%d] %s", i+1, r.Text))
-	}
-	sb.WriteString("\n\nUse the above context if it helps answer the user's question.")
-
-	augmented := make([]ollama.Message, 0, len(messages)+1)
-	augmented = append(augmented, ollama.Message{Role: "system", Content: sb.String()})
-	augmented = append(augmented, messages...)
-	return augmented
 }
 
 // runChatStream handles the chat streaming loop including tool calls.

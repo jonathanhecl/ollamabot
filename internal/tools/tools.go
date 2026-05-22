@@ -5,21 +5,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
-	enabled   map[string]bool
-	defs      []ollama.Tool
-	workspace string
+	enabled     map[string]bool
+	defs        []ollama.Tool
+	workspace   string
+	memoryStore *memory.Store
+	client      *ollama.Client
+	embedModel  string
 }
 
 // NewRegistry creates a registry with the given feature toggles.
-func NewRegistry(webSearch bool, workspace string) *Registry {
-	r := &Registry{enabled: map[string]bool{}, workspace: workspace}
+func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string) *Registry {
+	r := &Registry{enabled: map[string]bool{}, workspace: workspace, memoryStore: memoryStore, client: client, embedModel: embedModel}
 	if webSearch {
 		r.enabled["web_search"] = true
 		r.defs = append(r.defs, ollama.Tool{
@@ -63,6 +68,53 @@ func NewRegistry(webSearch bool, workspace string) *Registry {
 			},
 		},
 	})
+	if r.memoryStore != nil && r.embedModel != "" {
+		r.enabled["memory_search"] = true
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        "memory_search",
+				Description: "Search the long-term memory store using semantic similarity. Use this when the user asks about past conversations, previously discussed topics, or stored knowledge that may not be in the current conversation history.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"query": map[string]any{
+							"type":        "string",
+							"description": "The search query describing what to recall from memory.",
+						},
+						"top_k": map[string]any{
+							"type":        "integer",
+							"description": "Maximum number of memory entries to return (1-10).",
+							"default":     3,
+						},
+					},
+					"required": []string{"query"},
+				},
+			},
+		})
+		r.enabled["memory_add"] = true
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        "memory_add",
+				Description: "Store a piece of text into long-term memory for future retrieval. Use this to persist important facts, decisions, or context from the current conversation.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"text": map[string]any{
+							"type":        "string",
+							"description": "The text to store in memory.",
+						},
+						"source": map[string]any{
+							"type":        "string",
+							"description": "Optional source tag (e.g., 'user_fact', 'decision', 'project_note').",
+						},
+					},
+					"required": []string{"text"},
+				},
+			},
+		})
+	}
 	return r
 }
 
@@ -122,6 +174,56 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("missing path")
 		}
 		return ReadFile(r.workspace, path)
+	case "memory_search":
+		query, _ := args["query"].(string)
+		if query == "" {
+			return "", fmt.Errorf("missing query")
+		}
+		topK := 3
+		if v, ok := args["top_k"]; ok {
+			switch n := v.(type) {
+			case float64:
+				topK = int(n)
+			case int:
+				topK = n
+			case int64:
+				topK = int(n)
+			}
+		}
+		resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: query})
+		if err != nil {
+			return "", fmt.Errorf("embed failed: %w", err)
+		}
+		if len(resp.Embeddings) == 0 {
+			return "", fmt.Errorf("empty embedding response")
+		}
+		results := r.memoryStore.Search(resp.Embeddings[0], topK)
+		if len(results) == 0 {
+			return "No relevant memories found.", nil
+		}
+		var sb strings.Builder
+		for i, res := range results {
+			fmt.Fprintf(&sb, "[%d] (relevance %.2f) %s\n", i+1, res.Score, res.Text)
+		}
+		return sb.String(), nil
+	case "memory_add":
+		text, _ := args["text"].(string)
+		if text == "" {
+			return "", fmt.Errorf("missing text")
+		}
+		source, _ := args["source"].(string)
+		resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: text})
+		if err != nil {
+			return "", fmt.Errorf("embed failed: %w", err)
+		}
+		if len(resp.Embeddings) == 0 {
+			return "", fmt.Errorf("empty embedding response")
+		}
+		entry := memory.Entry{Text: text, Source: source, Embedding: resp.Embeddings[0]}
+		if err := r.memoryStore.Add(entry); err != nil {
+			return "", fmt.Errorf("store failed: %w", err)
+		}
+		return fmt.Sprintf("Stored in memory with ID: %s", entry.ID), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
