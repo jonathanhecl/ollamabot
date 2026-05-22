@@ -247,21 +247,25 @@ h2 {
 }
 
 .context-bar {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 24px;
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  padding: 4px 12px;
+  margin: 6px 24px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
   background: var(--panel-2);
+  width: fit-content;
 }
 
 .context-track {
-  flex: 1;
+  width: 120px;
   height: 6px;
   background: #11140f;
   border-radius: 999px;
   overflow: hidden;
   border: 1px solid var(--line);
+  flex-shrink: 0;
 }
 
 .context-fill {
@@ -717,24 +721,63 @@ textarea {
 
 .settings-form {
   display: grid;
-  gap: 14px;
+  gap: 12px;
   padding: 18px;
 }
 
-.settings-form label {
+.settings-form label:not(.think-toggle) {
   display: grid;
   gap: 6px;
   color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .settings-form input,
 .settings-form select {
   min-height: 40px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 8px 10px;
+  border-radius: 8px;
+  padding: 8px 12px;
   background: #11140f;
   color: var(--text);
+  font-size: 14px;
+  transition: border-color 0.2s ease;
+}
+
+.settings-form input:focus,
+.settings-form select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-form .think-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  padding: 6px 0;
+}
+
+.settings-form .think-toggle input[type="checkbox"] {
+  min-height: auto;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.settings-form .checkbox-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 4px 0;
 }
 
 .empty {
