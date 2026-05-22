@@ -20,6 +20,7 @@ type Config struct {
 	TelegramBotToken   string
 	WebAddr            string
 	WebEnabled         bool
+	WebSearchEnabled   bool
 }
 
 func Load(path string) (Config, error) {
@@ -41,9 +42,10 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg := Config{
-		OllamaBaseURL: "http://localhost:11434",
-		WebAddr:       ":8080",
-		WebEnabled:    true,
+		OllamaBaseURL:    "http://localhost:11434",
+		WebAddr:          ":8080",
+		WebEnabled:       true,
+		WebSearchEnabled: false,
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -65,6 +67,9 @@ func Load(path string) (Config, error) {
 	}
 	if value := apply("WEB_ADDR"); value != "" {
 		cfg.WebAddr = value
+	}
+	if value := apply("WEB_SEARCH_ENABLED"); value != "" {
+		cfg.WebSearchEnabled = parseBool(value)
 	}
 
 	normalized, err := NormalizeBaseURL(cfg.OllamaBaseURL)
@@ -96,16 +101,17 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	}
 	webEnabled := parseBool(webAnswer)
 	webAddr := ":" + strings.TrimPrefix(strings.TrimSpace(port), ":")
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\n", baseURL, webEnabled, webAddr)
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=false\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\n", baseURL, webEnabled, webAddr)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\n",
+		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.WebEnabled,
 		cfg.WebAddr,
+		cfg.WebSearchEnabled,
 		strings.Join(cfg.OllamaProbeModels, ","),
 		cfg.OllamaDefaultModel,
 		cfg.OllamaModelVision,

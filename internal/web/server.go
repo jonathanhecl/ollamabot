@@ -21,6 +21,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
 //go:embed static
@@ -63,12 +64,13 @@ type ModelsResponse struct {
 }
 
 type SettingsResponse struct {
-	OllamaBaseURL   string `json:"ollama_base_url"`
-	WebAddr         string `json:"web_addr"`
-	WebEnabled      bool   `json:"web_enabled"`
-	ModelVision     string `json:"model_vision"`
-	ModelAudio      string `json:"model_audio"`
-	ModelEmbeddings string `json:"model_embeddings"`
+	OllamaBaseURL    string `json:"ollama_base_url"`
+	WebAddr          string `json:"web_addr"`
+	WebEnabled       bool   `json:"web_enabled"`
+	WebSearchEnabled bool   `json:"web_search_enabled"`
+	ModelVision      string `json:"model_vision"`
+	ModelAudio       string `json:"model_audio"`
+	ModelEmbeddings  string `json:"model_embeddings"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -156,6 +158,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
 	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
+	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -201,48 +204,112 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, client, _, mr := s.deps()
+	cfg, client, _, mr := s.deps()
 
 	// Pre-process media attachments using role models before sending to main.
-	ollama_messages, err := resolveMedia(r.Context(), mr, input.Messages)
+	ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	registry := tools.NewRegistry(cfg.WebSearchEnabled)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
 
-	err = client.ChatStream(r.Context(), ollama.ChatRequest{
-		Model:    input.Model,
-		Messages: ollama_messages,
-		Think:    input.Think,
-	}, func(chunk ollama.ChatResponse) error {
-		if chunk.Message.Thinking != "" {
-			writeSSE(w, "thinking", chunk.Message.Thinking)
-		}
-		if chunk.Message.Content != "" {
-			writeSSE(w, "content", chunk.Message.Content)
-		}
-		for _, call := range chunk.Message.ToolCalls {
-			writeSSE(w, "tool_call", call)
-		}
-		if chunk.Done {
-			writeSSE(w, "done", map[string]any{"model": chunk.Model, "reason": chunk.DoneReason})
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		return nil
-	})
+	err = runChatStream(r.Context(), client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
 		writeSSE(w, "error", err.Error())
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
+}
+
+// runChatStream handles the chat streaming loop including tool calls.
+func runChatStream(ctx context.Context, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
+	maxToolRounds := 3
+	for round := 0; round <= maxToolRounds; round++ {
+		var assistantContent strings.Builder
+		var assistantThinking strings.Builder
+		var toolCalls []ollama.ToolCall
+		seenTool := map[string]struct{}{}
+
+		req := ollama.ChatRequest{
+			Model:    model,
+			Messages: messages,
+			Think:    think,
+		}
+		defs := registry.Definitions()
+		if len(defs) > 0 && round < maxToolRounds {
+			req.Tools = defs
+		}
+
+		done := false
+		err := client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
+			if chunk.Message.Thinking != "" {
+				assistantThinking.WriteString(chunk.Message.Thinking)
+				writeSSE(w, "thinking", chunk.Message.Thinking)
+			}
+			if chunk.Message.Content != "" {
+				assistantContent.WriteString(chunk.Message.Content)
+				writeSSE(w, "content", chunk.Message.Content)
+			}
+			for _, call := range chunk.Message.ToolCalls {
+				key := call.Function.Name + "|" + string(call.Function.Arguments)
+				if _, ok := seenTool[key]; ok {
+					continue
+				}
+				seenTool[key] = struct{}{}
+				toolCalls = append(toolCalls, call)
+				writeSSE(w, "tool_call", call)
+			}
+			if chunk.Done {
+				done = true
+				writeSSE(w, "done", map[string]any{"model": chunk.Model, "reason": chunk.DoneReason})
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if !done {
+			return nil
+		}
+		if len(toolCalls) == 0 {
+			return nil
+		}
+
+		// Build assistant message with tool calls.
+		assistantMsg := ollama.Message{
+			Role:      "assistant",
+			Content:   assistantContent.String(),
+			ToolCalls: toolCalls,
+		}
+		messages = append(messages, assistantMsg)
+
+		// Execute tools and append results.
+		for _, call := range toolCalls {
+			result, terr := registry.Execute(ctx, call)
+			if terr != nil {
+				result = fmt.Sprintf("Error: %v", terr)
+			}
+			messages = append(messages, ollama.Message{
+				Role:     "tool",
+				ToolName: call.Function.Name,
+				Content:  result,
+			})
+		}
+
+		// Continue loop to get model's final response using tool results.
+	}
+	return nil
 }
 
 // resolveMedia iterates the messages, and for any user message that has media
@@ -407,12 +474,13 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func settingsResponse(cfg config.Config) SettingsResponse {
 	return SettingsResponse{
-		OllamaBaseURL:   cfg.OllamaBaseURL,
-		WebAddr:         cfg.WebAddr,
-		WebEnabled:      cfg.WebEnabled,
-		ModelVision:     cfg.OllamaModelVision,
-		ModelAudio:      cfg.OllamaModelAudio,
-		ModelEmbeddings: cfg.OllamaModelEmbed,
+		OllamaBaseURL:    cfg.OllamaBaseURL,
+		WebAddr:          cfg.WebAddr,
+		WebEnabled:       cfg.WebEnabled,
+		WebSearchEnabled: cfg.WebSearchEnabled,
+		ModelVision:      cfg.OllamaModelVision,
+		ModelAudio:       cfg.OllamaModelAudio,
+		ModelEmbeddings:  cfg.OllamaModelEmbed,
 	}
 }
 

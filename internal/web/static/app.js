@@ -43,6 +43,7 @@ const els = {
   openSettings: document.querySelector("#openSettings"),
   settingsForm: document.querySelector("#settingsForm"),
   ollamaUrl: document.querySelector("#ollamaUrl"),
+  webSearchToggle: document.querySelector("#webSearchToggle"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
 };
@@ -53,6 +54,7 @@ els.openModels.addEventListener("click", () => {
 });
 els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
   try {
@@ -148,6 +150,7 @@ async function loadSettings() {
   if (!response.ok) return;
   state.settings = await response.json();
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
@@ -168,6 +171,7 @@ async function saveSettings(event) {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
+      web_search_enabled: els.webSearchToggle.checked,
     }),
   });
   const data = await response.json();
@@ -189,6 +193,7 @@ async function saveRoleModels() {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
+      web_search_enabled: state.settings.web_search_enabled || false,
     }),
   });
 }
