@@ -114,6 +114,42 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 				},
 			},
 		})
+		r.enabled["memory_delete"] = true
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        "memory_delete",
+				Description: "Delete a memory entry by ID. Use this when information becomes outdated, incorrect, or no longer relevant.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"id": map[string]any{
+							"type":        "string",
+							"description": "The ID of the memory entry to delete.",
+						},
+					},
+					"required": []string{"id"},
+				},
+			},
+		})
+		r.enabled["memory_list"] = true
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        "memory_list",
+				Description: "List recent memory entries. Use this to review what is stored before deciding whether to add, update, or delete information.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"limit": map[string]any{
+							"type":        "integer",
+							"description": "Maximum number of entries to return (default 20).",
+							"default":     20,
+						},
+					},
+				},
+			},
+		})
 	}
 	return r
 }
@@ -224,6 +260,39 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("store failed: %w", err)
 		}
 		return fmt.Sprintf("Stored in memory with ID: %s", entry.ID), nil
+	case "memory_delete":
+		id, _ := args["id"].(string)
+		if id == "" {
+			return "", fmt.Errorf("missing id")
+		}
+		if err := r.memoryStore.Delete(id); err != nil {
+			return "", fmt.Errorf("delete failed: %w", err)
+		}
+		return fmt.Sprintf("Deleted memory entry %s", id), nil
+	case "memory_list":
+		limit := 20
+		if v, ok := args["limit"]; ok {
+			switch n := v.(type) {
+			case float64:
+				limit = int(n)
+			case int:
+				limit = n
+			case int64:
+				limit = int(n)
+			}
+		}
+		entries := r.memoryStore.List()
+		if len(entries) == 0 {
+			return "No memory entries stored.", nil
+		}
+		if limit > len(entries) {
+			limit = len(entries)
+		}
+		var sb strings.Builder
+		for i, e := range entries[:limit] {
+			fmt.Fprintf(&sb, "[%d] ID: %s | Source: %s | Created: %s | Text: %s\n", i+1, e.ID, e.Source, e.CreatedAt.Format(time.RFC3339), e.Text)
+		}
+		return sb.String(), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

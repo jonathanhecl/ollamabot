@@ -276,6 +276,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Inject autonomous memory management instruction as a system prompt.
+	if cfg.OllamaModelEmbed != "" {
+		ollamaMessages = append([]ollama.Message{{
+			Role:    "system",
+			Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate: if you learn updated information, delete the old version and store the new one.\n- Prioritize: only store information that is likely to be useful later.",
+		}}, ollamaMessages...)
+	}
+
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
 
 	w.Header().Set("Content-Type", "text/event-stream")
