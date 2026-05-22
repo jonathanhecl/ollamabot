@@ -46,6 +46,13 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.Workspace, err = resolveWorkspace(cfg.Workspace)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.Workspace, 0o755); err != nil {
+		return err
+	}
 	if *baseURL != "" {
 		normalized, err := config.NormalizeBaseURL(*baseURL)
 		if err != nil {
@@ -282,4 +289,15 @@ func probeUsage() {
 	fmt.Println("  probe embeddings --model MODEL")
 	fmt.Println("  probe audio --model MODEL")
 	fmt.Println("  probe audio --model MODEL --audio PATH")
+}
+
+func resolveWorkspace(workspace string) (string, error) {
+	if filepath.IsAbs(workspace) {
+		return workspace, nil
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Dir(exe), workspace), nil
 }

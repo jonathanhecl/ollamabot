@@ -43,6 +43,7 @@ const els = {
   openSettings: document.querySelector("#openSettings"),
   settingsForm: document.querySelector("#settingsForm"),
   ollamaUrl: document.querySelector("#ollamaUrl"),
+  workspacePath: document.querySelector("#workspacePath"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   recordControl: document.querySelector("#recordControl"),
@@ -55,6 +56,7 @@ els.openModels.addEventListener("click", () => {
 });
 els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.workspacePath.value = state.settings.workspace || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   els.settingsDialog.showModal();
@@ -152,6 +154,7 @@ async function loadSettings() {
   if (!response.ok) return;
   state.settings = await response.json();
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.workspacePath.value = state.settings.workspace || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
@@ -171,6 +174,7 @@ async function saveSettings(event) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ollama_base_url: els.ollamaUrl.value.trim(),
+      workspace: els.workspacePath.value.trim(),
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
@@ -194,6 +198,7 @@ async function saveRoleModels() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ollama_base_url: state.settings.ollama_base_url || "",
+      workspace: state.settings.workspace || "",
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,

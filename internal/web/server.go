@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -72,6 +73,7 @@ type SettingsResponse struct {
 	ModelVision      string `json:"model_vision"`
 	ModelAudio       string `json:"model_audio"`
 	ModelEmbeddings  string `json:"model_embeddings"`
+	Workspace        string `json:"workspace"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -158,6 +160,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	workspace := strings.TrimSpace(input.Workspace)
+	if workspace == "" {
+		workspace = "workspace"
+	}
+	if !filepath.IsAbs(workspace) {
+		if exe, err := os.Executable(); err == nil {
+			workspace = filepath.Join(filepath.Dir(exe), workspace)
+		}
+	}
+	_ = os.MkdirAll(workspace, 0o755)
+
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
@@ -165,6 +178,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.WebExposeNetwork = input.WebExposeNetwork
+	s.cfg.Workspace = workspace
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -488,6 +502,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelVision:      cfg.OllamaModelVision,
 		ModelAudio:       cfg.OllamaModelAudio,
 		ModelEmbeddings:  cfg.OllamaModelEmbed,
+		Workspace:        cfg.Workspace,
 	}
 }
 
