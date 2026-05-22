@@ -60,6 +60,13 @@ func run(args []string) error {
 	if err := os.MkdirAll(cfg.SessionsPath, 0o755); err != nil {
 		return err
 	}
+	cfg.MemoryPath, err = resolveWorkspace(cfg.MemoryPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.MemoryPath, 0o755); err != nil {
+		return err
+	}
 	if *baseURL != "" {
 		normalized, err := config.NormalizeBaseURL(*baseURL)
 		if err != nil {

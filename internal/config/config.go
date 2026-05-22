@@ -24,6 +24,7 @@ type Config struct {
 	WebExposeNetwork   bool
 	Workspace          string
 	SessionsPath       string
+	MemoryPath         string
 }
 
 func Load(path string) (Config, error) {
@@ -52,6 +53,7 @@ func Load(path string) (Config, error) {
 		WebExposeNetwork: true,
 		Workspace:        "workspace",
 		SessionsPath:     "sessions",
+		MemoryPath:       "memory",
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -86,6 +88,9 @@ func Load(path string) (Config, error) {
 	if value := apply("SESSIONS_PATH"); value != "" {
 		cfg.SessionsPath = value
 	}
+	if value := apply("MEMORY_PATH"); value != "" {
+		cfg.MemoryPath = value
+	}
 
 	normalized, err := NormalizeBaseURL(cfg.OllamaBaseURL)
 	if err != nil {
@@ -116,13 +121,13 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	}
 	webEnabled := parseBool(webAnswer)
 	webAddr := ":" + strings.TrimPrefix(strings.TrimSpace(port), ":")
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=false\nWEB_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\n", baseURL, webEnabled, webAddr)
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=false\nWEB_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\n", baseURL, webEnabled, webAddr)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nWEB_EXPOSE_NETWORK=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\n",
+		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nWEB_EXPOSE_NETWORK=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.WebEnabled,
 		cfg.WebAddr,
@@ -136,6 +141,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.TelegramBotToken,
 		cfg.Workspace,
 		cfg.SessionsPath,
+		cfg.MemoryPath,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)
 }

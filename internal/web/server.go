@@ -19,6 +19,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
@@ -38,6 +39,7 @@ type Server struct {
 	mediaro      *router.Router
 	cachePath    string
 	sessionStore *sessions.Store
+	memoryStore  *memory.Store
 }
 
 type ModelView struct {
@@ -77,6 +79,7 @@ type SettingsResponse struct {
 	ModelEmbeddings  string `json:"model_embeddings"`
 	Workspace        string `json:"workspace"`
 	SessionsPath     string `json:"sessions_path"`
+	MemoryPath       string `json:"memory_path"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -99,7 +102,8 @@ func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, c
 func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
 	mr := router.New(client, routerConfig(cfg))
 	ss := sessions.NewStore(cfg.SessionsPath)
-	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss}
+	ms := memory.NewStore(cfg.MemoryPath)
+	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss, memoryStore: ms}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -113,6 +117,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	mux.HandleFunc("GET /api/memory", s.handleListMemory)
+	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
+	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
+	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	static, err := fs.Sub(staticFiles, "static")
@@ -191,6 +199,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(sessionsPath, 0o755)
 
+	memoryPath := strings.TrimSpace(input.MemoryPath)
+	if memoryPath == "" {
+		memoryPath = "memory"
+	}
+	if !filepath.IsAbs(memoryPath) {
+		if exe, err := os.Executable(); err == nil {
+			memoryPath = filepath.Join(filepath.Dir(exe), memoryPath)
+		}
+	}
+	_ = os.MkdirAll(memoryPath, 0o755)
+
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
@@ -200,10 +219,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.WebExposeNetwork = input.WebExposeNetwork
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
+	s.cfg.MemoryPath = memoryPath
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
 	s.sessionStore = sessions.NewStore(sessionsPath)
+	s.memoryStore = memory.NewStore(memoryPath)
 	cfg := s.cfg
 	s.mu.Unlock()
 
@@ -255,6 +276,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Augment with retrieved memory (RAG) if embedding model is configured.
+	ollamaMessages = s.augmentWithMemory(r.Context(), cfg, ollamaMessages)
+
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -269,6 +293,50 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// augmentWithMemory performs semantic search over the memory store using the
+// last user message as query. If results are found, it prepends a system message
+// with the retrieved context.
+func (s *Server) augmentWithMemory(ctx context.Context, cfg config.Config, messages []ollama.Message) []ollama.Message {
+	embedModel := cfg.OllamaModelEmbed
+	if embedModel == "" || s.memoryStore.Count() == 0 {
+		return messages
+	}
+
+	// Use the last user message as the query.
+	var query string
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" && messages[i].Content != "" {
+			query = messages[i].Content
+			break
+		}
+	}
+	if query == "" {
+		return messages
+	}
+
+	resp, err := s.client.Embed(ctx, ollama.EmbedRequest{Model: embedModel, Input: query})
+	if err != nil || len(resp.Embeddings) == 0 {
+		return messages
+	}
+
+	results := s.memoryStore.Search(resp.Embeddings[0], 3)
+	if len(results) == 0 {
+		return messages
+	}
+
+	var sb strings.Builder
+	sb.WriteString("The following relevant information was retrieved from memory:\n")
+	for i, r := range results {
+		sb.WriteString(fmt.Sprintf("\n[%d] %s", i+1, r.Text))
+	}
+	sb.WriteString("\n\nUse the above context if it helps answer the user's question.")
+
+	augmented := make([]ollama.Message, 0, len(messages)+1)
+	augmented = append(augmented, ollama.Message{Role: "system", Content: sb.String()})
+	augmented = append(augmented, messages...)
+	return augmented
 }
 
 // runChatStream handles the chat streaming loop including tool calls.
@@ -594,6 +662,96 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
+type addMemoryRequest struct {
+	Text   string `json:"text"`
+	Source string `json:"source,omitempty"`
+}
+
+type searchMemoryRequest struct {
+	Query string `json:"query"`
+	TopK  int    `json:"top_k,omitempty"`
+}
+
+func (s *Server) handleListMemory(w http.ResponseWriter, r *http.Request) {
+	entries := s.memoryStore.List()
+	writeJSON(w, http.StatusOK, map[string]any{"entries": entries, "count": len(entries)})
+}
+
+func (s *Server) handleAddMemory(w http.ResponseWriter, r *http.Request) {
+	var req addMemoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Text) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("text is required"))
+		return
+	}
+	cfg := s.config()
+	embedModel := cfg.OllamaModelEmbed
+	if embedModel == "" {
+		writeError(w, http.StatusServiceUnavailable, errors.New("no embedding model configured"))
+		return
+	}
+	resp, err := s.client.Embed(r.Context(), ollama.EmbedRequest{Model: embedModel, Input: req.Text})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(resp.Embeddings) == 0 {
+		writeError(w, http.StatusInternalServerError, errors.New("empty embedding response"))
+		return
+	}
+	entry := memory.Entry{Text: req.Text, Source: req.Source, Embedding: resp.Embeddings[0]}
+	if err := s.memoryStore.Add(entry); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
+}
+
+func (s *Server) handleSearchMemory(w http.ResponseWriter, r *http.Request) {
+	var req searchMemoryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(req.Query) == "" {
+		writeError(w, http.StatusBadRequest, errors.New("query is required"))
+		return
+	}
+	cfg := s.config()
+	embedModel := cfg.OllamaModelEmbed
+	if embedModel == "" {
+		writeError(w, http.StatusServiceUnavailable, errors.New("no embedding model configured"))
+		return
+	}
+	resp, err := s.client.Embed(r.Context(), ollama.EmbedRequest{Model: embedModel, Input: req.Query})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if len(resp.Embeddings) == 0 {
+		writeError(w, http.StatusInternalServerError, errors.New("empty embedding response"))
+		return
+	}
+	topK := req.TopK
+	if topK <= 0 {
+		topK = 3
+	}
+	results := s.memoryStore.Search(resp.Embeddings[0], topK)
+	writeJSON(w, http.StatusOK, map[string]any{"results": results})
+}
+
+func (s *Server) handleDeleteMemory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.memoryStore.Delete(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
 func writeSSE(w http.ResponseWriter, event string, value any) {
 	payload, _ := json.Marshal(value)
 	fmt.Fprintf(w, "event: %s\n", event)
@@ -622,6 +780,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelEmbeddings:  cfg.OllamaModelEmbed,
 		Workspace:        cfg.Workspace,
 		SessionsPath:     cfg.SessionsPath,
+		MemoryPath:       cfg.MemoryPath,
 	}
 }
 

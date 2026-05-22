@@ -45,6 +45,7 @@ Hecho:
 - Pre-analisis de media por modelo de rol: si hay un modelo dedicado distinto del main para vision o audio, el backend (`internal/router`) lo invoca con un prompt de analisis detallado antes de llamar al main. El resultado textual se inyecta como contexto prefijado en el mensaje (`[image analysis]` / `[audio analysis]`). El main recibe solo texto enriquecido y responde con el historial completo. Si no hay modelo dedicado, el objeto pasa directo al main como antes. Transparente para el frontend.
 - Sidebar de sesiones en la web: panel lateral izquierdo ocultable con lista de sesiones previas. Cada sesion es una carpeta (`sessions/{id}/`) con `session.json` (metadata), `messages.json` (mensajes) y `attachments/` (archivos binarios extraidos de base64). La ruta de sesiones es configurable via `SESSIONS_PATH` (default `sessions`, relativo al ejecutable). Se puede crear una nueva sesion, cambiar entre sesiones, y el estado se guarda automaticamente al finalizar cada respuesta del modelo.
 - Barra de contexto con porcentaje estimado de uso del context window del modelo main: calcula tokens aproximados (caracteres / 4) sobre `context_length` del modelo activo. Cambia de color a naranja (>70%) o rojo (>90%).
+- Memoria a largo plazo local (RAG): sistema de semantic search usando el modelo definido en `OLLAMA_MODEL_EMBED`. Persiste en `memory.jsonl` dentro de una carpeta configurable (`MEMORY_PATH`, default `memory`, relativo al ejecutable). Cada entrada tiene texto, embedding vector, source y timestamp. La busqueda usa cosine similarity en memoria (O(n) eficiente para uso local). Se integra automaticamente en el chat stream: antes de enviar al modelo, se buscan los top-3 chunks relevantes usando el ultimo mensaje del usuario como query, y se inyectan como un system message con contexto recuperado. Endpoints REST: `GET /api/memory`, `POST /api/memory`, `POST /api/memory/search`, `DELETE /api/memory/{id}`.
 
 Comandos disponibles:
 
@@ -78,10 +79,10 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
 - Crear canal Telegram.
-- Implementar memoria a largo plazo por canal (embeddings + semantic search).
 - Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
 - Definir soporte de video como pipeline de frames.
 - Confirmacion de acciones riesgosas para tools (ej. borrar/modificar archivos, ejecutar comandos).
+- Agregar indexacion automatica de mensajes de chat a la memoria RAG.
 
 ## Riesgos y Notas
 

@@ -48,6 +48,7 @@ const els = {
   ollamaUrl: document.querySelector("#ollamaUrl"),
   workspacePath: document.querySelector("#workspacePath"),
   sessionsPath: document.querySelector("#sessionsPath"),
+  memoryPath: document.querySelector("#memoryPath"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   recordControl: document.querySelector("#recordControl"),
@@ -69,6 +70,7 @@ els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
+  els.memoryPath.value = state.settings.memory_path || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   els.settingsDialog.showModal();
@@ -196,6 +198,7 @@ async function loadSettings() {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
+  els.memoryPath.value = state.settings.memory_path || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
@@ -217,6 +220,7 @@ async function saveSettings(event) {
       ollama_base_url: els.ollamaUrl.value.trim(),
       workspace: els.workspacePath.value.trim(),
       sessions_path: els.sessionsPath.value.trim(),
+      memory_path: els.memoryPath.value.trim(),
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
@@ -242,6 +246,7 @@ async function saveRoleModels() {
       ollama_base_url: state.settings.ollama_base_url || "",
       workspace: state.settings.workspace || "",
       sessions_path: state.settings.sessions_path || "",
+      memory_path: state.settings.memory_path || "",
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
