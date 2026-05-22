@@ -76,6 +76,7 @@ type SettingsResponse struct {
 	ModelAudio       string `json:"model_audio"`
 	ModelEmbeddings  string `json:"model_embeddings"`
 	Workspace        string `json:"workspace"`
+	SessionsPath     string `json:"sessions_path"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -97,7 +98,7 @@ func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, c
 
 func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
 	mr := router.New(client, routerConfig(cfg))
-	ss := sessions.NewStore(cfg.Workspace)
+	ss := sessions.NewStore(cfg.SessionsPath)
 	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss}
 }
 
@@ -179,6 +180,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(workspace, 0o755)
 
+	sessionsPath := strings.TrimSpace(input.SessionsPath)
+	if sessionsPath == "" {
+		sessionsPath = "sessions"
+	}
+	if !filepath.IsAbs(sessionsPath) {
+		if exe, err := os.Executable(); err == nil {
+			sessionsPath = filepath.Join(filepath.Dir(exe), sessionsPath)
+		}
+	}
+	_ = os.MkdirAll(sessionsPath, 0o755)
+
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
@@ -187,9 +199,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.WebExposeNetwork = input.WebExposeNetwork
 	s.cfg.Workspace = workspace
+	s.cfg.SessionsPath = sessionsPath
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
+	s.sessionStore = sessions.NewStore(sessionsPath)
 	cfg := s.cfg
 	s.mu.Unlock()
 
@@ -607,6 +621,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelAudio:       cfg.OllamaModelAudio,
 		ModelEmbeddings:  cfg.OllamaModelEmbed,
 		Workspace:        cfg.Workspace,
+		SessionsPath:     cfg.SessionsPath,
 	}
 }
 

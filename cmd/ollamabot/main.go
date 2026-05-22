@@ -53,6 +53,13 @@ func run(args []string) error {
 	if err := os.MkdirAll(cfg.Workspace, 0o755); err != nil {
 		return err
 	}
+	cfg.SessionsPath, err = resolveWorkspace(cfg.SessionsPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.SessionsPath, 0o755); err != nil {
+		return err
+	}
 	if *baseURL != "" {
 		normalized, err := config.NormalizeBaseURL(*baseURL)
 		if err != nil {
