@@ -47,7 +47,7 @@ input {
   flex-direction: column;
   border-right: 1px solid var(--line);
   background: var(--panel);
-  overflow: hidden;
+  overflow: visible;
   position: relative;
   transition: margin-left 0.25s ease;
 }
