@@ -68,6 +68,7 @@ type SettingsResponse struct {
 	WebAddr          string `json:"web_addr"`
 	WebEnabled       bool   `json:"web_enabled"`
 	WebSearchEnabled bool   `json:"web_search_enabled"`
+	WebExposeNetwork bool   `json:"web_expose_network"`
 	ModelVision      string `json:"model_vision"`
 	ModelAudio       string `json:"model_audio"`
 	ModelEmbeddings  string `json:"model_embeddings"`
@@ -110,8 +111,12 @@ func (s *Server) ListenAndServe() error {
 	mux.Handle("/", http.FileServer(http.FS(static)))
 
 	cfg := s.config()
-	log.Printf("ollamabot web listening on %s", cfg.WebAddr)
-	return http.ListenAndServe(cfg.WebAddr, mux)
+	addr := cfg.WebAddr
+	if !cfg.WebExposeNetwork && strings.HasPrefix(addr, ":") {
+		addr = "127.0.0.1" + addr
+	}
+	log.Printf("ollamabot web listening on %s", addr)
+	return http.ListenAndServe(addr, mux)
 }
 
 func (s *Server) config() config.Config {
@@ -159,6 +164,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
+	s.cfg.WebExposeNetwork = input.WebExposeNetwork
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -478,6 +484,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		WebAddr:          cfg.WebAddr,
 		WebEnabled:       cfg.WebEnabled,
 		WebSearchEnabled: cfg.WebSearchEnabled,
+		WebExposeNetwork: cfg.WebExposeNetwork,
 		ModelVision:      cfg.OllamaModelVision,
 		ModelAudio:       cfg.OllamaModelAudio,
 		ModelEmbeddings:  cfg.OllamaModelEmbed,

@@ -44,6 +44,7 @@ const els = {
   settingsForm: document.querySelector("#settingsForm"),
   ollamaUrl: document.querySelector("#ollamaUrl"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
+  webExposeToggle: document.querySelector("#webExposeToggle"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
 };
@@ -55,6 +56,7 @@ els.openModels.addEventListener("click", () => {
 els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
+  els.webExposeToggle.checked = !!state.settings.web_expose_network;
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
   try {
@@ -151,6 +153,7 @@ async function loadSettings() {
   state.settings = await response.json();
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
+  els.webExposeToggle.checked = !!state.settings.web_expose_network;
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
@@ -172,6 +175,7 @@ async function saveSettings(event) {
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       web_search_enabled: els.webSearchToggle.checked,
+      web_expose_network: els.webExposeToggle.checked,
     }),
   });
   const data = await response.json();
@@ -194,6 +198,7 @@ async function saveRoleModels() {
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       web_search_enabled: state.settings.web_search_enabled || false,
+      web_expose_network: state.settings.web_expose_network || false,
     }),
   });
 }
