@@ -4,19 +4,22 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
-	enabled map[string]bool
-	defs    []ollama.Tool
+	enabled   map[string]bool
+	defs      []ollama.Tool
+	workspace string
 }
 
 // NewRegistry creates a registry with the given feature toggles.
-func NewRegistry(webSearch bool) *Registry {
-	r := &Registry{enabled: map[string]bool{}}
+func NewRegistry(webSearch bool, workspace string) *Registry {
+	r := &Registry{enabled: map[string]bool{}, workspace: workspace}
 	if webSearch {
 		r.enabled["web_search"] = true
 		r.defs = append(r.defs, ollama.Tool{
@@ -42,6 +45,24 @@ func NewRegistry(webSearch bool) *Registry {
 			},
 		})
 	}
+	r.enabled["read_file"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "read_file",
+			Description: "Read the contents of a text file within the workspace. Returns the file content or an error if the file is missing, too large, or binary. If the path is a directory, it lists the entries.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Relative path within the workspace.",
+					},
+				},
+				"required": []string{"path"},
+			},
+		},
+	})
 	return r
 }
 
@@ -62,6 +83,21 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	result, err := r.execute(ctx, name, args)
+	duration := time.Since(start)
+	if err != nil {
+		log.Printf("[tool] %s error (%v): %v", name, duration, err)
+		return "", err
+	}
+	log.Printf("[tool] %s ok (%v) result_len=%d", name, duration, len(result))
+	return result, nil
+}
+
+func (r *Registry) execute(ctx context.Context, name string, args map[string]any) (string, error) {
 	switch name {
 	case "web_search":
 		query, _ := args["query"].(string)
@@ -80,6 +116,12 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			}
 		}
 		return Search(ctx, query, maxResults)
+	case "read_file":
+		path, _ := args["path"].(string)
+		if path == "" {
+			return "", fmt.Errorf("missing path")
+		}
+		return ReadFile(r.workspace, path)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

@@ -29,6 +29,11 @@ Hecho:
 - Previews de imagen/audio antes de enviar y dentro del chat despues del envio.
 - Animacion de espera antes del primer token y brillo/cursor mientras la respuesta sigue en streaming.
 - Preparacion visual para tool calls: si el modelo devuelve `tool_calls`, la web muestra nombre y parametros.
+- Ejecucion real de tools internas con retorno automatico al modelo: loop de hasta 3 rondas, mensajes `role: tool` con campo `name`.
+- Tool `web_search` con DuckDuckGo (sin API key).
+- Tool `read_file` restringida al workspace (sin symlink escape, limite 1 MiB, rechaza binarios; lista directorios).
+- Timeout de 60s y auditoria basica (`log.Printf`) en ejecucion de tools.
+- Eventos SSE `tool_start` y `tool_result` para mostrar ejecucion y resultados en la web.
 - Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
 - Documentacion local generada en `docs/ollama-reference.md`.
 - Inventario local generado en `docs/local-model-inventory.md`.
@@ -69,15 +74,13 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 ## Pendiente
 
-- Agregar ejecucion real de tools internas y retorno automatico al modelo.
 - Agregar historial/memoria por conversacion y canal.
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
 - Crear canal Telegram.
-- Definir interfaz de tools internas del agente.
 - Implementar memoria/conversaciones por canal.
-- Definir seguridad para tools: allowlist, timeouts, auditoria y confirmacion de acciones riesgosas.
 - Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
 - Definir soporte de video como pipeline de frames.
+- Confirmacion de acciones riesgosas para tools (ej. borrar/modificar archivos, ejecutar comandos).
 
 ## Riesgos y Notas
 

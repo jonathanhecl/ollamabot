@@ -233,7 +233,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	registry := tools.NewRegistry(cfg.WebSearchEnabled)
+	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -316,14 +316,22 @@ func runChatStream(ctx context.Context, client *ollama.Client, model string, mes
 
 		// Execute tools and append results.
 		for _, call := range toolCalls {
+			writeSSE(w, "tool_start", map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments})
+			if flusher != nil {
+				flusher.Flush()
+			}
 			result, terr := registry.Execute(ctx, call)
 			if terr != nil {
 				result = fmt.Sprintf("Error: %v", terr)
 			}
+			writeSSE(w, "tool_result", map[string]any{"name": call.Function.Name, "result": result})
+			if flusher != nil {
+				flusher.Flush()
+			}
 			messages = append(messages, ollama.Message{
-				Role:     "tool",
-				ToolName: call.Function.Name,
-				Content:  result,
+				Role:    "tool",
+				Name:    call.Function.Name,
+				Content: result,
 			})
 		}
 

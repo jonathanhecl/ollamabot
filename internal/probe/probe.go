@@ -91,9 +91,9 @@ func (r *Runner) Tools(ctx context.Context, model string) (Result, error) {
 			continue
 		}
 		messages = append(messages, ollama.Message{
-			Role:     "tool",
-			ToolName: call.Function.Name,
-			Content:  "18C",
+			Role:    "tool",
+			Name:    call.Function.Name,
+			Content: "18C",
 		})
 	}
 	final, err := r.client.Chat(ctx, ollama.ChatRequest{

@@ -422,7 +422,7 @@ async function sendMessage(event) {
     images: msg.images || undefined,
     image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
   }));
-  const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [], streaming: true, waiting: true };
+  const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [], toolResults: [], streaming: true, waiting: true };
   state.messages.push(assistant);
   renderMessages();
 
@@ -456,6 +456,22 @@ async function sendMessage(event) {
     tool_call: (value) => {
       assistant.waiting = false;
       assistant.toolCalls.push(value);
+      renderMessages();
+    },
+    tool_start: (value) => {
+      assistant.waiting = false;
+      assistant.toolResults.push({ name: value.name, arguments: value.arguments, result: null, status: "running" });
+      renderMessages();
+    },
+    tool_result: (value) => {
+      assistant.waiting = false;
+      const item = assistant.toolResults.find((tr) => tr.name === value.name && tr.status === "running");
+      if (item) {
+        item.result = value.result;
+        item.status = "done";
+      } else {
+        assistant.toolResults.push({ name: value.name, arguments: null, result: value.result, status: "done" });
+      }
       renderMessages();
     },
     error: (value) => {
@@ -504,10 +520,11 @@ function renderMessages() {
     div.className = `message ${message.role} ${message.streaming ? "streaming" : ""}`;
     const thinking = message.thinking ? `<details class="thinking" open><summary>thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>` : "";
     const tools = message.toolCalls?.length ? `<div class="tool-calls">${message.toolCalls.map(renderToolCall).join("")}</div>` : "";
+    const toolResults = message.toolResults?.length ? `<div class="tool-results">${message.toolResults.map(renderToolResult).join("")}</div>` : "";
     const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${thinking}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${tools}`;
+    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${thinking}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${tools}${toolResults}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -516,6 +533,12 @@ function renderMessages() {
 function renderToolCall(call) {
   const fn = call.function || {};
   return `<details open><summary>tool: ${escapeHtml(fn.name || "unknown")}</summary><pre>${escapeHtml(JSON.stringify(fn.arguments || {}, null, 2))}</pre></details>`;
+}
+
+function renderToolResult(tr) {
+  const status = tr.status === "running" ? "running..." : "done";
+  const result = tr.result !== null ? escapeHtml(String(tr.result)) : "";
+  return `<details open><summary>tool result: ${escapeHtml(tr.name || "unknown")} (${status})</summary><pre>${result}</pre></details>`;
 }
 
 function addSystemMessage(content) {

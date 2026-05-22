@@ -77,7 +77,7 @@ type Message struct {
 	Content   string     `json:"content,omitempty"`
 	Thinking  string     `json:"thinking,omitempty"`
 	Images    []string   `json:"images,omitempty"`
-	ToolName  string     `json:"tool_name,omitempty"`
+	Name      string     `json:"name,omitempty"`
 	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
 }
 
