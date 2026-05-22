@@ -168,6 +168,16 @@ els.toggleSidebar.addEventListener("click", () => {
   els.toggleSidebar.textContent = state.sidebarCollapsed ? "❱" : "❰";
 });
 els.sessionList.addEventListener("click", (e) => {
+  const deleteBtn = e.target.closest(".session-delete");
+  if (deleteBtn) {
+    const item = deleteBtn.closest(".session-item");
+    if (!item) return;
+    const id = item.dataset.id;
+    if (id && confirm("Delete this session?")) {
+      deleteSession(id);
+    }
+    return;
+  }
   const item = e.target.closest(".session-item");
   if (!item) return;
   const id = item.dataset.id;
@@ -956,7 +966,7 @@ function renderSessions() {
     btn.className = `session-item ${sess.id === state.activeSessionId ? "active" : ""}`;
     btn.dataset.id = sess.id;
     const date = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString() : "";
-    btn.innerHTML = `<span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span>`;
+    btn.innerHTML = `<div class="session-info"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
     els.sessionList.appendChild(btn);
   }
 }
@@ -980,4 +990,22 @@ function updateContextBar() {
   if (pct >= 90) els.contextFill.classList.add("high");
   else if (pct >= 70) els.contextFill.classList.add("medium");
   els.contextBar.title = `${estimatedTokens.toLocaleString()} / ${ctxLen.toLocaleString()} tokens (${pct}%)`;
+}
+
+async function deleteSession(id) {
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) return;
+    state.sessions = state.sessions.filter((s) => s.id !== id);
+    if (state.activeSessionId === id) {
+      state.activeSessionId = null;
+      state.messages = [];
+      state.attachments = [];
+      renderMessages();
+      renderAttachments();
+    }
+    renderSessions();
+  } catch (e) {
+    console.warn("deleteSession failed:", e);
+  }
 }
