@@ -43,6 +43,8 @@ Hecho:
 - Router de modelos por rol: modelo main (fallback), mas modelos opcionales dedicados para vision, audio y embeddings. Seleccion por botones en el modal de modelos. Si el main ya tiene la capacidad no hace falta asignar uno dedicado; si no hay ninguno con esa capacidad, el control de adjunto se oculta. Persistido en `.env` (`OLLAMA_MODEL_VISION`, `OLLAMA_MODEL_AUDIO`, `OLLAMA_MODEL_EMBED`) y en localStorage. Badges de rol en la barra de capacidades cuando el modelo dedicado difiere del main.
 - Drag & drop de archivos sobre la web: imagenes y audio se aceptan si el modelo activo (o el dedicado de rol) soporta esa capacidad; de lo contrario se ignoran silenciosamente. Highlight visual con borde punteado mientras se arrastra.
 - Pre-analisis de media por modelo de rol: si hay un modelo dedicado distinto del main para vision o audio, el backend (`internal/router`) lo invoca con un prompt de analisis detallado antes de llamar al main. El resultado textual se inyecta como contexto prefijado en el mensaje (`[image analysis]` / `[audio analysis]`). El main recibe solo texto enriquecido y responde con el historial completo. Si no hay modelo dedicado, el objeto pasa directo al main como antes. Transparente para el frontend.
+- Sidebar de sesiones en la web: panel lateral izquierdo ocultable con lista de sesiones previas. Cada sesion persiste mensajes (texto + metadata) en JSON dentro del workspace. Se puede crear una nueva sesion, cambiar entre sesiones, y el estado se guarda automaticamente al finalizar cada respuesta del modelo.
+- Barra de contexto con porcentaje estimado de uso del context window del modelo main: calcula tokens aproximados (caracteres / 4) sobre `context_length` del modelo activo. Cambia de color a naranja (>70%) o rojo (>90%).
 
 Comandos disponibles:
 
@@ -74,10 +76,9 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 ## Pendiente
 
-- Agregar historial/memoria por conversacion y canal.
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
 - Crear canal Telegram.
-- Implementar memoria/conversaciones por canal.
+- Implementar memoria a largo plazo por canal (embeddings + semantic search).
 - Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
 - Definir soporte de video como pipeline de frames.
 - Confirmacion de acciones riesgosas para tools (ej. borrar/modificar archivos, ejecutar comandos).

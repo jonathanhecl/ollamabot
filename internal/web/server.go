@@ -22,6 +22,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -29,13 +30,14 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	mu        sync.RWMutex
-	cfg       config.Config
-	envPath   string
-	client    *ollama.Client
-	runner    *probe.Runner
-	mediaro   *router.Router
-	cachePath string
+	mu           sync.RWMutex
+	cfg          config.Config
+	envPath      string
+	client       *ollama.Client
+	runner       *probe.Runner
+	mediaro      *router.Router
+	cachePath    string
+	sessionStore *sessions.Store
 }
 
 type ModelView struct {
@@ -95,7 +97,8 @@ func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, c
 
 func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
 	mr := router.New(client, routerConfig(cfg))
-	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath}
+	ss := sessions.NewStore(cfg.Workspace)
+	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -104,6 +107,11 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
+	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
+	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
+	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
 	static, err := fs.Sub(staticFiles, "static")
@@ -482,6 +490,94 @@ func modelView(report capabilities.ModelReport, running *ollama.RunningModel, de
 		}
 	}
 	return view
+}
+
+type createSessionRequest struct {
+	Title string `json:"title"`
+	Model string `json:"model"`
+}
+
+type updateSessionRequest struct {
+	Title    string            `json:"title,omitempty"`
+	Model    string            `json:"model,omitempty"`
+	Messages []json.RawMessage `json:"messages,omitempty"`
+}
+
+func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
+	list, err := s.sessionStore.List()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
+	var req createSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	sess := sessions.Session{
+		ID:    sessions.GenerateID(),
+		Title: strings.TrimSpace(req.Title),
+		Model: strings.TrimSpace(req.Model),
+	}
+	if sess.Title == "" {
+		sess.Title = "New session"
+	}
+	if err := s.sessionStore.Save(sess); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, err := s.sessionStore.Get(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req updateSessionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	sess, err := s.sessionStore.Get(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	if req.Title != "" {
+		sess.Title = req.Title
+	}
+	if req.Model != "" {
+		sess.Model = req.Model
+	}
+	if req.Messages != nil {
+		sess.Messages = req.Messages
+	}
+	if err := s.sessionStore.Save(sess); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.sessionStore.Delete(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
 func writeSSE(w http.ResponseWriter, event string, value any) {

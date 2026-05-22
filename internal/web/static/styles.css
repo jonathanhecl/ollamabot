@@ -32,10 +32,112 @@ input {
   font: inherit;
 }
 
+.app-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  min-height: 100vh;
+}
+
+.app-layout.sidebar-collapsed {
+  grid-template-columns: 0 1fr;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow: hidden;
+  position: relative;
+  transition: margin-left 0.25s ease;
+}
+
+.app-layout.sidebar-collapsed .sidebar {
+  margin-left: -260px;
+}
+
+.sidebar-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.sidebar-head .eyebrow {
+  margin: 0;
+}
+
+.sidebar-toggle {
+  position: absolute;
+  right: -34px;
+  top: 10px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  z-index: 10;
+}
+
+.session-list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+}
+
+.session-item:hover {
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.session-item.active {
+  background: var(--panel-2);
+  border-color: var(--accent);
+}
+
+.session-title {
+  font-weight: 800;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto;
+  grid-template-rows: auto auto auto auto 1fr auto auto;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .app.drag-over {
@@ -142,6 +244,48 @@ h2 {
 .capability-bar {
   padding: 12px 24px;
   border-bottom: 1px solid var(--line);
+}
+
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel-2);
+}
+
+.context-track {
+  flex: 1;
+  height: 6px;
+  background: #11140f;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+
+.context-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.context-fill.high {
+  background: var(--bad);
+}
+
+.context-fill.medium {
+  background: #ffb347;
+}
+
+.context-bar span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  min-width: 36px;
+  text-align: right;
 }
 
 .cap.ok {

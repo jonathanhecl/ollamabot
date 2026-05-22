@@ -7,8 +7,17 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app">
-      <header class="topbar">
+    <div class="app-layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+          <span class="eyebrow">Sessions</span>
+          <button id="newSessionBtn" class="ghost-button" type="button">+ New</button>
+        </div>
+        <div id="sessionList" class="session-list"></div>
+        <button id="toggleSidebar" class="sidebar-toggle" type="button" title="Toggle sessions">☰</button>
+      </aside>
+      <main class="app" id="mainApp">
+        <header class="topbar">
         <div>
           <p class="eyebrow">OllamaBot</p>
           <h1 id="activeModel">Select a model</h1>
@@ -27,6 +36,13 @@
       </section>
 
       <section id="capabilityBar" class="capability-bar"></section>
+
+      <section id="contextBar" class="context-bar" title="Estimated context usage">
+        <div class="context-track">
+          <div class="context-fill" id="contextFill"></div>
+        </div>
+        <span id="contextLabel">0%</span>
+      </section>
 
       <section id="messages" class="messages"></section>
 
@@ -54,6 +70,7 @@
         <button type="submit">Send</button>
       </form>
     </main>
+    </div>
 
     <dialog id="modelsDialog" class="modal">
       <form method="dialog" class="modal-head">

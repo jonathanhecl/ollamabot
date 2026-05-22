@@ -7,6 +7,9 @@ const state = {
   messages: [],
   attachments: [],
   settings: {},
+  sessions: [],
+  activeSessionId: localStorage.getItem("ollamabot.activeSessionId") || null,
+  sidebarCollapsed: localStorage.getItem("ollamabot.sidebarCollapsed") === "true",
   audioContext: null,
   audioSource: null,
   audioProcessor: null,
@@ -48,6 +51,13 @@ const els = {
   webExposeToggle: document.querySelector("#webExposeToggle"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
+  sidebar: document.querySelector("#sidebar"),
+  sessionList: document.querySelector("#sessionList"),
+  newSessionBtn: document.querySelector("#newSessionBtn"),
+  toggleSidebar: document.querySelector("#toggleSidebar"),
+  contextFill: document.querySelector("#contextFill"),
+  contextLabel: document.querySelector("#contextLabel"),
+  appLayout: document.querySelector(".app-layout"),
 };
 
 els.openModels.addEventListener("click", () => {
@@ -142,11 +152,39 @@ dropZone.addEventListener("drop", (e) => {
   if (files.length > 0) addFiles(files);
 });
 
+els.newSessionBtn.addEventListener("click", () => createSession());
+els.toggleSidebar.addEventListener("click", () => {
+  state.sidebarCollapsed = !state.sidebarCollapsed;
+  localStorage.setItem("ollamabot.sidebarCollapsed", state.sidebarCollapsed);
+  applySidebarState();
+});
+els.sessionList.addEventListener("click", (e) => {
+  const item = e.target.closest(".session-item");
+  if (!item) return;
+  const id = item.dataset.id;
+  if (id) loadSession(id);
+});
+
 bootstrap();
 
 async function bootstrap() {
   await loadSettings();
   await loadModels();
+  applySidebarState();
+  await loadSessions();
+  if (state.activeSessionId) {
+    await loadSession(state.activeSessionId);
+  } else {
+    await createSession();
+  }
+}
+
+function applySidebarState() {
+  if (state.sidebarCollapsed) {
+    els.appLayout.classList.add("sidebar-collapsed");
+  } else {
+    els.appLayout.classList.remove("sidebar-collapsed");
+  }
 }
 
 async function loadSettings() {
@@ -403,6 +441,12 @@ async function sendMessage(event) {
   event.preventDefault();
   const content = els.prompt.value.trim();
   if ((!content && state.attachments.length === 0) || !state.activeModel) return;
+
+  if (!state.activeSessionId) {
+    const title = content ? content.slice(0, 40) : "New session";
+    await createSession(title);
+  }
+
   state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
   const images = state.attachments.map((attachment) => attachment.data);
   const visibleAttachments = [...state.attachments];
@@ -412,6 +456,7 @@ async function sendMessage(event) {
   els.prompt.value = "";
   renderAttachments();
   renderMessages();
+  updateContextBar();
   if (visibleAttachments.length) {
     addSystemMessage(`Attached ${visibleAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
   }
@@ -484,6 +529,8 @@ async function sendMessage(event) {
       assistant.waiting = false;
       assistant.streaming = false;
       renderMessages();
+      updateContextBar();
+      saveSession();
       loadModels();
     },
   });
@@ -784,4 +831,132 @@ function writeAscii(view, offset, value) {
   for (let i = 0; i < value.length; i++) {
     view.setUint8(offset + i, value.charCodeAt(i));
   }
+}
+
+// ----- Sessions -----
+
+async function loadSessions() {
+  try {
+    const response = await fetch("/api/sessions");
+    if (!response.ok) return;
+    state.sessions = await response.json();
+    renderSessions();
+  } catch (e) {
+    console.warn("loadSessions failed:", e);
+  }
+}
+
+async function createSession(title = "New session") {
+  try {
+    const response = await fetch("/api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title, model: state.activeModel }),
+    });
+    if (!response.ok) return;
+    const sess = await response.json();
+    state.activeSessionId = sess.id;
+    localStorage.setItem("ollamabot.activeSessionId", sess.id);
+    state.messages = [];
+    state.attachments = [];
+    renderMessages();
+    renderAttachments();
+    updateContextBar();
+    await loadSessions();
+  } catch (e) {
+    console.warn("createSession failed:", e);
+  }
+}
+
+async function loadSession(id) {
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
+    if (!response.ok) return;
+    const sess = await response.json();
+    state.activeSessionId = sess.id;
+    localStorage.setItem("ollamabot.activeSessionId", sess.id);
+    state.messages = (sess.messages || []).map((m) => {
+      // Normalize raw messages back to frontend shape
+      const msg = typeof m === "string" ? JSON.parse(m) : m;
+      return {
+        role: msg.role || "user",
+        content: msg.content || "",
+        thinking: msg.thinking || "",
+        images: msg.images || undefined,
+        attachments: msg.attachments || undefined,
+        toolCalls: msg.toolCalls || msg.tool_calls || [],
+        toolResults: msg.toolResults || msg.tool_results || [],
+        streaming: false,
+        waiting: false,
+      };
+    });
+    if (sess.model) state.activeModel = sess.model;
+    renderMessages();
+    renderAttachments();
+    updateContextBar();
+    renderSessions();
+  } catch (e) {
+    console.warn("loadSession failed:", e);
+  }
+}
+
+async function saveSession() {
+  if (!state.activeSessionId) return;
+  try {
+    const messages = state.messages.filter((msg) => msg.role !== "system").map((msg) => ({
+      role: msg.role,
+      content: msg.content || "",
+      thinking: msg.thinking || "",
+      images: msg.images || undefined,
+      attachments: msg.attachments || undefined,
+      image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
+      toolCalls: msg.toolCalls || [],
+      toolResults: msg.toolResults || [],
+    }));
+    await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages, model: state.activeModel }),
+    });
+    await loadSessions();
+  } catch (e) {
+    console.warn("saveSession failed:", e);
+  }
+}
+
+function renderSessions() {
+  if (!els.sessionList) return;
+  els.sessionList.innerHTML = "";
+  if (!state.sessions.length) {
+    els.sessionList.innerHTML = `<div class="empty">No sessions yet</div>`;
+    return;
+  }
+  for (const sess of state.sessions) {
+    const btn = document.createElement("button");
+    btn.className = `session-item ${sess.id === state.activeSessionId ? "active" : ""}`;
+    btn.dataset.id = sess.id;
+    const date = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString() : "";
+    btn.innerHTML = `<span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span>`;
+    els.sessionList.appendChild(btn);
+  }
+}
+
+// ----- Context bar -----
+
+function updateContextBar() {
+  const model = activeModel();
+  const ctxLen = model?.context_length || 0;
+  if (!ctxLen || !els.contextFill || !els.contextLabel) return;
+  let chars = 0;
+  for (const msg of state.messages) {
+    chars += (msg.content || "").length;
+    chars += (msg.thinking || "").length;
+  }
+  const estimatedTokens = Math.ceil(chars / 4);
+  const pct = Math.min(100, Math.round((estimatedTokens / ctxLen) * 100));
+  els.contextFill.style.width = `${pct}%`;
+  els.contextLabel.textContent = `${pct}%`;
+  els.contextFill.classList.remove("medium", "high");
+  if (pct >= 90) els.contextFill.classList.add("high");
+  else if (pct >= 70) els.contextFill.classList.add("medium");
 }
