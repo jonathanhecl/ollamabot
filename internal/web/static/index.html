@@ -5,21 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OllamaBot Console</title>
     <link rel="stylesheet" href="/styles.css" />
-    <script>
-      (function () {
-        try {
-          const saved = localStorage.getItem("ollamabot.sidebarCollapsed");
-          const collapsed = saved === null ? true : saved === "true";
-          if (collapsed) {
-            var el = document.querySelector(".app-layout");
-            if (el) el.classList.add("sidebar-collapsed");
-          }
-        } catch (e) {}
-      })();
-    </script>
   </head>
-  <body>
-    <div class="app-layout">
+  <body class="first-load">
+    <div class="app-layout sidebar-collapsed">
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-head">
           <span class="eyebrow">Sessions</span>
@@ -150,6 +138,16 @@
       </div>
     </dialog>
 
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("ollamabot.sidebarCollapsed");
+          if (saved === "false") {
+            document.querySelector(".app-layout").classList.remove("sidebar-collapsed");
+          }
+        } catch (e) {}
+      })();
+    </script>
     <script src="/app.js"></script>
   </body>
 </html>

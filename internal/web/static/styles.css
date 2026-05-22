@@ -52,6 +52,10 @@ input {
   transition: margin-left 0.25s ease;
 }
 
+.first-load .sidebar {
+  transition: none !important;
+}
+
 .app-layout.sidebar-collapsed .sidebar {
   margin-left: -260px;
 }

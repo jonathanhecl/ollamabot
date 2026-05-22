@@ -180,6 +180,7 @@ async function bootstrap() {
   await loadSettings();
   await loadModels();
   applySidebarState();
+  requestAnimationFrame(() => document.body.classList.remove("first-load"));
   await loadSessions();
   if (state.activeSessionId) {
     await loadSession(state.activeSessionId);
