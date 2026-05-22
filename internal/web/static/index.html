@@ -5,6 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OllamaBot Console</title>
     <link rel="stylesheet" href="/styles.css" />
+    <script>
+      (function () {
+        try {
+          const saved = localStorage.getItem("ollamabot.sidebarCollapsed");
+          const collapsed = saved === null ? true : saved === "true";
+          if (collapsed) {
+            var el = document.querySelector(".app-layout");
+            if (el) el.classList.add("sidebar-collapsed");
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div class="app-layout">
@@ -14,13 +26,12 @@
           <button id="newSessionBtn" class="ghost-button" type="button">+ New</button>
         </div>
         <div id="sessionList" class="session-list"></div>
-        <button id="toggleSidebar" class="sidebar-toggle" type="button" title="Toggle sessions">☰</button>
+        <button id="toggleSidebar" class="sidebar-toggle" type="button" title="Toggle sessions">❰</button>
       </aside>
       <main class="app" id="mainApp">
         <header class="topbar">
         <div>
           <p class="eyebrow">OllamaBot</p>
-          <h1 id="activeModel">Select a model</h1>
         </div>
         <div class="actions">
           <button id="openSettings" class="ghost-button" type="button">Settings</button>
@@ -35,13 +46,14 @@
         <span id="cacheState">live</span>
       </section>
 
-      <section id="capabilityBar" class="capability-bar"></section>
-
-      <section id="contextBar" class="context-bar" title="Estimated context usage">
-        <div class="context-track">
-          <div class="context-fill" id="contextFill"></div>
-        </div>
-        <span id="contextLabel">0%</span>
+      <section id="capabilityBar" class="capability-bar">
+        <div id="capabilityBadges" class="capability-badges"></div>
+        <section id="contextBar" class="context-bar" title="Estimated context usage">
+          <div class="context-track">
+            <div class="context-fill" id="contextFill"></div>
+          </div>
+          <span id="contextLabel">0%</span>
+        </section>
       </section>
 
       <section id="messages" class="messages"></section>

@@ -9,7 +9,10 @@ const state = {
   settings: {},
   sessions: [],
   activeSessionId: localStorage.getItem("ollamabot.activeSessionId") || null,
-  sidebarCollapsed: localStorage.getItem("ollamabot.sidebarCollapsed") === "true",
+  sidebarCollapsed: (() => {
+    const saved = localStorage.getItem("ollamabot.sidebarCollapsed");
+    return saved === null ? true : saved === "true";
+  })(),
   audioContext: null,
   audioSource: null,
   audioProcessor: null,
@@ -21,7 +24,6 @@ const state = {
 };
 
 const els = {
-  activeModel: document.querySelector("#activeModel"),
   messages: document.querySelector("#messages"),
   form: document.querySelector("#chatForm"),
   prompt: document.querySelector("#prompt"),
@@ -36,6 +38,7 @@ const els = {
   imageInput: document.querySelector("#imageInput"),
   audioInput: document.querySelector("#audioInput"),
   capabilityBar: document.querySelector("#capabilityBar"),
+  capabilityBadges: document.querySelector("#capabilityBadges"),
   attachments: document.querySelector("#attachments"),
   modelsDialog: document.querySelector("#modelsDialog"),
   settingsDialog: document.querySelector("#settingsDialog"),
@@ -59,6 +62,7 @@ const els = {
   toggleSidebar: document.querySelector("#toggleSidebar"),
   contextFill: document.querySelector("#contextFill"),
   contextLabel: document.querySelector("#contextLabel"),
+  contextBar: document.querySelector("#contextBar"),
   appLayout: document.querySelector(".app-layout"),
 };
 
@@ -159,8 +163,9 @@ dropZone.addEventListener("drop", (e) => {
 els.newSessionBtn.addEventListener("click", () => createSession());
 els.toggleSidebar.addEventListener("click", () => {
   state.sidebarCollapsed = !state.sidebarCollapsed;
-  localStorage.setItem("ollamabot.sidebarCollapsed", state.sidebarCollapsed);
+  localStorage.setItem("ollamabot.sidebarCollapsed", state.sidebarCollapsed ? "true" : "false");
   applySidebarState();
+  els.toggleSidebar.textContent = state.sidebarCollapsed ? "❱" : "❰";
 });
 els.sessionList.addEventListener("click", (e) => {
   const item = e.target.closest(".session-item");
@@ -188,6 +193,9 @@ function applySidebarState() {
     els.appLayout.classList.add("sidebar-collapsed");
   } else {
     els.appLayout.classList.remove("sidebar-collapsed");
+  }
+  if (els.toggleSidebar) {
+    els.toggleSidebar.textContent = state.sidebarCollapsed ? "❱" : "❰";
   }
 }
 
@@ -285,9 +293,10 @@ function activeModel() {
 
 function renderActive() {
   const model = activeModel();
-  els.activeModel.textContent = state.activeModel || "Select a model";
+  const modelName = state.activeModel || "Select a model";
   const caps = model?.capabilities || {};
-  let html = capBadges(caps);
+  let html = `<span class="cap model-badge" title="Active model">${escapeHtml(modelName)}</span>`;
+  html += capBadges(caps);
   const roleLabels = [
     { key: "visionModel", label: "vision" },
     { key: "audioModel", label: "audio" },
@@ -299,7 +308,7 @@ function renderActive() {
       html += `<span class="cap role-badge" title="${label} model: ${escapeHtml(name)}">${label}: ${escapeHtml(name.split(":")[0])}</span>`;
     }
   }
-  els.capabilityBar.innerHTML = html;
+  els.capabilityBadges.innerHTML = html;
   setCapabilityVisibility();
 }
 
@@ -956,7 +965,7 @@ function renderSessions() {
 function updateContextBar() {
   const model = activeModel();
   const ctxLen = model?.context_length || 0;
-  if (!ctxLen || !els.contextFill || !els.contextLabel) return;
+  if (!ctxLen || !els.contextFill || !els.contextLabel || !els.contextBar) return;
   let chars = 0;
   for (const msg of state.messages) {
     chars += (msg.content || "").length;
@@ -969,4 +978,5 @@ function updateContextBar() {
   els.contextFill.classList.remove("medium", "high");
   if (pct >= 90) els.contextFill.classList.add("high");
   else if (pct >= 70) els.contextFill.classList.add("medium");
+  els.contextBar.title = `${estimatedTokens.toLocaleString()} / ${ctxLen.toLocaleString()} tokens (${pct}%)`;
 }
