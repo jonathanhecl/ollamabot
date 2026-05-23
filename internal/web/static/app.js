@@ -21,6 +21,8 @@ const state = {
   isRecording: false,
   selectedMicId: localStorage.getItem("ollamabot.selectedMicId") || "",
   audioStream: null,
+  modelSearchQuery: "",
+  modelActiveFilter: "all",
 };
 
 const els = {
@@ -67,6 +69,14 @@ const els = {
 };
 
 els.openModels.addEventListener("click", () => {
+  state.modelSearchQuery = "";
+  state.modelActiveFilter = "all";
+  const searchInput = document.querySelector("#modelSearch");
+  if (searchInput) searchInput.value = "";
+  document.querySelectorAll(".filter-btn").forEach((btn) => {
+    if (btn.dataset.filter === "all") btn.classList.add("active");
+    else btn.classList.remove("active");
+  });
   renderModels();
   els.modelsDialog.showModal();
 });
@@ -93,6 +103,24 @@ els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.file
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
 els.recordControl.addEventListener("click", toggleRecording);
 document.addEventListener("paste", handlePaste);
+
+// Models dialog filtering wiring
+const searchInput = document.querySelector("#modelSearch");
+if (searchInput) {
+  searchInput.addEventListener("input", (e) => {
+    state.modelSearchQuery = e.target.value;
+    renderModels();
+  });
+}
+
+document.querySelectorAll(".filter-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".filter-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    state.modelActiveFilter = btn.dataset.filter;
+    renderModels();
+  });
+});
 
 els.prompt.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
@@ -363,26 +391,92 @@ function modelForRole(role) {
 
 function renderModels() {
   els.modelsBody.innerHTML = "";
-  for (const model of state.models) {
+  const query = state.modelSearchQuery.toLowerCase().trim();
+  const filter = state.modelActiveFilter;
+  let filteredModels = state.models;
+
+  if (query) {
+    filteredModels = filteredModels.filter((m) => 
+      m.name.toLowerCase().includes(query) || 
+      (m.family && m.family.toLowerCase().includes(query)) ||
+      (m.parameters && m.parameters.toLowerCase().includes(query))
+    );
+  }
+
+  if (filter === "loaded") {
+    filteredModels = filteredModels.filter((m) => m.loaded);
+  } else if (filter === "main") {
+    filteredModels = filteredModels.filter((m) => canBeMain(m));
+  } else if (filter === "vision") {
+    filteredModels = filteredModels.filter((m) => {
+      const cap = m.capabilities?.vision;
+      return cap === "comprobado" || cap === "inferido";
+    });
+  } else if (filter === "audio") {
+    filteredModels = filteredModels.filter((m) => {
+      const cap = m.capabilities?.audio;
+      return cap === "comprobado" || cap === "inferido";
+    });
+  } else if (filter === "embeddings") {
+    filteredModels = filteredModels.filter((m) => {
+      const cap = m.capabilities?.embedding;
+      return cap === "comprobado" || cap === "inferido";
+    });
+  }
+
+  if (filteredModels.length === 0) {
+    els.modelsBody.innerHTML = `<div class="empty">No models match the filter or search query.</div>`;
+    return;
+  }
+
+  for (const model of filteredModels) {
     const isMain = model.name === state.activeModel;
     const isVision = model.name === state.visionModel;
     const isAudio = model.name === state.audioModel;
     const isEmbed = model.name === state.embeddingsModel;
     const card = document.createElement("article");
     card.className = `model-card ${isMain ? "selected" : ""}`;
+
+    const sizeBarPct = model.size ? Math.min(100, Math.round((model.size_vram / model.size) * 100)) : 0;
+    const hardwareBarHtml = model.loaded ? `
+      <div class="model-hardware-bar" title="Memory usage in VRAM: ${formatBytes(model.size_vram)} / ${formatBytes(model.size)}">
+        <div class="hardware-track">
+          <div class="hardware-fill active" style="width: ${sizeBarPct}%"></div>
+        </div>
+        <span>vram ${sizeBarPct}%</span>
+      </div>
+    ` : `
+      <div class="model-hardware-bar" title="Size on disk: ${formatBytes(model.size || model.size_vram)}">
+        <div class="hardware-track">
+          <div class="hardware-fill" style="width: 0%"></div>
+        </div>
+        <span>disk ${formatBytes(model.size || model.size_vram)}</span>
+      </div>
+    `;
+
+    const statusBadgeHtml = model.loaded ? 
+      `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` : 
+      `<span class="model-offline-badge">offline</span>`;
+
     card.innerHTML = `
       <div>
-        <div class="model-name">${escapeHtml(model.name)}</div>
+        <div class="model-card-header">
+          <div class="model-name">${escapeHtml(model.name)}</div>
+          ${statusBadgeHtml}
+        </div>
         <div class="sub">${escapeHtml(model.family || "-")} · ${escapeHtml(model.parameters || "-")} · ${escapeHtml(model.quantization || "-")}</div>
       </div>
       <div class="caps">${capBadges(model.capabilities)}</div>
       <div class="model-meta">
-        <span>${model.loaded ? "loaded" : "available"}</span>
-        <span>${model.loaded ? formatBytes(model.size_vram) : "not in memory"}</span>
-        <span>ctx ${model.context_length || "-"}</span>
+        <div class="model-meta-info">
+          <span>ctx ${model.context_length ? escapeHtml(model.context_length.toLocaleString()) : "-"}</span>
+        </div>
+        <div style="flex: 1; max-width: 140px;">
+          ${hardwareBarHtml}
+        </div>
       </div>
       <div class="role-buttons">
-        <button class="choose ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}" ${canBeMain(model) ? "" : "disabled title=\"Requires completion + tools\""}>${canBeMain(model) ? "Main" : "Main ✗"}</button>
+        <button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}" ${canBeMain(model) ? "" : "disabled title=\"Requires completion + tools\""}>${canBeMain(model) ? "Main" : "Main ✗"}</button>
         <button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">Vision</button>
         <button class="choose role-btn ${isAudio ? "active" : ""}" data-role="audio" data-model="${escapeAttr(model.name)}">Audio</button>
         <button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">Embed</button>
@@ -390,6 +484,7 @@ function renderModels() {
     `;
     els.modelsBody.appendChild(card);
   }
+
   document.querySelectorAll(".choose:not([disabled])").forEach((button) => {
     button.addEventListener("click", () => {
       const role = button.dataset.role;
@@ -630,10 +725,20 @@ function capabilityFor(kind) {
 
 function capBadges(caps = {}) {
   const order = ["completion", "tools", "thinking", "vision", "embedding", "audio", "video"];
+  const glyphs = {
+    completion: "⚡ text",
+    tools: "🛠️ tools",
+    thinking: "🧠 think",
+    vision: "👁️ vision",
+    embedding: "🔗 embed",
+    audio: "🔊 audio",
+    video: "📹 video"
+  };
   return order.map((name) => {
     const status = caps[name] || "pendiente";
     const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
-    return `<span class="cap ${cls}" title="${status}">${name}</span>`;
+    const label = glyphs[name] || name;
+    return `<span class="cap ${cls}" title="${name}: ${status}">${label}</span>`;
   }).join("");
 }
 

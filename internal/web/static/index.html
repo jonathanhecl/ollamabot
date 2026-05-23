@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>OllamaBot Console</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body class="first-load">
@@ -76,10 +79,24 @@
       <form method="dialog" class="modal-head">
         <div>
           <p class="eyebrow">Available models</p>
-          <h2>Choose main model</h2>
+          <h2>Manage Models & Roles</h2>
         </div>
         <button class="ghost-button" value="close">Close</button>
       </form>
+      <div class="models-toolbar">
+        <div class="search-wrapper">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="modelSearch" placeholder="Search models by name, family or parameters..." />
+        </div>
+        <div class="filter-group">
+          <button type="button" class="filter-btn active" data-filter="all">All</button>
+          <button type="button" class="filter-btn" data-filter="loaded">Loaded</button>
+          <button type="button" class="filter-btn" data-filter="main">Main</button>
+          <button type="button" class="filter-btn" data-filter="vision">Vision</button>
+          <button type="button" class="filter-btn" data-filter="audio">Audio</button>
+          <button type="button" class="filter-btn" data-filter="embeddings">Embed</button>
+        </div>
+      </div>
       <div id="modelsBody" class="model-list"></div>
     </dialog>
 
