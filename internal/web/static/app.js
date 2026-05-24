@@ -765,7 +765,7 @@ async function sendMessage(event) {
     images: msg.images || undefined,
     image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
   }));
-  const assistant = { role: "assistant", content: "", thinking: "", toolCalls: [], toolResults: [], streaming: true, waiting: true };
+  const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true };
   state.messages.push(assistant);
   renderMessages();
 
@@ -788,7 +788,12 @@ async function sendMessage(event) {
   await readEventStream(response.body, {
     thinking: (value) => {
       assistant.waiting = false;
-      assistant.thinking += value;
+      const lastStep = assistant.steps[assistant.steps.length - 1];
+      if (lastStep && lastStep.type === "thinking") {
+        lastStep.content += value;
+      } else {
+        assistant.steps.push({ type: "thinking", content: value });
+      }
       renderMessages();
     },
     content: (value) => {
@@ -798,22 +803,24 @@ async function sendMessage(event) {
     },
     tool_call: (value) => {
       assistant.waiting = false;
-      assistant.toolCalls.push(value);
+      assistant.steps.push({ type: "tool_call", call: value });
       renderMessages();
     },
     tool_start: (value) => {
       assistant.waiting = false;
-      assistant.toolResults.push({ name: value.name, arguments: value.arguments, result: null, status: "running" });
+      assistant.steps.push({ type: "tool_exec", name: value.name, arguments: value.arguments, result: null, status: "running" });
       renderMessages();
     },
     tool_result: (value) => {
       assistant.waiting = false;
-      const item = assistant.toolResults.find((tr) => tr.name === value.name && tr.status === "running");
-      if (item) {
-        item.result = value.result;
-        item.status = "done";
-      } else {
-        assistant.toolResults.push({ name: value.name, arguments: null, result: value.result, status: "done" });
+      // Find matching running tool_exec step (search from end).
+      for (let i = assistant.steps.length - 1; i >= 0; i--) {
+        const step = assistant.steps[i];
+        if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
+          step.result = value.result;
+          step.status = "done";
+          break;
+        }
       }
       renderMessages();
     },
@@ -872,27 +879,78 @@ function renderMessages() {
     if (message.role === "system") continue;
     const div = document.createElement("article");
     div.className = `message ${message.role} ${message.streaming ? "streaming" : ""}`;
-    const thinking = message.thinking ? `<details class="thinking" open><summary>thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>` : "";
-    const tools = message.toolCalls?.length ? `<div class="tool-calls">${message.toolCalls.map(renderToolCall).join("")}</div>` : "";
-    const toolResults = message.toolResults?.length ? `<div class="tool-results">${message.toolResults.map(renderToolResult).join("")}</div>` : "";
     const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${thinking}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${tools}${toolResults}`;
+    // Build steps HTML (interleaved thinking / tool blocks).
+    const stepsHtml = (message.steps || []).map(renderStep).join("");
+    // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
+    let legacyHtml = "";
+    if (!message.steps?.length) {
+      if (message.thinking) {
+        legacyHtml += `<details class="step step-thinking" open><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
+      }
+      if (message.toolCalls?.length) {
+        legacyHtml += message.toolCalls.map(renderLegacyToolCall).join("");
+      }
+      if (message.toolResults?.length) {
+        legacyHtml += message.toolResults.map(renderLegacyToolResult).join("");
+      }
+    }
+    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function renderToolCall(call) {
-  const fn = call.function || {};
-  return `<details open><summary>tool: ${escapeHtml(fn.name || "unknown")}</summary><pre>${escapeHtml(JSON.stringify(fn.arguments || {}, null, 2))}</pre></details>`;
+function renderStep(step) {
+  switch (step.type) {
+    case "thinking":
+      return `<details class="step step-thinking" open><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
+    case "tool_call": {
+      const fn = step.call?.function || {};
+      const name = fn.name || "unknown";
+      let argsText = "";
+      try {
+        const parsed = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments || {});
+        argsText = JSON.stringify(parsed, null, 2);
+      } catch {
+        argsText = String(fn.arguments || "{}");
+      }
+      return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(name)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
+    }
+    case "tool_exec": {
+      const statusLabel = step.status === "running" ? "running..." : "done";
+      const statusClass = step.status === "running" ? "running" : "done";
+      let argsText = "";
+      if (step.arguments) {
+        try {
+          const parsed = typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments;
+          argsText = JSON.stringify(parsed, null, 2);
+        } catch {
+          argsText = String(step.arguments || "");
+        }
+      }
+      const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
+      const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
+      const resultHtml = resultText ? `<pre class="step-tool-result-text">${resultText}</pre>` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
+      return `<details class="step step-tool-exec ${statusClass}" open><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
+    }
+    default:
+      return "";
+  }
 }
 
-function renderToolResult(tr) {
+function renderLegacyToolCall(call) {
+  const fn = call.function || {};
+  return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(fn.name || "unknown")}</strong><pre>${escapeHtml(JSON.stringify(fn.arguments || {}, null, 2))}</pre></div>`;
+}
+
+function renderLegacyToolResult(tr) {
   const status = tr.status === "running" ? "running..." : "done";
+  const statusClass = tr.status === "running" ? "running" : "done";
   const result = tr.result !== null ? escapeHtml(String(tr.result)) : "";
-  return `<details open><summary>tool result: ${escapeHtml(tr.name || "unknown")} (${status})</summary><pre>${result}</pre></details>`;
+  return `<details class="step step-tool-exec ${statusClass}" open><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(tr.name || "unknown")} <span class="step-tool-status ${statusClass}">${status}</span></summary><pre class="step-tool-result-text">${result}</pre></details>`;
 }
 
 function addSystemMessage(content) {
@@ -1202,10 +1260,25 @@ async function loadSession(id) {
     state.messages = (sess.messages || []).map((m) => {
       // Normalize raw messages back to frontend shape
       const msg = typeof m === "string" ? JSON.parse(m) : m;
+      // Migrate legacy thinking/toolCalls/toolResults to steps format.
+      let steps = msg.steps || [];
+      if (!steps.length) {
+        if (msg.thinking) {
+          steps.push({ type: "thinking", content: msg.thinking });
+        }
+        const tc = msg.toolCalls || msg.tool_calls || [];
+        const tr = msg.toolResults || msg.tool_results || [];
+        for (const call of tc) {
+          steps.push({ type: "tool_call", call });
+        }
+        for (const res of tr) {
+          steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
+        }
+      }
       return {
         role: msg.role || "user",
         content: msg.content || "",
-        thinking: msg.thinking || "",
+        steps,
         images: msg.images || undefined,
         attachments: (msg.attachments || []).map((att) => {
           let url = att.url;
@@ -1223,8 +1296,6 @@ async function loadSession(id) {
             url: url || ""
           };
         }),
-        toolCalls: msg.toolCalls || msg.tool_calls || [],
-        toolResults: msg.toolResults || msg.tool_results || [],
         streaming: false,
         waiting: false,
       };
@@ -1245,12 +1316,10 @@ async function saveSession() {
     const messages = state.messages.filter((msg) => msg.role !== "system").map((msg) => ({
       role: msg.role,
       content: msg.content || "",
-      thinking: msg.thinking || "",
+      steps: msg.steps || [],
       images: msg.images || undefined,
       attachments: msg.attachments || undefined,
       image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
-      toolCalls: msg.toolCalls || [],
-      toolResults: msg.toolResults || [],
     }));
     await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
       method: "PUT",
@@ -1289,7 +1358,12 @@ function updateContextBar() {
   let chars = 0;
   for (const msg of state.messages) {
     chars += (msg.content || "").length;
-    chars += (msg.thinking || "").length;
+    // Count thinking text from steps.
+    for (const step of (msg.steps || [])) {
+      if (step.type === "thinking") chars += (step.content || "").length;
+    }
+    // Legacy fallback.
+    if (!msg.steps?.length) chars += (msg.thinking || "").length;
   }
   const estimatedTokens = Math.ceil(chars / 4);
   const pct = Math.min(100, Math.round((estimatedTokens / ctxLen) * 100));

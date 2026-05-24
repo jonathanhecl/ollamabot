@@ -461,14 +461,156 @@ h2 {
   font-weight: 900;
 }
 
-.thinking,
-.tool-calls details {
+.step {
   margin-bottom: 10px;
-  border: 1px dashed var(--line);
   border-radius: 6px;
+  overflow: hidden;
+}
+
+/* --- Thinking step --- */
+.step-thinking {
+  border: 1px dashed var(--line);
   padding: 8px;
   color: var(--muted);
   background: #12150f;
+}
+
+.step-thinking summary {
+  cursor: pointer;
+  color: var(--accent-2);
+  font-weight: 800;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.step-thinking pre {
+  margin: 8px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* --- Tool call step (model decides to call) --- */
+.step-tool-call {
+  border: 1px solid rgba(214, 255, 95, 0.2);
+  background: rgba(214, 255, 95, 0.04);
+  padding: 8px 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.step-tool-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.step-tool-call strong {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.step-tool-call pre {
+  margin: 4px 0 0;
+  width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+/* --- Tool exec step (execution + result) --- */
+.step-tool-exec {
+  border: 1px solid var(--line);
+  padding: 8px;
+  background: #12150f;
+}
+
+.step-tool-exec summary {
+  cursor: pointer;
+  font-weight: 800;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.step-tool-status {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 999px;
+  margin-left: 4px;
+}
+
+.step-tool-status.running {
+  background: rgba(99, 210, 255, 0.15);
+  color: var(--accent-2);
+  border: 1px solid rgba(99, 210, 255, 0.3);
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+.step-tool-status.done {
+  background: rgba(214, 255, 95, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(214, 255, 95, 0.25);
+}
+
+.step-tool-args {
+  margin: 8px 0 4px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+}
+
+.step-tool-result-text {
+  margin: 6px 0 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 11px;
+  color: var(--muted);
+  max-height: 300px;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+
+.step-tool-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 6px;
+  padding: 4px 0;
+}
+
+.step-tool-running span {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--accent-2);
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.step-tool-running span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.step-tool-running span:nth-child(3) {
+  animation-delay: 0.28s;
 }
 
 .waiting {
