@@ -578,6 +578,24 @@ function renderModels() {
       `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` :
       `<span class="model-offline-badge">offline</span>`;
 
+    const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
+    const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
+    const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
+
+    let roleButtonsHtml = "";
+    if (canBeMain(model)) {
+      roleButtonsHtml += `<button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">⚡ Main</button>`;
+    }
+    if (canVision) {
+      roleButtonsHtml += `<button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">👁️ Vision</button>`;
+    }
+    if (canAudio) {
+      roleButtonsHtml += `<button class="choose role-btn ${isAudio ? "active" : ""}" data-role="audio" data-model="${escapeAttr(model.name)}">🔊 Audio</button>`;
+    }
+    if (canEmbed) {
+      roleButtonsHtml += `<button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">🔗 Embed</button>`;
+    }
+
     card.innerHTML = `
       <div>
         <div class="model-card-header">
@@ -599,10 +617,7 @@ function renderModels() {
         </div>
       </div>
       <div class="role-buttons">
-        <button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}" ${canBeMain(model) ? "" : "disabled title=\"Requires completion + tools\""}>${canBeMain(model) ? "Main" : "Main ✗"}</button>
-        <button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">Vision</button>
-        <button class="choose role-btn ${isAudio ? "active" : ""}" data-role="audio" data-model="${escapeAttr(model.name)}">Audio</button>
-        <button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">Embed</button>
+        ${roleButtonsHtml}
       </div>
     `;
     els.modelsBody.appendChild(card);
