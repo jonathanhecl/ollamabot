@@ -903,22 +903,22 @@ textarea {
 }
 
 .model-list {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   padding: 20px;
   overflow: auto;
   max-height: 520px;
 }
 
 .model-card {
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  gap: 14px;
+  display: grid;
+  grid-template-columns: 240px 1.5fr 1fr 180px;
+  align-items: center;
+  gap: 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 16px;
+  padding: 12px 18px;
   background: linear-gradient(135deg, var(--panel-2) 0%, rgba(24, 27, 21, 0.95) 100%);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   position: relative;
@@ -926,15 +926,17 @@ textarea {
 }
 
 .model-card:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: var(--muted);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .model-card.selected {
   border-color: var(--accent);
-  box-shadow: 0 0 20px rgba(214, 255, 95, 0.15), 0 0 0 1px var(--accent);
+  border-left: 4px solid var(--accent);
+  box-shadow: 0 0 20px rgba(214, 255, 95, 0.15);
   background: linear-gradient(135deg, var(--panel-2) 0%, rgba(32, 38, 28, 0.98) 100%);
+  padding-left: 14px; /* compensate for the left border */
 }
 
 .model-card.selected::before {
@@ -958,12 +960,61 @@ textarea {
   gap: 8px;
 }
 
+.model-name-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
 .model-name {
   font-weight: 800;
   font-size: 15px;
   color: var(--text);
   overflow-wrap: anywhere;
   letter-spacing: -0.01em;
+}
+
+.active-roles-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.active-role-pill {
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+}
+
+.active-role-pill.main {
+  background: var(--accent);
+  color: #14160f;
+  box-shadow: 0 0 8px rgba(214, 255, 95, 0.4);
+}
+
+.active-role-pill.vision {
+  background: #b18eff;
+  color: #0a0514;
+  box-shadow: 0 0 8px rgba(177, 142, 255, 0.4);
+}
+
+.active-role-pill.audio {
+  background: #ffd000;
+  color: #151000;
+  box-shadow: 0 0 8px rgba(255, 208, 0, 0.4);
+}
+
+.active-role-pill.embed {
+  background: var(--accent-2);
+  color: #102129;
+  box-shadow: 0 0 8px rgba(99, 210, 255, 0.4);
 }
 
 .model-loaded-badge {
@@ -1026,7 +1077,7 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 6px;
+  margin-top: 0;
 }
 
 .cap {
@@ -1038,16 +1089,17 @@ textarea {
   letter-spacing: 0.02em;
 }
 
-.model-meta {
+.model-card .model-meta {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 7px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 4px;
   font-size: 11px;
   color: var(--muted);
-  border-top: 1px dashed var(--line);
-  padding-top: 10px;
-  margin-top: auto;
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
 }
 
 .model-meta-info {
@@ -1063,6 +1115,7 @@ textarea {
   font-size: 11px;
   color: var(--muted);
   margin-top: 4px;
+  width: 100%;
 }
 
 .hardware-track {
@@ -1092,32 +1145,33 @@ textarea {
 }
 
 .choose[disabled] {
-  opacity: 0.35;
+  opacity: 0.25;
   cursor: not-allowed;
   background: rgba(0,0,0,0.15);
   color: var(--muted);
   border-color: var(--line);
 }
 
-.role-buttons {
+.model-card .role-buttons {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 6px;
-  margin-top: 12px;
+  margin-top: 0;
   background: rgba(0, 0, 0, 0.2);
   padding: 6px;
   border-radius: 8px;
   border: 1px solid var(--line);
+  width: 100%;
 }
 
 .role-btn {
   font-size: 11px;
   min-height: 28px;
   padding: 0 8px;
-  opacity: 0.7;
+  opacity: 0.45;
   border-radius: 4px;
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--line);
   color: var(--muted);
   font-weight: 700;
   text-transform: uppercase;
@@ -1125,24 +1179,41 @@ textarea {
 }
 
 .role-btn:hover:not([disabled]) {
-  opacity: 1;
+  opacity: 0.85;
   background: rgba(255,255,255,0.05);
   color: var(--text);
-}
-
-.role-btn.active {
-  background: var(--accent-2);
-  color: #102129;
-  border-color: var(--accent-2);
-  opacity: 1;
-  box-shadow: 0 0 6px rgba(99, 210, 255, 0.25);
 }
 
 .role-btn.active[data-role="main"] {
   background: var(--accent);
   color: #14160f;
   border-color: var(--accent);
-  box-shadow: 0 0 6px rgba(214, 255, 95, 0.25);
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(214, 255, 95, 0.35);
+}
+
+.role-btn.active[data-role="vision"] {
+  background: #b18eff;
+  color: #0a0514;
+  border-color: #b18eff;
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(177, 142, 255, 0.35);
+}
+
+.role-btn.active[data-role="audio"] {
+  background: #ffd000;
+  color: #151000;
+  border-color: #ffd000;
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(255, 208, 0, 0.35);
+}
+
+.role-btn.active[data-role="embeddings"] {
+  background: var(--accent-2);
+  color: #102129;
+  border-color: var(--accent-2);
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(99, 210, 255, 0.35);
 }
 
 .role-badge {
@@ -1151,6 +1222,42 @@ textarea {
   border-color: var(--accent-2);
   font-style: italic;
   font-weight: 700;
+}
+
+/* Responsive collapse back to standard card layout for smaller screens */
+@media (max-width: 900px) {
+  .model-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+    gap: 16px;
+  }
+  
+  .model-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 14px;
+    padding: 16px;
+    border-left: 1px solid var(--line);
+  }
+  
+  .model-card.selected {
+    border-left: 1px solid var(--accent);
+    padding-left: 16px;
+  }
+  
+  .model-card .model-meta {
+    border-top: 1px dashed var(--line);
+    padding-top: 10px;
+    margin-top: auto;
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+  }
+  
+  .model-card .role-buttons {
+    margin-top: 12px;
+  }
 }
 
 .settings-form {

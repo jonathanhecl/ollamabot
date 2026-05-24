@@ -567,6 +567,13 @@ function renderModels() {
       </div>
     `;
 
+    let activeRolesHtml = "";
+    if (isMain) activeRolesHtml += `<span class="active-role-pill main" title="This model is assigned to the MAIN role">Main</span>`;
+    if (isVision) activeRolesHtml += `<span class="active-role-pill vision" title="This model is assigned to the VISION role">Vision</span>`;
+    if (isAudio) activeRolesHtml += `<span class="active-role-pill audio" title="This model is assigned to the AUDIO role">Audio</span>`;
+    if (isEmbed) activeRolesHtml += `<span class="active-role-pill embed" title="This model is assigned to the EMBEDDINGS role">Embed</span>`;
+    const activeRolesContainer = activeRolesHtml ? `<div class="active-roles-container">${activeRolesHtml}</div>` : "";
+
     const statusBadgeHtml = model.loaded ?
       `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` :
       `<span class="model-offline-badge">offline</span>`;
@@ -574,7 +581,10 @@ function renderModels() {
     card.innerHTML = `
       <div>
         <div class="model-card-header">
-          <div class="model-name">${escapeHtml(model.name)}</div>
+          <div class="model-name-wrapper">
+            <div class="model-name">${escapeHtml(model.name)}</div>
+            ${activeRolesContainer}
+          </div>
           ${statusBadgeHtml}
         </div>
         <div class="sub">${escapeHtml(model.family || "-")} · ${escapeHtml(model.parameters || "-")} · ${escapeHtml(model.quantization || "-")}</div>
