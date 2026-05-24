@@ -23,6 +23,7 @@ const state = {
   audioStream: null,
   modelSearchQuery: "",
   modelActiveFilter: "all",
+  sessionIdToDelete: null,
 };
 
 const els = {
@@ -66,6 +67,9 @@ const els = {
   contextLabel: document.querySelector("#contextLabel"),
   contextBar: document.querySelector("#contextBar"),
   appLayout: document.querySelector(".app-layout"),
+  confirmDialog: document.querySelector("#confirmDialog"),
+  cancelConfirmBtn: document.querySelector("#cancelConfirmBtn"),
+  okConfirmBtn: document.querySelector("#okConfirmBtn"),
 };
 
 els.openModels.addEventListener("click", () => {
@@ -147,6 +151,24 @@ if (closeBtn) {
   });
 }
 
+// Confirm dialog wiring
+if (els.cancelConfirmBtn) {
+  els.cancelConfirmBtn.addEventListener("click", () => {
+    els.confirmDialog.close();
+    state.sessionIdToDelete = null;
+  });
+}
+
+if (els.okConfirmBtn) {
+  els.okConfirmBtn.addEventListener("click", () => {
+    if (state.sessionIdToDelete) {
+      deleteSession(state.sessionIdToDelete);
+      state.sessionIdToDelete = null;
+    }
+    els.confirmDialog.close();
+  });
+}
+
 // Close on Escape key
 els.imageDialog.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
@@ -201,8 +223,9 @@ els.sessionList.addEventListener("click", (e) => {
     const item = deleteBtn.closest(".session-item");
     if (!item) return;
     const id = item.dataset.id;
-    if (id && confirm("Delete this session?")) {
-      deleteSession(id);
+    if (id) {
+      state.sessionIdToDelete = id;
+      els.confirmDialog.showModal();
     }
     return;
   }

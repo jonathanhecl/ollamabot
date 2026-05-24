@@ -155,6 +155,23 @@
       </div>
     </dialog>
 
+    <dialog id="confirmDialog" class="modal compact">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Atención</p>
+          <h2>¿Borrar Sesión?</h2>
+        </div>
+        <button class="ghost-button" value="close">×</button>
+      </form>
+      <div class="confirm-body">
+        <p>¿Estás seguro de que deseas eliminar esta sesión de chat de forma permanente? Esta acción no se puede deshacer y se borrarán todos los archivos asociados.</p>
+        <div class="confirm-actions">
+          <button id="cancelConfirmBtn" class="ghost-button" type="button">Cancelar</button>
+          <button id="okConfirmBtn" class="danger-button" type="button">Borrar Sesión</button>
+        </div>
+      </div>
+    </dialog>
+
     <script>
       (function () {
         try {
