@@ -80,11 +80,11 @@ func run(args []string) error {
 	ctx := context.Background()
 
 	if len(remaining) == 0 {
-		if cfg.WebEnabled {
-			fmt.Printf("OllamaBot web: http://localhost%s\n", cfg.WebAddr)
+		if cfg.ServerEnabled {
+			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			return web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath).ListenAndServe()
 		}
-		fmt.Println("Web server disabled in .env (WEB_ENABLED=false).")
+		fmt.Println("Server disabled in .env (SERVER_ENABLED=false).")
 		usage()
 		return nil
 	}
@@ -227,12 +227,12 @@ func runDocs(ctx context.Context, args []string, cfg config.Config, client *olla
 
 func runServe(args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner, envPath string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	addr := flags.String("addr", cfg.WebAddr, "web listen address")
+	port := flags.String("port", cfg.ServerPort, "server port")
 	cachePath := flags.String("cache", web.SnapshotPath(""), "probe snapshot cache path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	cfg.WebAddr = *addr
+	cfg.ServerPort = *port
 	return web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath).ListenAndServe()
 }
 
@@ -288,7 +288,7 @@ func usage() {
 	fmt.Println("docs:")
 	fmt.Println("  docs generate [--out docs]")
 	fmt.Println("web:")
-	fmt.Println("  serve [--addr :8080] [--cache docs/probe-cache.json]")
+	fmt.Println("  serve [--port 8080] [--cache docs/probe-cache.json]")
 }
 
 func probeUsage() {

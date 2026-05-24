@@ -12,7 +12,7 @@ func TestLoadDefaultsAndEnvFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = file.WriteString("OLLAMA_BASE_URL=http://localhost:11434/api/\nOLLAMA_PROBE_MODELS=qwen3:8b, nomic-embed-text:latest\nWEB_ADDR=\":9000\"\n")
+	_, _ = file.WriteString("OLLAMA_BASE_URL=http://localhost:11434/api/\nOLLAMA_PROBE_MODELS=qwen3:8b, nomic-embed-text:latest\nWEB_PORT=\"9000\"\n")
 	_ = file.Close()
 
 	cfg, err := Load(file.Name())
@@ -26,10 +26,10 @@ func TestLoadDefaultsAndEnvFile(t *testing.T) {
 	if !reflect.DeepEqual(cfg.OllamaProbeModels, wantModels) {
 		t.Fatalf("models = %#v", cfg.OllamaProbeModels)
 	}
-	if cfg.WebAddr != ":9000" {
-		t.Fatalf("web addr = %q", cfg.WebAddr)
+	if cfg.ServerPort != "9000" {
+		t.Fatalf("server port = %q", cfg.ServerPort)
 	}
-	if !cfg.WebEnabled {
+	if !cfg.ServerEnabled {
 		t.Fatal("web should default to enabled")
 	}
 }
@@ -51,10 +51,10 @@ func TestCreateInteractive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebEnabled {
+	if cfg.ServerEnabled {
 		t.Fatal("web should be disabled")
 	}
-	if cfg.WebAddr != ":9090" {
-		t.Fatalf("web addr = %q", cfg.WebAddr)
+	if cfg.ServerPort != "9090" {
+		t.Fatalf("server port = %q", cfg.ServerPort)
 	}
 }

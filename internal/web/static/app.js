@@ -91,12 +91,10 @@ els.openSettings.addEventListener("click", async () => {
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
-  els.webExposeToggle.checked = !!state.settings.web_expose_network;
-  els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
+  els.webExposeToggle.checked = !!state.settings.server_expose_network;
+  els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
-  const addr = state.settings.web_addr || ":8080";
-  const portMatch = addr.match(/:(\d+)$/);
-  els.webPort.value = portMatch ? portMatch[1] : "8080";
+  els.webPort.value = state.settings.server_port || "8080";
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
   try {
@@ -352,12 +350,14 @@ async function loadSettings() {
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
-  els.webExposeToggle.checked = !!state.settings.web_expose_network;
-  els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
+  els.webExposeToggle.checked = !!state.settings.server_expose_network;
+  els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
-  const waddr = state.settings.web_addr || ":8080";
-  const wportMatch = waddr.match(/:(\d+)$/);
-  els.webPort.value = wportMatch ? wportMatch[1] : "8080";
+  els.webPort.value = state.settings.server_port || "8080";
+  if (state.settings.model_default) {
+    state.activeModel = state.settings.model_default;
+    localStorage.setItem("ollamabot.mainModel", state.activeModel);
+  }
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
@@ -378,13 +378,14 @@ async function saveSettings(event) {
       workspace: els.workspacePath.value.trim(),
       sessions_path: els.sessionsPath.value.trim(),
       memory_path: els.memoryPath.value.trim(),
+      model_default: state.activeModel,
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       web_search_enabled: els.webSearchSelect.value === "ddg",
-      web_expose_network: els.webExposeToggle.checked,
-      web_auto_name: els.webAutoNameToggle.checked,
-      web_addr: ":" + (els.webPort.value.trim().replace(/^:/, "") || "8080"),
+      server_expose_network: els.webExposeToggle.checked,
+      session_auto_name: els.webAutoNameToggle.checked,
+      server_port: els.webPort.value.trim() || "8080",
     }),
   });
   const data = await response.json();
@@ -406,12 +407,14 @@ async function saveRoleModels() {
       workspace: state.settings.workspace || "",
       sessions_path: state.settings.sessions_path || "",
       memory_path: state.settings.memory_path || "",
+      model_default: state.activeModel,
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       web_search_enabled: state.settings.web_search_enabled || false,
-      web_expose_network: state.settings.web_expose_network || false,
-      web_auto_name: state.settings.web_auto_name !== false,
+      server_expose_network: state.settings.server_expose_network || false,
+      session_auto_name: state.settings.session_auto_name !== false,
+      server_port: state.settings.server_port || "8080",
     }),
   });
 }
@@ -568,15 +571,15 @@ function renderModels() {
   }
 
   for (const model of filteredModels) {
-    const isMain = model.name === state.activeModel;
-    const isVision = model.name === state.visionModel;
-    const isAudio = model.name === state.audioModel;
-    const isEmbed = model.name === state.embeddingsModel;
-
     const isMainCapable = canBeMain(model);
     const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
     const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
     const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
+
+    const isMain = model.name === state.activeModel;
+    const isVision = model.name === state.visionModel || (isMain && !state.visionModel && canVision);
+    const isAudio = model.name === state.audioModel || (isMain && !state.audioModel && canAudio);
+    const isEmbed = model.name === state.embeddingsModel;
     const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed;
 
     const card = document.createElement("article");
@@ -662,9 +665,9 @@ function renderModels() {
       if (role === "main") {
         state.activeModel = model;
         localStorage.setItem("ollamabot.mainModel", state.activeModel);
+        saveRoleModels();
         renderActive();
         renderModels();
-        els.modelsDialog.close();
       } else {
         const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : "embeddingsModel";
         const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : "ollamabot.embeddingsModel";

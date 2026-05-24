@@ -17,15 +17,15 @@ type Config struct {
 	OllamaModelVision  string
 	OllamaModelAudio   string
 	OllamaModelEmbed   string
-	TelegramBotToken   string
-	WebAddr            string
-	WebEnabled         bool
-	WebSearchEnabled   bool
-	WebExposeNetwork   bool
-	WebAutoName        bool
-	Workspace          string
-	SessionsPath       string
-	MemoryPath         string
+	TelegramBotToken    string
+	ServerPort          string
+	ServerEnabled       bool
+	WebSearchEnabled    bool
+	ServerExposeNetwork bool
+	SessionAutoName     bool
+	Workspace           string
+	SessionsPath        string
+	MemoryPath          string
 }
 
 func Load(path string) (Config, error) {
@@ -47,15 +47,15 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg := Config{
-		OllamaBaseURL:    "http://localhost:11434",
-		WebAddr:          ":8080",
-		WebEnabled:       true,
-		WebSearchEnabled: false,
-		WebExposeNetwork: true,
-		WebAutoName:      true,
-		Workspace:        "workspace",
-		SessionsPath:     "sessions",
-		MemoryPath:       "memory",
+		OllamaBaseURL:       "http://localhost:11434",
+		ServerPort:          "8080",
+		ServerEnabled:       true,
+		WebSearchEnabled:    false,
+		ServerExposeNetwork: true,
+		SessionAutoName:     true,
+		Workspace:           "workspace",
+		SessionsPath:        "sessions",
+		MemoryPath:          "memory",
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -72,20 +72,30 @@ func Load(path string) (Config, error) {
 	cfg.OllamaModelAudio = apply("OLLAMA_MODEL_AUDIO")
 	cfg.OllamaModelEmbed = apply("OLLAMA_MODEL_EMBED")
 	cfg.TelegramBotToken = apply("TELEGRAM_BOT_TOKEN")
-	if value := apply("WEB_ENABLED"); value != "" {
-		cfg.WebEnabled = parseBool(value)
+	if value := apply("SERVER_ENABLED"); value != "" {
+		cfg.ServerEnabled = parseBool(value)
+	} else if value := apply("WEB_ENABLED"); value != "" {
+		cfg.ServerEnabled = parseBool(value)
 	}
-	if value := apply("WEB_ADDR"); value != "" {
-		cfg.WebAddr = value
+	if value := apply("SERVER_PORT"); value != "" {
+		cfg.ServerPort = value
+	} else if value := apply("WEB_PORT"); value != "" {
+		cfg.ServerPort = value
+	} else if value := apply("WEB_ADDR"); value != "" {
+		cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(value), ":")
 	}
 	if value := apply("WEB_SEARCH_ENABLED"); value != "" {
 		cfg.WebSearchEnabled = parseBool(value)
 	}
-	if value := apply("WEB_EXPOSE_NETWORK"); value != "" {
-		cfg.WebExposeNetwork = parseBool(value)
+	if value := apply("SERVER_EXPOSE_NETWORK"); value != "" {
+		cfg.ServerExposeNetwork = parseBool(value)
+	} else if value := apply("WEB_EXPOSE_NETWORK"); value != "" {
+		cfg.ServerExposeNetwork = parseBool(value)
 	}
-	if value := apply("WEB_AUTO_NAME"); value != "" {
-		cfg.WebAutoName = parseBool(value)
+	if value := apply("SESSION_AUTO_NAME"); value != "" {
+		cfg.SessionAutoName = parseBool(value)
+	} else if value := apply("WEB_AUTO_NAME"); value != "" {
+		cfg.SessionAutoName = parseBool(value)
 	}
 	if value := apply("WORKSPACE_PATH"); value != "" {
 		cfg.Workspace = value
@@ -116,29 +126,32 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	webAnswer, err := ask(reader, out, "Enable web server? (y/n)", "y")
+	webAnswer, err := ask(reader, out, "Enable server? (y/n)", "y")
 	if err != nil {
 		return err
 	}
-	port, err := ask(reader, out, "Web port", "8080")
+	port, err := ask(reader, out, "Server port", "8080")
 	if err != nil {
 		return err
 	}
-	webEnabled := parseBool(webAnswer)
-	webAddr := ":" + strings.TrimPrefix(strings.TrimSpace(port), ":")
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=false\nWEB_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\n", baseURL, webEnabled, webAddr)
+	serverEnabled := parseBool(webAnswer)
+	webPort := strings.TrimPrefix(strings.TrimSpace(port), ":")
+	if webPort == "" {
+		webPort = "8080"
+	}
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\n", baseURL, serverEnabled, webPort)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nWEB_EXPOSE_NETWORK=%t\nWEB_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
 		cfg.OllamaBaseURL,
-		cfg.WebEnabled,
-		cfg.WebAddr,
+		cfg.ServerEnabled,
+		cfg.ServerPort,
 		cfg.WebSearchEnabled,
-		cfg.WebExposeNetwork,
-		cfg.WebAutoName,
+		cfg.ServerExposeNetwork,
+		cfg.SessionAutoName,
 		strings.Join(cfg.OllamaProbeModels, ","),
 		cfg.OllamaDefaultModel,
 		cfg.OllamaModelVision,

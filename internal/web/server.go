@@ -69,18 +69,19 @@ type ModelsResponse struct {
 }
 
 type SettingsResponse struct {
-	OllamaBaseURL    string `json:"ollama_base_url"`
-	WebAddr          string `json:"web_addr"`
-	WebEnabled       bool   `json:"web_enabled"`
-	WebSearchEnabled bool   `json:"web_search_enabled"`
-	WebExposeNetwork bool   `json:"web_expose_network"`
-	WebAutoName      bool   `json:"web_auto_name"`
-	ModelVision      string `json:"model_vision"`
-	ModelAudio       string `json:"model_audio"`
-	ModelEmbeddings  string `json:"model_embeddings"`
-	Workspace        string `json:"workspace"`
-	SessionsPath     string `json:"sessions_path"`
-	MemoryPath       string `json:"memory_path"`
+	OllamaBaseURL       string `json:"ollama_base_url"`
+	ServerPort          string `json:"server_port"`
+	ServerEnabled       bool   `json:"server_enabled"`
+	WebSearchEnabled    bool   `json:"web_search_enabled"`
+	ServerExposeNetwork bool   `json:"server_expose_network"`
+	SessionAutoName     bool   `json:"session_auto_name"`
+	ModelDefault        string `json:"model_default"`
+	ModelVision         string `json:"model_vision"`
+	ModelAudio          string `json:"model_audio"`
+	ModelEmbeddings     string `json:"model_embeddings"`
+	Workspace           string `json:"workspace"`
+	SessionsPath        string `json:"sessions_path"`
+	MemoryPath          string `json:"memory_path"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -131,8 +132,12 @@ func (s *Server) ListenAndServe() error {
 	mux.Handle("/", http.FileServer(http.FS(static)))
 
 	cfg := s.config()
-	addr := cfg.WebAddr
-	if !cfg.WebExposeNetwork && strings.HasPrefix(addr, ":") {
+	port := strings.TrimPrefix(strings.TrimSpace(cfg.ServerPort), ":")
+	if port == "" {
+		port = "8080"
+	}
+	addr := ":" + port
+	if !cfg.ServerExposeNetwork {
 		addr = "127.0.0.1" + addr
 	}
 	log.Printf("ollamabot web listening on %s", addr)
@@ -213,13 +218,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
-	s.cfg.WebAddr = strings.TrimSpace(input.WebAddr)
+	s.cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(input.ServerPort), ":")
+	if s.cfg.ServerPort == "" {
+		s.cfg.ServerPort = "8080"
+	}
+	s.cfg.OllamaDefaultModel = strings.TrimSpace(input.ModelDefault)
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
 	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
-	s.cfg.WebExposeNetwork = input.WebExposeNetwork
-	s.cfg.WebAutoName = input.WebAutoName
+	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
+	s.cfg.SessionAutoName = input.SessionAutoName
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
 	s.cfg.MemoryPath = memoryPath
@@ -734,18 +743,19 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func settingsResponse(cfg config.Config) SettingsResponse {
 	return SettingsResponse{
-		OllamaBaseURL:    cfg.OllamaBaseURL,
-		WebAddr:          cfg.WebAddr,
-		WebEnabled:       cfg.WebEnabled,
-		WebSearchEnabled: cfg.WebSearchEnabled,
-		WebExposeNetwork: cfg.WebExposeNetwork,
-		WebAutoName:      cfg.WebAutoName,
-		ModelVision:      cfg.OllamaModelVision,
-		ModelAudio:       cfg.OllamaModelAudio,
-		ModelEmbeddings:  cfg.OllamaModelEmbed,
-		Workspace:        cfg.Workspace,
-		SessionsPath:     cfg.SessionsPath,
-		MemoryPath:       cfg.MemoryPath,
+		OllamaBaseURL:       cfg.OllamaBaseURL,
+		ServerPort:          cfg.ServerPort,
+		ServerEnabled:       cfg.ServerEnabled,
+		WebSearchEnabled:    cfg.WebSearchEnabled,
+		ServerExposeNetwork: cfg.ServerExposeNetwork,
+		SessionAutoName:     cfg.SessionAutoName,
+		ModelDefault:        cfg.OllamaDefaultModel,
+		ModelVision:         cfg.OllamaModelVision,
+		ModelAudio:          cfg.OllamaModelAudio,
+		ModelEmbeddings:     cfg.OllamaModelEmbed,
+		Workspace:           cfg.Workspace,
+		SessionsPath:        cfg.SessionsPath,
+		MemoryPath:          cfg.MemoryPath,
 	}
 }
 
