@@ -74,6 +74,7 @@ type SettingsResponse struct {
 	WebEnabled       bool   `json:"web_enabled"`
 	WebSearchEnabled bool   `json:"web_search_enabled"`
 	WebExposeNetwork bool   `json:"web_expose_network"`
+	WebAutoName      bool   `json:"web_auto_name"`
 	ModelVision      string `json:"model_vision"`
 	ModelAudio       string `json:"model_audio"`
 	ModelEmbeddings  string `json:"model_embeddings"`
@@ -217,6 +218,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.WebExposeNetwork = input.WebExposeNetwork
+	s.cfg.WebAutoName = input.WebAutoName
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
 	s.cfg.MemoryPath = memoryPath
@@ -736,6 +738,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		WebEnabled:       cfg.WebEnabled,
 		WebSearchEnabled: cfg.WebSearchEnabled,
 		WebExposeNetwork: cfg.WebExposeNetwork,
+		WebAutoName:      cfg.WebAutoName,
 		ModelVision:      cfg.OllamaModelVision,
 		ModelAudio:       cfg.OllamaModelAudio,
 		ModelEmbeddings:  cfg.OllamaModelEmbed,

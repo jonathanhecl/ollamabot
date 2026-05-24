@@ -100,49 +100,80 @@
       <div id="modelsBody" class="model-list"></div>
     </dialog>
 
-    <dialog id="settingsDialog" class="modal compact">
+    <dialog id="settingsDialog" class="modal">
       <form method="dialog" class="modal-head">
         <div>
           <p class="eyebrow">Runtime</p>
-          <h2>Ollama settings</h2>
+          <h2>Settings</h2>
         </div>
         <button class="ghost-button" value="close">Close</button>
       </form>
-      <form id="settingsForm" class="settings-form">
-        <label>
-          Ollama URL
-          <input id="ollamaUrl" type="url" placeholder="http://localhost:11434" />
-        </label>
-        <label>
-          Workspace path
-          <input id="workspacePath" type="text" placeholder="workspace" />
-        </label>
-        <label>
-          Sessions path
-          <input id="sessionsPath" type="text" placeholder="sessions" />
-        </label>
-        <label>
-          Memory path
-          <input id="memoryPath" type="text" placeholder="memory" />
-        </label>
-        <label>
-          Default Microphone
-          <select id="micSelect">
-            <option value="">Default system microphone</option>
-          </select>
-        </label>
-        <div class="checkbox-row">
-          <label class="think-toggle">
-            <input id="webSearchToggle" type="checkbox" />
-            <span>Web search</span>
-          </label>
-          <label class="think-toggle">
-            <input id="webExposeToggle" type="checkbox" />
-            <span>Exponer a la red</span>
-          </label>
-        </div>
-        <button class="primary-button" type="submit">Save and reload models</button>
-      </form>
+      
+      <div class="settings-modal-body">
+        <aside class="settings-tabs">
+          <button type="button" class="tab-btn active" data-tab="general">⚙️ General</button>
+          <button type="button" class="tab-btn" data-tab="paths">📁 Paths</button>
+          <button type="button" class="tab-btn" data-tab="features">🚀 Features</button>
+        </aside>
+        
+        <form id="settingsForm" class="settings-form-tabbed">
+          <!-- General Tab -->
+          <div class="tab-content active" id="tab-general">
+            <label>
+              Ollama URL
+              <input id="ollamaUrl" type="url" placeholder="http://localhost:11434" />
+            </label>
+            <label>
+              Default Microphone
+              <select id="micSelect">
+                <option value="">Default system microphone</option>
+              </select>
+            </label>
+            <div class="checkbox-row" style="margin-top: 14px;">
+              <label class="think-toggle">
+                <input id="webAutoNameToggle" type="checkbox" />
+                <span>Auto-renombrar sesión (primer mensaje)</span>
+              </label>
+            </div>
+          </div>
+          
+          <!-- Paths Tab -->
+          <div class="tab-content" id="tab-paths">
+            <label>
+              Workspace path
+              <input id="workspacePath" type="text" placeholder="workspace" />
+            </label>
+            <label>
+              Sessions path
+              <input id="sessionsPath" type="text" placeholder="sessions" />
+            </label>
+            <label>
+              Memory path
+              <input id="memoryPath" type="text" placeholder="memory" />
+            </label>
+          </div>
+          
+          <!-- Features Tab -->
+          <div class="tab-content" id="tab-features">
+            <div class="checkbox-row">
+              <label class="think-toggle">
+                <input id="webSearchToggle" type="checkbox" />
+                <span>Web search</span>
+              </label>
+            </div>
+            <div class="checkbox-row" style="margin-top: 14px;">
+              <label class="think-toggle">
+                <input id="webExposeToggle" type="checkbox" />
+                <span>Exponer a la red</span>
+              </label>
+            </div>
+          </div>
+          
+          <div class="settings-actions">
+            <button class="primary-button" type="submit">Save and reload models</button>
+          </div>
+        </form>
+      </div>
     </dialog>
 
     <dialog id="imageDialog" class="image-modal">

@@ -22,6 +22,7 @@ type Config struct {
 	WebEnabled         bool
 	WebSearchEnabled   bool
 	WebExposeNetwork   bool
+	WebAutoName        bool
 	Workspace          string
 	SessionsPath       string
 	MemoryPath         string
@@ -51,6 +52,7 @@ func Load(path string) (Config, error) {
 		WebEnabled:       true,
 		WebSearchEnabled: false,
 		WebExposeNetwork: true,
+		WebAutoName:      true,
 		Workspace:        "workspace",
 		SessionsPath:     "sessions",
 		MemoryPath:       "memory",
@@ -81,6 +83,9 @@ func Load(path string) (Config, error) {
 	}
 	if value := apply("WEB_EXPOSE_NETWORK"); value != "" {
 		cfg.WebExposeNetwork = parseBool(value)
+	}
+	if value := apply("WEB_AUTO_NAME"); value != "" {
+		cfg.WebAutoName = parseBool(value)
 	}
 	if value := apply("WORKSPACE_PATH"); value != "" {
 		cfg.Workspace = value
@@ -127,12 +132,13 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nWEB_EXPOSE_NETWORK=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
+		"OLLAMA_BASE_URL=%s\nWEB_ENABLED=%t\nWEB_ADDR=%s\nWEB_SEARCH_ENABLED=%t\nWEB_EXPOSE_NETWORK=%t\nWEB_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.WebEnabled,
 		cfg.WebAddr,
 		cfg.WebSearchEnabled,
 		cfg.WebExposeNetwork,
+		cfg.WebAutoName,
 		strings.Join(cfg.OllamaProbeModels, ","),
 		cfg.OllamaDefaultModel,
 		cfg.OllamaModelVision,

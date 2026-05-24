@@ -57,6 +57,7 @@ const els = {
   memoryPath: document.querySelector("#memoryPath"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
+  webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
@@ -91,6 +92,7 @@ els.openSettings.addEventListener("click", async () => {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
+  els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
   try {
@@ -229,10 +231,87 @@ els.sessionList.addEventListener("click", (e) => {
     }
     return;
   }
+
+  const renameBtn = e.target.closest(".session-rename-btn");
+  if (renameBtn) {
+    const item = renameBtn.closest(".session-item");
+    if (!item) return;
+    const id = item.dataset.id;
+    const titleSpan = item.querySelector(".session-title");
+    const titleRow = item.querySelector(".session-title-row");
+    if (!id || !titleSpan || !titleRow) return;
+
+    e.stopPropagation();
+
+    if (titleRow.querySelector(".session-title-input")) return;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "session-title-input";
+    input.value = titleSpan.textContent;
+
+    titleSpan.style.display = "none";
+    renameBtn.style.display = "none";
+    titleRow.appendChild(input);
+    input.focus();
+    input.select();
+
+    const saveRename = async () => {
+      const newTitle = input.value.trim();
+      if (newTitle && newTitle !== titleSpan.textContent) {
+        titleSpan.textContent = newTitle;
+        try {
+          await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ title: newTitle }),
+          });
+          const session = state.sessions.find(s => s.id === id);
+          if (session) session.title = newTitle;
+          renderSessions();
+        } catch (err) {
+          console.error("Rename failed:", err);
+        }
+      } else {
+        titleSpan.style.display = "";
+        renameBtn.style.display = "";
+        input.remove();
+      }
+    };
+
+    input.addEventListener("keydown", (evt) => {
+      if (evt.key === "Enter") {
+        evt.preventDefault();
+        saveRename();
+      } else if (evt.key === "Escape") {
+        evt.preventDefault();
+        titleSpan.style.display = "";
+        renameBtn.style.display = "";
+        input.remove();
+      }
+    });
+
+    input.addEventListener("blur", () => {
+      saveRename();
+    });
+
+    return;
+  }
+
   const item = e.target.closest(".session-item");
   if (!item) return;
+  if (e.target.closest(".session-title-input")) return;
   const id = item.dataset.id;
   if (id) loadSession(id);
+});
+
+els.sessionList.addEventListener("dblclick", (e) => {
+  const item = e.target.closest(".session-item");
+  if (!item) return;
+  const renameBtn = item.querySelector(".session-rename-btn");
+  if (renameBtn) {
+    renameBtn.click();
+  }
 });
 
 bootstrap();
@@ -271,6 +350,7 @@ async function loadSettings() {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
+  els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
@@ -296,6 +376,7 @@ async function saveSettings(event) {
       model_embeddings: state.embeddingsModel,
       web_search_enabled: els.webSearchToggle.checked,
       web_expose_network: els.webExposeToggle.checked,
+      web_auto_name: els.webAutoNameToggle.checked,
     }),
   });
   const data = await response.json();
@@ -322,6 +403,7 @@ async function saveRoleModels() {
       model_embeddings: state.embeddingsModel,
       web_search_enabled: state.settings.web_search_enabled || false,
       web_expose_network: state.settings.web_expose_network || false,
+      web_auto_name: state.settings.web_auto_name !== false,
     }),
   });
 }
@@ -680,6 +762,15 @@ async function sendMessage(event) {
       updateContextBar();
       saveSession();
       loadModels();
+
+      // Auto-generate session title if enabled and it's the first message exchange
+      if (state.settings.web_auto_name !== false) {
+        const userMsgs = state.messages.filter((m) => m.role === "user");
+        const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
+        if (userMsgs.length === 1 && assistantMsgs.length === 1) {
+          autoGenerateSessionTitle(assistant.content);
+        }
+      }
     },
   });
 }
@@ -1109,7 +1200,7 @@ function renderSessions() {
     btn.className = `session-item ${sess.id === state.activeSessionId ? "active" : ""}`;
     btn.dataset.id = sess.id;
     const date = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString() : "";
-    btn.innerHTML = `<div class="session-info"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
+    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><button class="session-rename-btn" type="button" title="Rename session">✏️</button></div><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
     els.sessionList.appendChild(btn);
   }
 }
@@ -1150,5 +1241,68 @@ async function deleteSession(id) {
     renderSessions();
   } catch (e) {
     console.warn("deleteSession failed:", e);
+  }
+}
+
+// Settings tab-switching wiring
+document.querySelectorAll(".settings-tabs .tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".settings-tabs .tab-btn").forEach((b) => b.classList.remove("active"));
+    document.querySelectorAll(".settings-form-tabbed .tab-content").forEach((c) => c.classList.remove("active"));
+    btn.classList.add("active");
+    const target = btn.dataset.tab;
+    document.getElementById(`tab-${target}`).classList.add("active");
+  });
+});
+
+async function autoGenerateSessionTitle(assistantContent) {
+  if (!state.activeSessionId) return;
+  const id = state.activeSessionId;
+  try {
+    const response = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: state.activeModel,
+        messages: [
+          {
+            role: "system",
+            content: "Resume el tema principal de la respuesta en un título extremadamente corto (de 2 a 4 palabras). No uses comillas, ni puntuación, ni explicaciones. Responde únicamente con el título."
+          },
+          {
+            role: "user",
+            content: assistantContent
+          }
+        ],
+        think: false,
+      }),
+    });
+    if (!response.ok || !response.body) return;
+
+    let generatedTitle = "";
+    await readEventStream(response.body, {
+      content: (value) => {
+        generatedTitle += value;
+      },
+      done: async () => {
+        generatedTitle = generatedTitle.trim().replace(/^["']|["']$/g, ""); // strip quotes
+        if (generatedTitle) {
+          try {
+            await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: generatedTitle }),
+            });
+            const session = state.sessions.find(s => s.id === id);
+            if (session) session.title = generatedTitle;
+            renderSessions();
+          } catch (err) {
+            console.warn("Auto-rename failed:", err);
+          }
+        }
+      }
+    });
+  } catch (err) {
+    console.warn("Auto-rename call failed:", err);
   }
 }

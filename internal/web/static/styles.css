@@ -144,12 +144,55 @@ input {
   min-width: 0;
 }
 
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
 .session-title {
   font-weight: 800;
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+}
+
+.session-rename-btn {
+  display: none;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.session-item:hover .session-rename-btn {
+  display: inline-flex;
+}
+
+.session-rename-btn:hover {
+  color: var(--accent);
+}
+
+.session-title-input {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  border-radius: 4px;
+  padding: 2px 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.session-title-input:focus {
+  outline: none;
 }
 
 .session-meta {
@@ -1205,4 +1248,103 @@ textarea {
   justify-content: flex-end;
   gap: 10px;
   margin-top: 10px;
+}
+
+/* Tabbed Settings Modal */
+.settings-modal-body {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  min-height: 400px;
+  background: var(--panel);
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 20px 12px;
+  border-right: 1px solid var(--line);
+  background: rgba(24, 27, 21, 0.4);
+}
+
+.settings-tabs .tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-tabs .tab-btn:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.settings-tabs .tab-btn.active {
+  background: var(--panel-2);
+  color: var(--accent);
+  border-color: var(--line);
+}
+
+.settings-form-tabbed {
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  position: relative;
+  height: 100%;
+}
+
+.settings-form-tabbed .tab-content {
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+
+.settings-form-tabbed .tab-content.active {
+  display: flex;
+}
+
+.settings-form-tabbed label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-form-tabbed label input[type="text"],
+.settings-form-tabbed label input[type="url"],
+.settings-form-tabbed label select {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+  background: #11140f;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.settings-form-tabbed label input:focus,
+.settings-form-tabbed label select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-actions {
+  margin-top: 32px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
