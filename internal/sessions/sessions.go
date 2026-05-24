@@ -37,8 +37,10 @@ type rawMsg struct {
 
 type attachmentMeta struct {
 	Name string `json:"name,omitempty"`
+	Mime string `json:"mime,omitempty"`
 	Kind string `json:"kind,omitempty"`
 	Data string `json:"data,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // Store persists sessions as folders inside sessionsPath.

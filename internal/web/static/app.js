@@ -1041,7 +1041,22 @@ async function loadSession(id) {
         content: msg.content || "",
         thinking: msg.thinking || "",
         images: msg.images || undefined,
-        attachments: msg.attachments || undefined,
+        attachments: (msg.attachments || []).map((att) => {
+          let url = att.url;
+          if (!url || url === "undefined") {
+            if (att.data) {
+              const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
+              url = `data:${mime};base64,${att.data}`;
+            }
+          }
+          return {
+            name: att.name || "",
+            mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
+            kind: att.kind || "",
+            data: att.data || "",
+            url: url || ""
+          };
+        }),
         toolCalls: msg.toolCalls || msg.tool_calls || [],
         toolResults: msg.toolResults || msg.tool_results || [],
         streaming: false,
