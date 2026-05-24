@@ -537,6 +537,31 @@ function renderModels() {
     });
   }
 
+  // Sort models: active first, then useful ones, and useless ones at the very bottom
+  filteredModels.sort((a, b) => {
+    const aMain = canBeMain(a);
+    const aVis = a.capabilities?.vision === "comprobado" || a.capabilities?.vision === "inferido";
+    const aAud = a.capabilities?.audio === "comprobado" || a.capabilities?.audio === "inferido";
+    const aEmb = a.capabilities?.embedding === "comprobado" || a.capabilities?.embedding === "inferido";
+    const aUseless = !aMain && !aVis && !aAud && !aEmb;
+
+    const bMain = canBeMain(b);
+    const bVis = b.capabilities?.vision === "comprobado" || b.capabilities?.vision === "inferido";
+    const bAud = b.capabilities?.audio === "comprobado" || b.capabilities?.audio === "inferido";
+    const bEmb = b.capabilities?.embedding === "comprobado" || b.capabilities?.embedding === "inferido";
+    const bUseless = !bMain && !bVis && !bAud && !bEmb;
+
+    if (aUseless !== bUseless) {
+      return aUseless ? 1 : -1;
+    }
+    const aSelected = a.name === state.activeModel;
+    const bSelected = b.name === state.activeModel;
+    if (aSelected !== bSelected) {
+      return aSelected ? -1 : 1;
+    }
+    return a.name.localeCompare(b.name);
+  });
+
   if (filteredModels.length === 0) {
     els.modelsBody.innerHTML = `<div class="empty">No models match the filter or search query.</div>`;
     return;
@@ -547,8 +572,15 @@ function renderModels() {
     const isVision = model.name === state.visionModel;
     const isAudio = model.name === state.audioModel;
     const isEmbed = model.name === state.embeddingsModel;
+
+    const isMainCapable = canBeMain(model);
+    const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
+    const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
+    const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
+    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed;
+
     const card = document.createElement("article");
-    card.className = `model-card ${isMain ? "selected" : ""}`;
+    card.className = `model-card ${isMain ? "selected" : ""} ${isUseless ? "useless" : ""}`;
 
     const sizeBarPct = model.size ? Math.min(100, Math.round((model.size_vram / model.size) * 100)) : 0;
     const hardwareBarHtml = model.loaded ? `
@@ -578,12 +610,8 @@ function renderModels() {
       `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` :
       `<span class="model-offline-badge">offline</span>`;
 
-    const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
-    const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
-    const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
-
     let roleButtonsHtml = "";
-    if (canBeMain(model)) {
+    if (isMainCapable) {
       roleButtonsHtml += `<button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">⚡ Main</button>`;
     }
     if (canVision) {
@@ -595,6 +623,12 @@ function renderModels() {
     if (canEmbed) {
       roleButtonsHtml += `<button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">🔗 Embed</button>`;
     }
+
+    const roleButtonsContainer = roleButtonsHtml ? `
+      <div class="role-buttons">
+        ${roleButtonsHtml}
+      </div>
+    ` : "";
 
     card.innerHTML = `
       <div>
@@ -616,9 +650,7 @@ function renderModels() {
           ${hardwareBarHtml}
         </div>
       </div>
-      <div class="role-buttons">
-        ${roleButtonsHtml}
-      </div>
+      ${roleButtonsContainer}
     `;
     els.modelsBody.appendChild(card);
   }

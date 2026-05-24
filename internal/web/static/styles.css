@@ -954,6 +954,38 @@ textarea {
   letter-spacing: 0.1em;
 }
 
+.model-card.useless {
+  opacity: 0.35;
+  background: rgba(24, 27, 21, 0.15) !important;
+  border-style: dashed;
+  filter: grayscale(80%);
+  transform: none !important;
+  box-shadow: none !important;
+  padding: 8px 18px;
+}
+
+.model-card.useless:hover {
+  opacity: 0.55;
+  border-color: var(--muted);
+}
+
+.model-card.useless .model-name {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.model-card.useless .sub {
+  font-size: 10px;
+}
+
+.model-card.useless .caps {
+  opacity: 0.7;
+}
+
+.model-card.useless .model-meta {
+  font-size: 10px;
+}
+
 .model-card-header {
   display: flex;
   justify-content: space-between;
