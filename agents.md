@@ -68,3 +68,4 @@ input (user)
 - Every new capability must have a probe in `internal/probe` before being used in production.
 - Changes to `.env` are persisted via `config.SaveBasic`.
 - Progress is recorded in `docs/progress.md`.
+- All user-facing interface text, option menus, CLI prompts, console logs, and error messages must be 100% in English.

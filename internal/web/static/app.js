@@ -55,7 +55,8 @@ const els = {
   workspacePath: document.querySelector("#workspacePath"),
   sessionsPath: document.querySelector("#sessionsPath"),
   memoryPath: document.querySelector("#memoryPath"),
-  webSearchToggle: document.querySelector("#webSearchToggle"),
+  webPort: document.querySelector("#webPort"),
+  webSearchSelect: document.querySelector("#webSearchSelect"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
   recordControl: document.querySelector("#recordControl"),
@@ -90,9 +91,12 @@ els.openSettings.addEventListener("click", async () => {
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
-  els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
+  els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
+  const addr = state.settings.web_addr || ":8080";
+  const portMatch = addr.match(/:(\d+)$/);
+  els.webPort.value = portMatch ? portMatch[1] : "8080";
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
   try {
@@ -348,9 +352,12 @@ async function loadSettings() {
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
-  els.webSearchToggle.checked = !!state.settings.web_search_enabled;
   els.webExposeToggle.checked = !!state.settings.web_expose_network;
   els.webAutoNameToggle.checked = state.settings.web_auto_name !== false;
+  els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
+  const waddr = state.settings.web_addr || ":8080";
+  const wportMatch = waddr.match(/:(\d+)$/);
+  els.webPort.value = wportMatch ? wportMatch[1] : "8080";
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
@@ -374,9 +381,10 @@ async function saveSettings(event) {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
-      web_search_enabled: els.webSearchToggle.checked,
+      web_search_enabled: els.webSearchSelect.value === "ddg",
       web_expose_network: els.webExposeToggle.checked,
       web_auto_name: els.webAutoNameToggle.checked,
+      web_addr: ":" + (els.webPort.value.trim().replace(/^:/, "") || "8080"),
     }),
   });
   const data = await response.json();
@@ -501,8 +509,8 @@ function renderModels() {
   let filteredModels = state.models;
 
   if (query) {
-    filteredModels = filteredModels.filter((m) => 
-      m.name.toLowerCase().includes(query) || 
+    filteredModels = filteredModels.filter((m) =>
+      m.name.toLowerCase().includes(query) ||
       (m.family && m.family.toLowerCase().includes(query)) ||
       (m.parameters && m.parameters.toLowerCase().includes(query))
     );
@@ -559,8 +567,8 @@ function renderModels() {
       </div>
     `;
 
-    const statusBadgeHtml = model.loaded ? 
-      `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` : 
+    const statusBadgeHtml = model.loaded ?
+      `<span class="model-loaded-badge"><span class="pulse-dot"></span>loaded</span>` :
       `<span class="model-offline-badge">offline</span>`;
 
     card.innerHTML = `
@@ -848,12 +856,7 @@ function capBadges(caps = {}) {
     audio: "🔊 audio",
     video: "📹 video"
   };
-  return order.map((name) => {
-    const status = caps[name] || "pendiente";
-    const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
-    const label = glyphs[name] || name;
-    return `<span class="cap ${cls}" title="${name}: ${status}">${label}</span>`;
-  }).join("");
+
 }
 
 function renderMarkdown(text) {
@@ -1108,7 +1111,13 @@ async function createSession(title = "New session") {
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.messages = [];
     state.attachments = [];
-    renderMessages();
+    return order.map((name) => {
+      const status = caps[name] || "pendiente";
+      const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
+      const label = glyphs[name] || name;
+      const engStatus = status === "comprobado" ? "confirmed" : status === "inferido" ? "inferred" : "pending";
+      return `<span class="cap ${cls}" title="${name}: ${engStatus}">${label}</span>`;
+    }).join(""); renderMessages();
     renderAttachments();
     updateContextBar();
     await loadSessions();
@@ -1267,7 +1276,7 @@ async function autoGenerateSessionTitle(assistantContent) {
         messages: [
           {
             role: "system",
-            content: "Resume el tema principal de la respuesta en un título extremadamente corto (de 2 a 4 palabras). No uses comillas, ni puntuación, ni explicaciones. Responde únicamente con el título."
+            content: "Summarize the main topic of the response in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with only the title."
           },
           {
             role: "user",

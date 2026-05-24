@@ -35,11 +35,11 @@ func run(args []string) error {
 	}
 	remaining := global.Args()
 	if len(remaining) == 0 && !config.Exists(*envPath) {
-		fmt.Printf("No encontre %s. Vamos a crearlo con la configuracion basica.\n", *envPath)
+		fmt.Printf("Could not find %s. Let's create it with basic configuration.\n", *envPath)
 		if err := config.CreateInteractive(*envPath, os.Stdin, os.Stdout); err != nil {
 			return err
 		}
-		fmt.Printf("Listo, guarde %s.\n", *envPath)
+		fmt.Printf("Done, saved %s.\n", *envPath)
 	}
 
 	cfg, err := config.Load(*envPath)
@@ -84,7 +84,7 @@ func run(args []string) error {
 			fmt.Printf("OllamaBot web: http://localhost%s\n", cfg.WebAddr)
 			return web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath).ListenAndServe()
 		}
-		fmt.Println("Servidor web desactivado en .env (WEB_ENABLED=false).")
+		fmt.Println("Web server disabled in .env (WEB_ENABLED=false).")
 		usage()
 		return nil
 	}

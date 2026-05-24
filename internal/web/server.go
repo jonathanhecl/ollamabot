@@ -213,6 +213,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
+	s.cfg.WebAddr = strings.TrimSpace(input.WebAddr)
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
 	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)

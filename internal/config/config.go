@@ -116,11 +116,11 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	webAnswer, err := ask(reader, out, "Levantar servidor web? (s/n)", "s")
+	webAnswer, err := ask(reader, out, "Enable web server? (y/n)", "y")
 	if err != nil {
 		return err
 	}
-	port, err := ask(reader, out, "Puerto web", "8080")
+	port, err := ask(reader, out, "Web port", "8080")
 	if err != nil {
 		return err
 	}
