@@ -866,7 +866,13 @@ function capBadges(caps = {}) {
     audio: "🔊 audio",
     video: "📹 video"
   };
-
+  return order.map((name) => {
+    const status = caps ? (caps[name] || "pendiente") : "pendiente";
+    const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
+    const label = glyphs[name] || name;
+    const engStatus = status === "comprobado" ? "confirmed" : status === "inferido" ? "inferred" : "pending";
+    return `<span class="cap ${cls}" title="${name}: ${engStatus}">${label}</span>`;
+  }).join("");
 }
 
 function renderMarkdown(text) {
