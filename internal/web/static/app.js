@@ -767,6 +767,7 @@ async function sendMessage(event) {
   
   state.attachments = [];
   els.prompt.value = "";
+  els.prompt.focus();
   renderAttachments();
   renderMessages();
   updateContextBar();
@@ -1393,6 +1394,7 @@ async function createSession(title = "New session") {
     renderAttachments();
     updateContextBar();
     await loadSessions();
+    els.prompt.focus();
   } catch (e) {
     console.warn("createSession failed:", e);
   }
@@ -1453,6 +1455,7 @@ async function loadSession(id) {
     renderAttachments();
     updateContextBar();
     renderSessions();
+    els.prompt.focus();
   } catch (e) {
     console.warn("loadSession failed:", e);
   }
