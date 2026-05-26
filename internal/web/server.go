@@ -282,6 +282,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	cfg, client, _, mr := s.deps()
 
+	// Log incoming request summary for debugging media routing
+	for i, msg := range input.Messages {
+		if len(msg.Images) > 0 {
+			log.Printf("[handleChatStream] Message[%d]: role=%q, content_len=%d, images=%d, image_kinds=%v",
+				i, msg.Role, len(msg.Content), len(msg.Images), msg.ImageKinds)
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -456,18 +464,29 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 			})
 		}
 
+		log.Printf("[resolveMedia] User message has %d attachment(s), imageKinds=%v, content=%q", len(attachments), msg.ImageKinds, truncate(msg.Content, 100))
+		for i, att := range attachments {
+			log.Printf("[resolveMedia]   attachment[%d]: kind=%q, data_len=%d", i, att.kind, len(att.base64))
+		}
+
 		// Pass 1: Process routed audio attachments first
 		for _, att := range attachments {
 			if att.kind == "audio" {
-				if mr.NeedsMediaRouting(att.kind) {
+				needsRouting := mr.NeedsMediaRouting(att.kind)
+				log.Printf("[resolveMedia] Audio attachment: needsRouting=%v, data_len=%d", needsRouting, len(att.base64))
+				if needsRouting {
 					// Audio gets the user's text content as its analysis prompt
+					log.Printf("[resolveMedia] Sending audio to dedicated audio model for analysis...")
 					analysis, err := mr.AnalyzeAudio(ctx, att.base64, msg.Content)
 					if err != nil {
+						log.Printf("[resolveMedia] Audio analysis FAILED: %v", err)
 						return nil, err
 					}
+					log.Printf("[resolveMedia] Audio analysis result (len=%d): %s", len(analysis), truncate(analysis, 200))
 					audioTranscriptions = append(audioTranscriptions, analysis)
 					analyses = append(analyses, fmt.Sprintf("[Audio Transcription & Analysis]:\n%s", analysis))
 				} else {
+					log.Printf("[resolveMedia] Audio goes to passthrough (main model handles it natively)")
 					passthrough = append(passthrough, att.base64)
 				}
 			}
@@ -482,16 +501,22 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 			} else {
 				imagePrompt = fmt.Sprintf("Analyze this image based on the following instruction transcribed from audio:\n%s", combinedAudio)
 			}
+			log.Printf("[resolveMedia] Image prompt augmented with audio transcription: %s", truncate(imagePrompt, 200))
 		}
 
 		// Pass 2: Process image attachments
 		for _, att := range attachments {
 			if att.kind != "audio" {
-				if mr.NeedsMediaRouting(att.kind) {
+				needsRouting := mr.NeedsMediaRouting(att.kind)
+				log.Printf("[resolveMedia] Image attachment: needsRouting=%v, data_len=%d", needsRouting, len(att.base64))
+				if needsRouting {
+					log.Printf("[resolveMedia] Sending image to dedicated vision model for analysis...")
 					analysis, err := mr.AnalyzeImage(ctx, att.base64, imagePrompt)
 					if err != nil {
+						log.Printf("[resolveMedia] Image analysis FAILED: %v", err)
 						return nil, err
 					}
+					log.Printf("[resolveMedia] Image analysis result (len=%d): %s", len(analysis), truncate(analysis, 200))
 					// Truncate instruction preview for assistant message log readability
 					logPrompt := imagePrompt
 					if len(logPrompt) > 120 {
@@ -499,10 +524,13 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 					}
 					analyses = append(analyses, fmt.Sprintf("[Image Analysis (Prompt: %s)]:\n%s", strings.ReplaceAll(logPrompt, "\n", " "), analysis))
 				} else {
+					log.Printf("[resolveMedia] Image goes to passthrough (main model handles it natively)")
 					passthrough = append(passthrough, att.base64)
 				}
 			}
 		}
+
+		log.Printf("[resolveMedia] Summary: %d analyses, %d passthrough, %d audioTranscriptions", len(analyses), len(passthrough), len(audioTranscriptions))
 
 		if len(analyses) > 0 {
 			assistantContent := "The user has attached media. The pre-processing analysis is as follows:\n\n" + strings.Join(analyses, "\n\n")
@@ -542,6 +570,7 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 			}
 		}
 
+		log.Printf("[resolveMedia] Final resolved message: role=%q, content_len=%d, images=%d", resolved.Role, len(resolved.Content), len(resolved.Images))
 		out = append(out, resolved)
 	}
 	return out, nil
@@ -857,4 +886,12 @@ func SnapshotPath(path string) string {
 		return "docs/probe-cache.json"
 	}
 	return "probe-cache.json"
+}
+
+// truncate returns s truncated to maxLen characters with "..." appended if needed.
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

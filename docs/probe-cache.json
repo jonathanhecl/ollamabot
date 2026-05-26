@@ -471,5 +471,14 @@
       "status": "pendiente",
       "details": "Video remains pending; planned path is frame extraction plus vision"
     }
+  ],
+  "probe_runs": [
+    {
+      "name": "audio",
+      "model": "gemma4:e2b",
+      "status": "comprobado",
+      "details": "The speaker is offering companionship.",
+      "run_at": "2026-05-26T04:14:15.1872257-03:00"
+    }
   ]
 }

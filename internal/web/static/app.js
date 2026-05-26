@@ -737,6 +737,10 @@ function renderAttachments() {
     const card = document.createElement("article");
     card.className = `attachment ${attachment.kind}`;
     card.innerHTML = `${attachmentPreview(attachment)}<button type="button" title="Remove attachment">Remove</button>`;
+    // Prevent keyboard events inside audio attachment cards from reaching the form
+    card.addEventListener("keydown", (e) => e.stopPropagation());
+    card.addEventListener("keypress", (e) => e.stopPropagation());
+    card.addEventListener("keyup", (e) => e.stopPropagation());
     card.querySelector("button").addEventListener("click", () => {
       state.attachments.splice(index, 1);
       renderAttachments();
@@ -748,6 +752,10 @@ function renderAttachments() {
 async function sendMessage(event) {
   event.preventDefault();
   const content = els.prompt.value.trim();
+  console.log("[sendMessage] Triggered. content_len:", content.length, "attachments:", state.attachments.length, "activeModel:", state.activeModel);
+  if (state.attachments.length > 0) {
+    console.log("[sendMessage] Attachment kinds:", state.attachments.map(a => a.kind), "data_lens:", state.attachments.map(a => a.data?.length || 0));
+  }
   if ((!content && state.attachments.length === 0) || !state.activeModel) return;
 
   if (!state.activeSessionId) {
@@ -824,6 +832,19 @@ async function processNextQueueItem() {
   renderMessages();
 
   state.currentAbortController = new AbortController();
+
+  // Log what we're about to send
+  const currentMsg = outboundMessages[outboundMessages.length - 1];
+  console.log("[processQueue] Sending to /api/chat/stream:", {
+    model: state.activeModel,
+    totalMessages: outboundMessages.length,
+    currentMsg: {
+      role: currentMsg?.role,
+      content_len: currentMsg?.content?.length || 0,
+      images: currentMsg?.images?.length || 0,
+      image_kinds: currentMsg?.image_kinds,
+    }
+  });
 
   try {
     const response = await fetch("/api/chat/stream", {
@@ -1255,8 +1276,11 @@ function attachmentPreview(attachment) {
     return `<div class="media-preview image" data-url="${escapeAttr(attachment.url)}"><img src="${escapeAttr(attachment.url)}" alt="${label}"><span>${label}</span></div>`;
   }
   if (attachment.kind === "audio") {
-    const stopEvents = `onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" onkeypress="event.stopPropagation()" onkeyup="event.stopPropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()"`;
-    return `<div class="media-preview audio" ${stopEvents}><span>${label}</span><audio controls src="${escapeAttr(attachment.url)}" ${stopEvents}></audio></div>`;
+    // Prevent ALL events from audio controls from propagating to parent elements.
+    // This avoids issues where interacting with native audio controls (play, pause,
+    // seek, volume) could interfere with form submission or steal focus from prompt.
+    const stopAll = `onclick="event.stopPropagation(); event.stopImmediatePropagation()" onkeydown="event.stopPropagation(); event.stopImmediatePropagation()" onkeypress="event.stopPropagation(); event.stopImmediatePropagation()" onkeyup="event.stopPropagation(); event.stopImmediatePropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()" onfocus="event.stopPropagation()"`;
+    return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio></div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }
