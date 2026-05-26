@@ -505,15 +505,13 @@ function modelForRole(role) {
   const capKey = role === "vision" ? "vision" : "audio";
   const dedicated = role === "vision" ? state.visionModel : state.audioModel;
   if (dedicated) {
-    const m = state.models.find((m) => m.name === dedicated);
-    const status = m?.capabilities?.[capKey];
-    if (status === "comprobado" || (role === "vision" && status === "inferido")) return dedicated;
-    return null;
+    // If the user configured a dedicated role model, always trust it!
+    return dedicated;
   }
   const main = activeModel();
   if (!main) return null;
   const status = main.capabilities?.[capKey];
-  if (status === "comprobado" || (role === "vision" && status === "inferido")) return main.name;
+  if (status === "comprobado" || status === "inferido") return main.name;
   return null;
 }
 
@@ -1003,16 +1001,70 @@ async function readEventStream(stream, handlers) {
   }
 }
 
+function renderPreProcessingContent(content) {
+  const parts = content.split("\n\n");
+  let html = `<div class="preprocessing-header"><span class="step-tool-icon">🧠</span> <strong>Media Pre-Processing Flow</strong></div>`;
+  
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i].trim();
+    if (!part) continue;
+    
+    if (part.startsWith("[Audio Transcription & Analysis]:")) {
+      const body = part.slice("[Audio Transcription & Analysis]:".length).trim();
+      html += `
+        <div class="analysis-box audio-analysis">
+          <div class="analysis-box-head">
+            <span class="analysis-icon">🎙️</span>
+            <strong>Audio Transcription & Analysis</strong>
+            <span class="analysis-tag">role model: audio</span>
+          </div>
+          <div class="analysis-box-body">${renderMarkdown(body)}</div>
+        </div>
+      `;
+    } else if (part.startsWith("[Image Analysis (Prompt:")) {
+      const closingBracketIndex = part.indexOf(")]:");
+      let promptText = "";
+      let body = part;
+      if (closingBracketIndex !== -1) {
+        promptText = part.slice("[Image Analysis (Prompt: ".length, closingBracketIndex).trim();
+        body = part.slice(closingBracketIndex + 3).trim();
+      }
+      
+      html += `
+        <div class="analysis-box image-analysis">
+          <div class="analysis-box-head">
+            <span class="analysis-icon">🖼️</span>
+            <strong>Image Context Analysis</strong>
+            <span class="analysis-tag">role model: vision</span>
+          </div>
+          ${promptText ? `<div class="analysis-box-prompt"><strong>Instruction:</strong> <em>${escapeHtml(promptText)}</em></div>` : ""}
+          <div class="analysis-box-body">${renderMarkdown(body)}</div>
+        </div>
+      `;
+    } else {
+      html += `
+        <div class="analysis-box general-analysis">
+          <div class="analysis-box-body">${renderMarkdown(part)}</div>
+        </div>
+      `;
+    }
+  }
+  return `<div class="preprocessing-wrapper">${html}</div>`;
+}
+
 function renderMessages() {
   els.messages.innerHTML = "";
   for (const message of state.messages) {
     if (message.role === "system") continue;
     const div = document.createElement("article");
     const isQueued = message.role === "user" && message.processed === false;
-    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""} ${isQueued ? "queued" : ""}`;
+    const isPreProcessing = message.role === "assistant" && message.content && message.content.startsWith("The user has attached media. The pre-processing analysis is as follows:");
+    
+    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
     const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
+    
     // Build steps HTML (interleaved thinking / tool blocks).
     const stepsHtml = (message.steps || []).map(renderStep).join("");
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
@@ -1028,6 +1080,7 @@ function renderMessages() {
         legacyHtml += message.toolResults.map(renderLegacyToolResult).join("");
       }
     }
+    
     let metricsHtml = "";
     if (message.metrics && message.metrics.total_duration) {
       const m = message.metrics;
@@ -1046,8 +1099,18 @@ function renderMessages() {
         </div>
       `;
     }
+    
     const queuedBadge = isQueued ? ` <span class="queued-badge">⏳ In Queue</span>` : "";
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${metricsHtml}`;
+    let contentHtml = "";
+    let roleName = message.role;
+    if (isPreProcessing) {
+      roleName = "media router";
+      contentHtml = renderPreProcessingContent(message.content);
+    } else {
+      contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
+    }
+    
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;

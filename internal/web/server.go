@@ -437,31 +437,75 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 
 		var analyses []string
 		var passthrough []string
+		var audioTranscriptions []string
 
+		type attachment struct {
+			kind   string
+			base64 string
+		}
+
+		var attachments []attachment
 		for i, b64 := range msg.Images {
 			kind := "image"
 			if i < len(msg.ImageKinds) {
 				kind = msg.ImageKinds[i]
 			}
-			if mr.NeedsMediaRouting(kind) {
-				var analysis string
-				var err error
-				if kind == "audio" {
-					analysis, err = mr.AnalyzeAudio(ctx, b64)
+			attachments = append(attachments, attachment{
+				kind:   kind,
+				base64: b64,
+			})
+		}
+
+		// Pass 1: Process routed audio attachments first
+		for _, att := range attachments {
+			if att.kind == "audio" {
+				if mr.NeedsMediaRouting(att.kind) {
+					// Audio gets the user's text content as its analysis prompt
+					analysis, err := mr.AnalyzeAudio(ctx, att.base64, msg.Content)
+					if err != nil {
+						return nil, err
+					}
+					audioTranscriptions = append(audioTranscriptions, analysis)
+					analyses = append(analyses, fmt.Sprintf("[Audio Transcription & Analysis]:\n%s", analysis))
 				} else {
-					analysis, err = mr.AnalyzeImage(ctx, b64)
+					passthrough = append(passthrough, att.base64)
 				}
-				if err != nil {
-					return nil, err
-				}
-				analyses = append(analyses, analysis)
+			}
+		}
+
+		// Construct image prompt by combining text prompt and audio transcriptions
+		imagePrompt := msg.Content
+		if len(audioTranscriptions) > 0 {
+			combinedAudio := strings.Join(audioTranscriptions, "\n\n")
+			if strings.TrimSpace(imagePrompt) != "" {
+				imagePrompt = fmt.Sprintf("%s\n\n[Instruction/Context from Audio Transcription]:\n%s", imagePrompt, combinedAudio)
 			} else {
-				passthrough = append(passthrough, b64)
+				imagePrompt = fmt.Sprintf("Analyze this image based on the following instruction transcribed from audio:\n%s", combinedAudio)
+			}
+		}
+
+		// Pass 2: Process image attachments
+		for _, att := range attachments {
+			if att.kind != "audio" {
+				if mr.NeedsMediaRouting(att.kind) {
+					analysis, err := mr.AnalyzeImage(ctx, att.base64, imagePrompt)
+					if err != nil {
+						return nil, err
+					}
+					// Truncate instruction preview for assistant message log readability
+					logPrompt := imagePrompt
+					if len(logPrompt) > 120 {
+						logPrompt = logPrompt[:117] + "..."
+					}
+					analyses = append(analyses, fmt.Sprintf("[Image Analysis (Prompt: %s)]:\n%s", strings.ReplaceAll(logPrompt, "\n", " "), analysis))
+				} else {
+					passthrough = append(passthrough, att.base64)
+				}
 			}
 		}
 
 		if len(analyses) > 0 {
-			assistantContent := "The user has attached media. The analysis says the following:\n\n" + strings.Join(analyses, "\n\n")
+			assistantContent := "The user has attached media. The pre-processing analysis is as follows:\n\n" + strings.Join(analyses, "\n\n")
 			out = append(out, ollama.Message{
 				Role:    "assistant",
 				Content: assistantContent,
@@ -470,6 +514,28 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 
 		resolved := msg.Message
 		resolved.Images = passthrough
+
+		// Format and inject the audio transcription contextually into the final user prompt
+		if len(audioTranscriptions) > 0 {
+			combinedAudio := strings.Join(audioTranscriptions, "\n\n")
+			hasPassthroughImages := len(passthrough) > 0
+			hasUserContent := strings.TrimSpace(resolved.Content) != ""
+
+			if hasPassthroughImages {
+				if hasUserContent {
+					resolved.Content = fmt.Sprintf("%s\n\n[The user also sent this audio transcription accompanying the image]:\n\"%s\"", resolved.Content, combinedAudio)
+				} else {
+					resolved.Content = fmt.Sprintf("[The user sent this audio transcription accompanying the image]:\n\"%s\"", combinedAudio)
+				}
+			} else {
+				if hasUserContent {
+					resolved.Content = fmt.Sprintf("%s\n\n[The user also sent this audio transcription]:\n\"%s\"", resolved.Content, combinedAudio)
+				} else {
+					resolved.Content = fmt.Sprintf("[The user sent only this audio transcription]:\n\"%s\"", combinedAudio)
+				}
+			}
+		}
+
 		out = append(out, resolved)
 	}
 	return out, nil

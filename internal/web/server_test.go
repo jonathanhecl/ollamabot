@@ -60,9 +60,9 @@ func TestResolveMedia_SplitsIntoAssistantAndUser(t *testing.T) {
 	if out[0].Role != "assistant" {
 		t.Errorf("expected first message role assistant, got %s", out[0].Role)
 	}
-	want := "The user has attached media. The analysis says the following:\n\nIt shows a red balloon against a blue sky."
+	want := "The user has attached media. The pre-processing analysis is as follows:\n\n[Image Analysis (Prompt: What do you see?)]:\nIt shows a red balloon against a blue sky."
 	if out[0].Content != want {
-		t.Errorf("unexpected assistant content: got %q, want %q", out[0].Content, want)
+		t.Errorf("unexpected assistant content:\ngot  %q\nwant %q", out[0].Content, want)
 	}
 
 	if out[1].Role != "user" {
@@ -122,7 +122,7 @@ func TestResolveMedia_EmptyUserText(t *testing.T) {
 	if out[0].Role != "assistant" {
 		t.Errorf("expected first message role assistant, got %s", out[0].Role)
 	}
-	want := "The user has attached media. The analysis says the following:\n\nThe audio says hello in an emphatic tone."
+	want := "The user has attached media. The pre-processing analysis is as follows:\n\n[Audio Transcription & Analysis]:\nThe audio says hello in an emphatic tone."
 	if out[0].Content != want {
 		t.Errorf("unexpected assistant content: got %q, want %q", out[0].Content, want)
 	}
@@ -130,8 +130,8 @@ func TestResolveMedia_EmptyUserText(t *testing.T) {
 	if out[1].Role != "user" {
 		t.Errorf("expected second message role user, got %s", out[1].Role)
 	}
-	if out[1].Content != "" {
-		t.Errorf("expected empty user content, got %q", out[1].Content)
+	if out[1].Content != "[The user sent only this audio transcription]:\n\"The audio says hello in an emphatic tone.\"" {
+		t.Errorf("expected transcribed audio user content, got %q", out[1].Content)
 	}
 }
 

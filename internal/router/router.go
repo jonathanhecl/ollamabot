@@ -48,12 +48,16 @@ func (r *Router) audioModel() string {
 
 // AnalyzeImage sends a base64-encoded image to the vision model and returns a
 // detailed textual description.
-func (r *Router) AnalyzeImage(ctx context.Context, base64data string) (string, error) {
+func (r *Router) AnalyzeImage(ctx context.Context, base64data string, prompt string) (string, error) {
 	model := r.visionModel()
+	effectivePrompt := imageAnalysisPrompt
+	if strings.TrimSpace(prompt) != "" {
+		effectivePrompt = prompt
+	}
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: model,
 		Messages: []ollama.Message{
-			{Role: "user", Content: imageAnalysisPrompt, Images: []string{base64data}},
+			{Role: "user", Content: effectivePrompt, Images: []string{base64data}},
 		},
 		Options: map[string]any{"temperature": 0},
 	})
@@ -65,12 +69,16 @@ func (r *Router) AnalyzeImage(ctx context.Context, base64data string) (string, e
 
 // AnalyzeAudio sends a base64-encoded audio file to the audio model and returns
 // a detailed textual description.
-func (r *Router) AnalyzeAudio(ctx context.Context, base64data string) (string, error) {
+func (r *Router) AnalyzeAudio(ctx context.Context, base64data string, prompt string) (string, error) {
 	model := r.audioModel()
+	effectivePrompt := audioAnalysisPrompt
+	if strings.TrimSpace(prompt) != "" {
+		effectivePrompt = prompt
+	}
 	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 		Model: model,
 		Messages: []ollama.Message{
-			{Role: "user", Content: audioAnalysisPrompt, Images: []string{base64data}},
+			{Role: "user", Content: effectivePrompt, Images: []string{base64data}},
 		},
 		Options: map[string]any{"temperature": 0, "num_ctx": 8000},
 	})
