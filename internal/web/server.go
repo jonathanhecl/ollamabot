@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
@@ -293,6 +294,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		ollamaMessages = append([]ollama.Message{{
 			Role:    "system",
 			Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate: if you learn updated information, delete the old version and store the new one.\n- Prioritize: only store information that is likely to be useful later.",
+		}}, ollamaMessages...)
+	}
+
+	// Prepend SOUL.md system instruction at the very top.
+	if soulContent, err := agent.LoadSoul(); err == nil && soulContent != "" {
+		ollamaMessages = append([]ollama.Message{{
+			Role:    "system",
+			Content: soulContent,
 		}}, ollamaMessages...)
 	}
 

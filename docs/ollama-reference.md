@@ -1,8 +1,8 @@
 # Ollama API Reference
 
-Generated: 2026-05-17T04:40:21-03:00
+Generated: 2026-05-26T02:34:57-03:00
 
-Base URL: `http://localhost:11434`
+Base URL: `http://192.168.0.121:11434`
 
 Ollama version: `0.24.0`
 

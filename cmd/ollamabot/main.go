@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
@@ -65,6 +66,9 @@ func run(args []string) error {
 		return err
 	}
 	if err := os.MkdirAll(cfg.MemoryPath, 0o755); err != nil {
+		return err
+	}
+	if err := agent.EnsureSoulDirAndFile(); err != nil {
 		return err
 	}
 	if *baseURL != "" {
