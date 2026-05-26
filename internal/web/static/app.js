@@ -803,17 +803,31 @@ async function sendMessage(event) {
     },
     tool_call: (value) => {
       assistant.waiting = false;
-      assistant.steps.push({ type: "tool_call", call: value });
+      const fn = value?.function || {};
+      const name = fn.name || "unknown";
+      let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
+      if (!step) {
+        step = { type: "tool_exec", name: name, arguments: fn.arguments, result: null, status: "running" };
+        assistant.steps.push(step);
+      } else {
+        step.arguments = fn.arguments;
+      }
       renderMessages();
     },
     tool_start: (value) => {
       assistant.waiting = false;
-      assistant.steps.push({ type: "tool_exec", name: value.name, arguments: value.arguments, result: null, status: "running" });
+      const name = value.name || "unknown";
+      let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
+      if (!step) {
+        step = { type: "tool_exec", name: name, arguments: value.arguments, result: null, status: "running" };
+        assistant.steps.push(step);
+      } else {
+        step.arguments = value.arguments;
+      }
       renderMessages();
     },
     tool_result: (value) => {
       assistant.waiting = false;
-      // Find matching running tool_exec step (search from end).
       for (let i = assistant.steps.length - 1; i >= 0; i--) {
         const step = assistant.steps[i];
         if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
@@ -933,7 +947,12 @@ function renderStep(step) {
       }
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
-      const resultHtml = resultText ? `<pre class="step-tool-result-text">${resultText}</pre>` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
+      const resultHtml = resultText ? `
+        <details class="step-tool-result-details">
+          <summary>📄 Show tool response (${formatBytes(resultText.length)})</summary>
+          <pre class="step-tool-result-text">${resultText}</pre>
+        </details>
+      ` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       return `<details class="step step-tool-exec ${statusClass}" open><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
     }
     default:
@@ -1235,13 +1254,7 @@ async function createSession(title = "New session") {
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.messages = [];
     state.attachments = [];
-    return order.map((name) => {
-      const status = caps[name] || "pendiente";
-      const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
-      const label = glyphs[name] || name;
-      const engStatus = status === "comprobado" ? "confirmed" : status === "inferido" ? "inferred" : "pending";
-      return `<span class="cap ${cls}" title="${name}: ${engStatus}">${label}</span>`;
-    }).join(""); renderMessages();
+    renderMessages();
     renderAttachments();
     updateContextBar();
     await loadSessions();

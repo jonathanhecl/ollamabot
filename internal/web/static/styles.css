@@ -589,6 +589,48 @@ h2 {
   padding: 6px 8px;
 }
 
+/* --- Collapsible Tool Result Details (desplegable) --- */
+.step-tool-result-details {
+  margin-top: 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+}
+
+.step-tool-result-details summary {
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-2);
+  background: rgba(99, 210, 255, 0.04);
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.step-tool-result-details summary:hover {
+  background: rgba(99, 210, 255, 0.08);
+  color: var(--text);
+}
+
+.step-tool-result-details[open] summary {
+  border-bottom: 1px solid var(--line);
+  background: rgba(99, 210, 255, 0.06);
+}
+
+.step-tool-result-details .step-tool-result-text {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  max-height: 400px;
+  padding: 8px 10px;
+}
+
 .step-tool-running {
   display: inline-flex;
   align-items: center;
