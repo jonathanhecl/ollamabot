@@ -844,6 +844,22 @@ async function processNextQueueItem() {
       return;
     }
     await readEventStream(response.body, {
+      media_pre_processing: (value) => {
+        assistant.waiting = false;
+        const mediaRouterMsg = {
+          role: "assistant",
+          content: value,
+          streaming: false,
+          waiting: false
+        };
+        const idx = state.messages.indexOf(assistant);
+        if (idx !== -1) {
+          state.messages.splice(idx, 0, mediaRouterMsg);
+        } else {
+          state.messages.unshift(mediaRouterMsg);
+        }
+        renderMessages();
+      },
       thinking: (value) => {
         assistant.waiting = false;
         const lastStep = assistant.steps[assistant.steps.length - 1];
@@ -1239,7 +1255,8 @@ function attachmentPreview(attachment) {
     return `<div class="media-preview image" data-url="${escapeAttr(attachment.url)}"><img src="${escapeAttr(attachment.url)}" alt="${label}"><span>${label}</span></div>`;
   }
   if (attachment.kind === "audio") {
-    return `<div class="media-preview audio"><span>${label}</span><audio controls src="${escapeAttr(attachment.url)}"></audio></div>`;
+    const stopEvents = `onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" onkeypress="event.stopPropagation()" onkeyup="event.stopPropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()"`;
+    return `<div class="media-preview audio" ${stopEvents}><span>${label}</span><audio controls src="${escapeAttr(attachment.url)}" ${stopEvents}></audio></div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }

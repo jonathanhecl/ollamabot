@@ -282,8 +282,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	cfg, client, _, mr := s.deps()
 
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+
 	// Pre-process media attachments using role models before sending to main.
-	ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages)
+	ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages, w, flusher)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -306,11 +311,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	flusher, _ := w.(http.Flusher)
 
 	err = runChatStream(r.Context(), client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
@@ -427,7 +427,7 @@ func runChatStream(ctx context.Context, client *ollama.Client, model string, mes
 // followed by the original user message (with the user's text, if any, and any
 // media that did not need routing). This ensures the main model understands the
 // analysis as context from another model, not as text sent by the user.
-func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage) ([]ollama.Message, error) {
+func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage, w http.ResponseWriter, flusher http.Flusher) ([]ollama.Message, error) {
 	out := make([]ollama.Message, 0, len(messages))
 	for _, msg := range messages {
 		if msg.Role != "user" || len(msg.Images) == 0 {
@@ -506,6 +506,12 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 
 		if len(analyses) > 0 {
 			assistantContent := "The user has attached media. The pre-processing analysis is as follows:\n\n" + strings.Join(analyses, "\n\n")
+			if w != nil {
+				writeSSE(w, "media_pre_processing", assistantContent)
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
 			out = append(out, ollama.Message{
 				Role:    "assistant",
 				Content: assistantContent,
