@@ -24,6 +24,8 @@ body {
   background: radial-gradient(circle at top left, #29321f 0, transparent 32rem), var(--bg);
   color: var(--text);
   font-family: "Outfit", "Segoe UI", "Aptos", sans-serif;
+  height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -35,7 +37,8 @@ input {
 .app-layout {
   display: grid;
   grid-template-columns: 260px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .app-layout.sidebar-collapsed {
@@ -228,7 +231,7 @@ input {
 .app {
   display: grid;
   grid-template-rows: auto auto auto auto 1fr auto auto;
-  min-height: 100vh;
+  height: 100vh;
   overflow: hidden;
 }
 

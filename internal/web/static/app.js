@@ -946,9 +946,15 @@ async function processNextQueueItem() {
     await loadModels();
 
     // Auto-generate session title if enabled and it's the first message exchange
-    if (state.settings.session_auto_name !== false) {
+    if (state.settings && state.settings.session_auto_name !== false) {
       const userMsgs = state.messages.filter((m) => m.role === "user");
       const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
+      console.log("[Auto-Name Check]", {
+        session_auto_name: state.settings.session_auto_name,
+        userMsgsCount: userMsgs.length,
+        assistantMsgsCount: assistantMsgs.length,
+        activeSessionId: state.activeSessionId
+      });
       if (userMsgs.length === 1 && assistantMsgs.length === 1) {
         autoGenerateSessionTitle(assistant.content);
       }
@@ -1549,6 +1555,7 @@ document.querySelectorAll(".settings-tabs .tab-btn").forEach((btn) => {
 async function autoGenerateSessionTitle(assistantContent) {
   if (!state.activeSessionId) return;
   const id = state.activeSessionId;
+  console.log("[Auto-Name] Triggered for session ID:", id, "Content length:", assistantContent?.length);
   try {
     const response = await fetch("/api/chat/stream", {
       method: "POST",
@@ -1568,32 +1575,52 @@ async function autoGenerateSessionTitle(assistantContent) {
         think: false,
       }),
     });
-    if (!response.ok || !response.body) return;
+    
+    console.log("[Auto-Name] Response status:", response.status);
+    if (!response.ok || !response.body) {
+      console.warn("[Auto-Name] Failed response from /api/chat/stream:", response.statusText);
+      return;
+    }
 
     let generatedTitle = "";
     await readEventStream(response.body, {
       content: (value) => {
         generatedTitle += value;
+        console.log("[Auto-Name] Stream chunk content:", value);
       },
-      done: async () => {
-        generatedTitle = generatedTitle.trim().replace(/^["']|["']$/g, ""); // strip quotes
-        if (generatedTitle) {
-          try {
-            await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ title: generatedTitle }),
-            });
-            const session = state.sessions.find(s => s.id === id);
-            if (session) session.title = generatedTitle;
-            renderSessions();
-          } catch (err) {
-            console.warn("Auto-rename failed:", err);
-          }
-        }
+      done: () => {
+        console.log("[Auto-Name] Server sent 'done' event chunk.");
       }
     });
+
+    console.log("[Auto-Name] Stream completely read. Raw title:", generatedTitle);
+    generatedTitle = generatedTitle.trim().replace(/^["']|["']$/g, "").replace(/[.!?]+$/, ""); // strip quotes and trailing punctuation
+    if (generatedTitle) {
+      console.log("[Auto-Name] Saving generated title:", generatedTitle);
+      try {
+        const putResp = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: generatedTitle }),
+        });
+        console.log("[Auto-Name] Save title response status:", putResp.status);
+        if (putResp.ok) {
+          const session = state.sessions.find(s => s.id === id);
+          if (session) {
+            session.title = generatedTitle;
+            console.log("[Auto-Name] Updated active session title in state.sessions:", generatedTitle);
+          }
+          renderSessions();
+        } else {
+          console.warn("[Auto-Name] Failed to save title via PUT:", putResp.statusText);
+        }
+      } catch (err) {
+        console.warn("[Auto-Name] Auto-rename PUT failed:", err);
+      }
+    } else {
+      console.log("[Auto-Name] Generated title was empty, skipping rename.");
+    }
   } catch (err) {
-    console.warn("Auto-rename call failed:", err);
+    console.warn("[Auto-Name] Auto-rename call overall failed:", err);
   }
 }
