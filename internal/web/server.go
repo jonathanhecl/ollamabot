@@ -361,7 +361,16 @@ func runChatStream(ctx context.Context, client *ollama.Client, model string, mes
 			}
 			if chunk.Done {
 				done = true
-				writeSSE(w, "done", map[string]any{"model": chunk.Model, "reason": chunk.DoneReason})
+				writeSSE(w, "done", map[string]any{
+					"model":                chunk.Model,
+					"reason":               chunk.DoneReason,
+					"total_duration":       chunk.TotalDuration,
+					"load_duration":        chunk.LoadDuration,
+					"prompt_eval_count":    chunk.PromptEvalCount,
+					"prompt_eval_duration": chunk.PromptEvalDuration,
+					"eval_count":           chunk.EvalCount,
+					"eval_duration":        chunk.EvalDuration,
+				})
 			}
 			if flusher != nil {
 				flusher.Flush()

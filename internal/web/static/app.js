@@ -24,6 +24,9 @@ const state = {
   modelSearchQuery: "",
   modelActiveFilter: "all",
   sessionIdToDelete: null,
+  messageQueue: [],
+  isProcessing: false,
+  currentAbortController: null,
 };
 
 const els = {
@@ -72,6 +75,8 @@ const els = {
   confirmDialog: document.querySelector("#confirmDialog"),
   cancelConfirmBtn: document.querySelector("#cancelConfirmBtn"),
   okConfirmBtn: document.querySelector("#okConfirmBtn"),
+  skipBtn: document.querySelector("#skipBtn"),
+  sendBtn: document.querySelector("#sendBtn"),
 };
 
 els.openModels.addEventListener("click", () => {
@@ -110,6 +115,13 @@ els.form.addEventListener("submit", sendMessage);
 els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.files], "image"));
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
 els.recordControl.addEventListener("click", toggleRecording);
+if (els.skipBtn) {
+  els.skipBtn.addEventListener("click", () => {
+    if (state.currentAbortController) {
+      state.currentAbortController.abort();
+    }
+  });
+}
 document.addEventListener("paste", handlePaste);
 
 // Models dialog filtering wiring
@@ -748,8 +760,11 @@ async function sendMessage(event) {
   state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
   const images = state.attachments.map((attachment) => attachment.data);
   const visibleAttachments = [...state.attachments];
-  const userMessage = { role: "user", content, images, attachments: visibleAttachments };
+  
+  // Push the message with processed = false to state
+  const userMessage = { role: "user", content, images, attachments: visibleAttachments, processed: false };
   state.messages.push(userMessage);
+  
   state.attachments = [];
   els.prompt.value = "";
   renderAttachments();
@@ -759,115 +774,202 @@ async function sendMessage(event) {
     addSystemMessage(`Attached ${visibleAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
   }
 
-  const outboundMessages = state.messages.filter((msg) => msg.role === "user" || msg.role === "assistant").map((msg) => ({
-    role: msg.role,
-    content: msg.content || "",
-    images: msg.images || undefined,
-    image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
-  }));
-  const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true };
-  state.messages.push(assistant);
+  // Push user query to client-side sequential queue
+  state.messageQueue.push(userMessage);
+  processNextQueueItem();
+}
+
+async function processNextQueueItem() {
+  if (state.isProcessing || state.messageQueue.length === 0) {
+    updateComposerUI();
+    return;
+  }
+
+  state.isProcessing = true;
+  updateComposerUI();
+
+  const nextItem = state.messageQueue.shift();
+  nextItem.processed = true;
+
+  // Filter history up to and including the current user query!
+  const outboundMessages = [];
+  for (const msg of state.messages) {
+    if (msg === nextItem) {
+      outboundMessages.push({
+        role: msg.role,
+        content: msg.content || "",
+        images: msg.images || undefined,
+        image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
+      });
+      break;
+    }
+    if (msg.role === "user" || msg.role === "assistant") {
+      outboundMessages.push({
+        role: msg.role,
+        content: msg.content || "",
+        images: msg.images || undefined,
+        image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
+      });
+    }
+  }
+
+  const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true, metrics: null };
+  
+  // Insert assistant response directly after the current user query in the messages list
+  const idx = state.messages.indexOf(nextItem);
+  if (idx !== -1) {
+    state.messages.splice(idx + 1, 0, assistant);
+  } else {
+    state.messages.push(assistant);
+  }
   renderMessages();
 
-  const response = await fetch("/api/chat/stream", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model: state.activeModel,
-      messages: outboundMessages,
-      think: els.think.checked,
-    }),
-  });
-  if (!response.ok || !response.body) {
-    assistant.content = `Error: ${response.statusText}`;
+  state.currentAbortController = new AbortController();
+
+  try {
+    const response = await fetch("/api/chat/stream", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: state.activeModel,
+        messages: outboundMessages,
+        think: els.think.checked,
+      }),
+      signal: state.currentAbortController.signal,
+    });
+    if (!response.ok || !response.body) {
+      assistant.content = `Error: ${response.statusText}`;
+      assistant.waiting = false;
+      assistant.streaming = false;
+      renderMessages();
+      return;
+    }
+    await readEventStream(response.body, {
+      thinking: (value) => {
+        assistant.waiting = false;
+        const lastStep = assistant.steps[assistant.steps.length - 1];
+        if (lastStep && lastStep.type === "thinking") {
+          lastStep.content += value;
+        } else {
+          assistant.steps.push({ type: "thinking", content: value });
+        }
+        renderMessages();
+      },
+      content: (value) => {
+        assistant.waiting = false;
+        assistant.content += value;
+        renderMessages();
+      },
+      tool_call: (value) => {
+        assistant.waiting = false;
+        const fn = value?.function || {};
+        const name = fn.name || "unknown";
+        let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
+        if (!step) {
+          step = { type: "tool_exec", name: name, arguments: fn.arguments, result: null, status: "running" };
+          assistant.steps.push(step);
+        } else {
+          step.arguments = fn.arguments;
+        }
+        renderMessages();
+      },
+      tool_start: (value) => {
+        assistant.waiting = true; // Show loading spinner while tool runs
+        const name = value.name || "unknown";
+        let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
+        if (!step) {
+          step = { type: "tool_exec", name: name, arguments: value.arguments, result: null, status: "running" };
+          assistant.steps.push(step);
+        } else {
+          step.arguments = value.arguments;
+        }
+        renderMessages();
+      },
+      tool_result: (value) => {
+        assistant.waiting = true; // Keep loading spinner active until next round chunks arrive
+        for (let i = assistant.steps.length - 1; i >= 0; i--) {
+          const step = assistant.steps[i];
+          if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
+            step.result = value.result;
+            step.status = "done";
+            break;
+          }
+        }
+        renderMessages();
+      },
+      error: (value) => {
+        assistant.waiting = false;
+        assistant.streaming = false;
+        assistant.content += `\nError: ${value}`;
+        renderMessages();
+      },
+      done: (value) => {
+        // Accumulate performance metrics from intermediate Ollama done payloads
+        if (value && value.total_duration) {
+          if (!assistant.metrics) {
+            assistant.metrics = {
+              total_duration: 0,
+              load_duration: 0,
+              prompt_eval_count: 0,
+              prompt_eval_duration: 0,
+              eval_count: 0,
+              eval_duration: 0,
+            };
+          }
+          assistant.metrics.total_duration += (value.total_duration || 0);
+          assistant.metrics.load_duration += (value.load_duration || 0);
+          assistant.metrics.prompt_eval_count += (value.prompt_eval_count || 0);
+          assistant.metrics.prompt_eval_duration += (value.prompt_eval_duration || 0);
+          assistant.metrics.eval_count += (value.eval_count || 0);
+          assistant.metrics.eval_duration += (value.eval_duration || 0);
+        }
+        const hasRunningTools = assistant.steps.some(s => s.type === "tool_exec" && s.status === "running");
+        if (hasRunningTools) {
+          assistant.waiting = true;
+        }
+        renderMessages();
+      },
+    });
+  } catch (err) {
+    if (err.name === "AbortError") {
+      assistant.content += "\n\n*(Skipped/Paused by user)*";
+    } else {
+      assistant.content += `\nError: ${err.message}`;
+    }
+  } finally {
+    // Stream is fully closed by the server. All rounds are complete!
     assistant.waiting = false;
     assistant.streaming = false;
     renderMessages();
-    return;
-  }
-  await readEventStream(response.body, {
-    thinking: (value) => {
-      assistant.waiting = false;
-      const lastStep = assistant.steps[assistant.steps.length - 1];
-      if (lastStep && lastStep.type === "thinking") {
-        lastStep.content += value;
-      } else {
-        assistant.steps.push({ type: "thinking", content: value });
-      }
-      renderMessages();
-    },
-    content: (value) => {
-      assistant.waiting = false;
-      assistant.content += value;
-      renderMessages();
-    },
-    tool_call: (value) => {
-      assistant.waiting = false;
-      const fn = value?.function || {};
-      const name = fn.name || "unknown";
-      let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
-      if (!step) {
-        step = { type: "tool_exec", name: name, arguments: fn.arguments, result: null, status: "running" };
-        assistant.steps.push(step);
-      } else {
-        step.arguments = fn.arguments;
-      }
-      renderMessages();
-    },
-    tool_start: (value) => {
-      assistant.waiting = true; // Show loading spinner while tool runs
-      const name = value.name || "unknown";
-      let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
-      if (!step) {
-        step = { type: "tool_exec", name: name, arguments: value.arguments, result: null, status: "running" };
-        assistant.steps.push(step);
-      } else {
-        step.arguments = value.arguments;
-      }
-      renderMessages();
-    },
-    tool_result: (value) => {
-      assistant.waiting = true; // Keep loading spinner active until next round chunks arrive
-      for (let i = assistant.steps.length - 1; i >= 0; i--) {
-        const step = assistant.steps[i];
-        if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
-          step.result = value.result;
-          step.status = "done";
-          break;
-        }
-      }
-      renderMessages();
-    },
-    error: (value) => {
-      assistant.waiting = false;
-      assistant.streaming = false;
-      assistant.content += `\nError: ${value}`;
-      renderMessages();
-    },
-    done: () => {
-      const hasRunningTools = assistant.steps.some(s => s.type === "tool_exec" && s.status === "running");
-      if (hasRunningTools) {
-        assistant.waiting = true;
-      }
-      renderMessages();
-    },
-  });
+    updateContextBar();
+    await saveSession();
+    await loadModels();
 
-  // Stream is fully closed by the server. All rounds are complete!
-  assistant.waiting = false;
-  assistant.streaming = false;
-  renderMessages();
-  updateContextBar();
-  await saveSession();
-  await loadModels();
-
-  // Auto-generate session title if enabled and it's the first message exchange
-  if (state.settings.session_auto_name !== false) {
-    const userMsgs = state.messages.filter((m) => m.role === "user");
-    const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
-    if (userMsgs.length === 1 && assistantMsgs.length === 1) {
-      autoGenerateSessionTitle(assistant.content);
+    // Auto-generate session title if enabled and it's the first message exchange
+    if (state.settings.session_auto_name !== false) {
+      const userMsgs = state.messages.filter((m) => m.role === "user");
+      const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
+      if (userMsgs.length === 1 && assistantMsgs.length === 1) {
+        autoGenerateSessionTitle(assistant.content);
+      }
     }
+
+    state.isProcessing = false;
+    state.currentAbortController = null;
+    updateComposerUI();
+
+    // Process next item in the queue!
+    processNextQueueItem();
+  }
+}
+
+function updateComposerUI() {
+  if (state.isProcessing) {
+    if (els.skipBtn) els.skipBtn.style.display = "inline-flex";
+    if (els.sendBtn) els.sendBtn.textContent = "Queue";
+  } else {
+    if (els.skipBtn) els.skipBtn.style.display = "none";
+    if (els.sendBtn) els.sendBtn.textContent = "Send";
   }
 }
 
@@ -918,7 +1020,25 @@ function renderMessages() {
         legacyHtml += message.toolResults.map(renderLegacyToolResult).join("");
       }
     }
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
+    let metricsHtml = "";
+    if (message.metrics && message.metrics.total_duration) {
+      const m = message.metrics;
+      const totalSec = (m.total_duration / 1e9).toFixed(2);
+      const evalSec = (m.eval_duration / 1e9).toFixed(2);
+      const promptSec = (m.prompt_eval_duration / 1e9).toFixed(2);
+      const loadSec = (m.load_duration / 1e9).toFixed(2);
+      const tokensPerSec = m.eval_duration > 0 ? (m.eval_count / (m.eval_duration / 1e9)).toFixed(1) : "0.0";
+      metricsHtml = `
+        <div class="message-metrics">
+          <span title="Total time taken">🕒 ${totalSec}s</span>
+          <span title="Generation speed">⚡ ${tokensPerSec} t/s</span>
+          <span title="Generated tokens / Eval duration">📤 ${m.eval_count} tokens (${evalSec}s)</span>
+          <span title="Prompt tokens / Eval duration">📥 ${m.prompt_eval_count} prompt (${promptSec}s)</span>
+          ${m.load_duration > 0 ? `<span title="Model load time">💾 load ${loadSec}s</span>` : ""}
+        </div>
+      `;
+    }
+    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${metricsHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;

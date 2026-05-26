@@ -66,10 +66,16 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	Model      string  `json:"model"`
-	Message    Message `json:"message"`
-	Done       bool    `json:"done"`
-	DoneReason string  `json:"done_reason"`
+	Model              string  `json:"model"`
+	Message            Message `json:"message"`
+	Done               bool    `json:"done"`
+	DoneReason         string  `json:"done_reason"`
+	TotalDuration      int64   `json:"total_duration,omitempty"`
+	LoadDuration       int64   `json:"load_duration,omitempty"`
+	PromptEvalCount    int     `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration int64   `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int     `json:"eval_count,omitempty"`
+	EvalDuration       int64   `json:"eval_duration,omitempty"`
 }
 
 type Message struct {

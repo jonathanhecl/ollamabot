@@ -70,7 +70,10 @@
           </label>
         </div>
         <textarea id="prompt" rows="3" placeholder="Message the selected model. Paste images/audio or attach files when supported."></textarea>
-        <button type="submit">Send</button>
+        <div class="composer-submit-group" style="display: flex; gap: 8px; flex-direction: column-reverse; align-items: stretch;">
+          <button id="skipBtn" type="button" class="ghost-button" title="Skip current message & process next in queue" style="display: none; height: 32px; font-size: 11px; padding: 0; text-transform: uppercase; font-weight: 800; border-radius: 5px; border: 1px solid #ff4a4a; background: rgba(255,74,74,0.06); color: #ff6e6e; cursor: pointer; align-items: center; justify-content: center; gap: 4px;">⏭️ Skip</button>
+          <button id="sendBtn" type="submit" style="min-height: 38px;">Send</button>
+        </div>
       </form>
     </main>
     </div>
