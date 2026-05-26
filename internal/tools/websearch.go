@@ -17,7 +17,7 @@ import (
 	"golang.org/x/net/html"
 )
 
-const webClientUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 (ollamabot)"
+const webClientUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 const maxFetchBody = 2 << 20 // 2 MiB
 
 var reSpace = regexp.MustCompile(`\s+`)
@@ -404,71 +404,53 @@ func ddgLiteScrape(ctx context.Context, query string, max int) (string, error) {
 	if max > 10 {
 		max = 10
 	}
-	// Use POST to avoid captcha/bot challenge that DDG Lite returns on GET.
-	body := "q=" + url.QueryEscape(query)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://lite.duckduckgo.com/lite/", strings.NewReader(body))
+	searchURL := "https://duckduckgo.com/html/?q=" + url.QueryEscape(query)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("User-Agent", webClientUA)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Accept", "text/html")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9,es;q=0.8")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+
 	client := newWebHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == 202 {
+
+	if resp.StatusCode == 202 || resp.StatusCode == 403 {
 		return "", fmt.Errorf("search blocked by bot challenge (captcha)")
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
 		return "", fmt.Errorf("search http %d", resp.StatusCode)
 	}
+
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if err != nil {
 		return "", err
 	}
-	doc, err := html.Parse(bytes.NewReader(b))
-	if err != nil {
-		return "", err
-	}
+
+	// Parse using regex like vibe-coder
+	re := regexp.MustCompile(`(?is)<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+	matches := re.FindAllStringSubmatch(string(b), -1)
+
 	var hits [][2]string
-	var f func(*html.Node)
-	f = func(n *html.Node) {
-		if n == nil {
-			return
+	reTags := regexp.MustCompile(`(?s)<[^>]+>`)
+	for _, m := range matches {
+		link := strings.TrimSpace(m[1])
+		title := strings.TrimSpace(reTags.ReplaceAllString(m[2], " "))
+		title = strings.Join(strings.Fields(title), " ")
+
+		if title == "" || link == "" {
+			continue
 		}
-		// Skip sponsored result rows entirely.
-		if n.Type == html.ElementNode && n.Data == "tr" {
-			cls := getAttr(n, "class")
-			if strings.Contains(cls, "result-sponsored") {
-				return
-			}
-		}
-		if n.Type == html.ElementNode && n.Data == "a" {
-			cls := getAttr(n, "class")
-			if strings.Contains(cls, "result-link") {
-				href := getAttr(n, "href")
-				if final, ok := unwrapDDGResultURL(href); ok {
-					var t strings.Builder
-					htmlNodeText(n, &t)
-					title := strings.TrimSpace(t.String())
-					if title == "" {
-						title = final
-					}
-					if !strings.EqualFold(title, "more info") {
-						hits = append(hits, [2]string{title, final})
-					}
-				}
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			f(c)
+		if final, ok := unwrapDDGResultURL(link); ok {
+			hits = append(hits, [2]string{title, final})
 		}
 	}
-	f(doc)
+
 	seen := make(map[string]struct{})
 	var sb strings.Builder
 	n := 0
