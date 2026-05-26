@@ -1001,7 +1001,8 @@ function renderMessages() {
   for (const message of state.messages) {
     if (message.role === "system") continue;
     const div = document.createElement("article");
-    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""}`;
+    const isQueued = message.role === "user" && message.processed === false;
+    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""} ${isQueued ? "queued" : ""}`;
     const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
@@ -1038,7 +1039,8 @@ function renderMessages() {
         </div>
       `;
     }
-    div.innerHTML = `<span class="role">${escapeHtml(message.role)}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${metricsHtml}`;
+    const queuedBadge = isQueued ? ` <span class="queued-badge">⏳ In Queue</span>` : "";
+    div.innerHTML = `<span class="role">${escapeHtml(message.role)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>${metricsHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
