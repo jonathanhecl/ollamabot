@@ -31,7 +31,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        "web_search",
-				Description: "Search the web using DuckDuckGo to find current information. Use this when the user asks about recent events, facts that may have changed, or topics outside your training data.",
+				Description: "Search the web using DuckDuckGo to find current information. Returns a list of search result page titles, URLs, and snippet summaries. Always use this first to discover URLs for recent topics.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -46,6 +46,24 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 						},
 					},
 					"required": []string{"query"},
+				},
+			},
+		})
+		r.enabled["fetch_webpage"] = true
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        "fetch_webpage",
+				Description: "Fetch and read the raw text content of a specific webpage URL. Use this to dive deeper into search result links, articles, or documentation to extract detailed answers.",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"url": map[string]any{
+							"type":        "string",
+							"description": "The absolute HTTP/HTTPS URL of the webpage to fetch.",
+						},
+					},
+					"required": []string{"url"},
 				},
 			},
 		})
@@ -204,6 +222,12 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			}
 		}
 		return Search(ctx, query, maxResults)
+	case "fetch_webpage":
+		urlVal, _ := args["url"].(string)
+		if urlVal == "" {
+			return "", fmt.Errorf("missing url")
+		}
+		return Fetch(ctx, urlVal)
 	case "read_file":
 		path, _ := args["path"].(string)
 		if path == "" {

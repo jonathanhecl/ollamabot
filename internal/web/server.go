@@ -323,7 +323,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 // runChatStream handles the chat streaming loop including tool calls.
 func runChatStream(ctx context.Context, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
-	maxToolRounds := 3
+	maxToolRounds := 10
 	for round := 0; round <= maxToolRounds; round++ {
 		var assistantContent strings.Builder
 		var assistantThinking strings.Builder

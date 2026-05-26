@@ -397,6 +397,76 @@ func ddgInstantSearch(ctx context.Context, query string) string {
 	return sb.String()
 }
 
+type SearchHit struct {
+	Title   string
+	URL     string
+	Snippet string
+}
+
+func parseDDGHtml(doc *html.Node) []SearchHit {
+	var hits []SearchHit
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n == nil {
+			return
+		}
+		if n.Type == html.ElementNode && (n.Data == "div" || n.Data == "td") {
+			cls := getAttr(n, "class")
+			if strings.Contains(cls, "result__body") || strings.Contains(cls, "web-result") {
+				var title, rawURL, snippet string
+				var findDetails func(*html.Node)
+				findDetails = func(c *html.Node) {
+					if c == nil {
+						return
+					}
+					if c.Type == html.ElementNode {
+						subCls := getAttr(c, "class")
+						if c.Data == "a" && strings.Contains(subCls, "result__a") {
+							rawURL = getAttr(c, "href")
+							var sb strings.Builder
+							htmlNodeText(c, &sb)
+							title = strings.TrimSpace(sb.String())
+						} else if strings.Contains(subCls, "result__snippet") {
+							var sb strings.Builder
+							htmlNodeText(c, &sb)
+							snippet = strings.TrimSpace(sb.String())
+						}
+					}
+					for child := c.FirstChild; child != nil; child = child.NextSibling {
+						findDetails(child)
+					}
+				}
+				findDetails(n)
+
+				if title != "" && rawURL != "" {
+					title = strings.Join(strings.Fields(title), " ")
+					snippet = strings.Join(strings.Fields(snippet), " ")
+					if finalURL, ok := unwrapDDGResultURL(rawURL); ok {
+						lowerURL := strings.ToLower(finalURL)
+						if !strings.Contains(lowerURL, "duckduckgo.com/y.js") &&
+							!strings.Contains(lowerURL, "doubleclick.net") &&
+							!strings.Contains(lowerURL, "googleadservices") &&
+							!strings.Contains(lowerURL, "bing.com/aclick") &&
+							!strings.Contains(lowerURL, "sponsored") {
+							hits = append(hits, SearchHit{
+								Title:   title,
+								URL:     finalURL,
+								Snippet: snippet,
+							})
+						}
+					}
+				}
+				return
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return hits
+}
+
 func ddgLiteScrape(ctx context.Context, query string, max int) (string, error) {
 	if max <= 0 {
 		max = 5
@@ -432,22 +502,38 @@ func ddgLiteScrape(ctx context.Context, query string, max int) (string, error) {
 		return "", err
 	}
 
-	// Parse using regex like vibe-coder
-	re := regexp.MustCompile(`(?is)<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
-	matches := re.FindAllStringSubmatch(string(b), -1)
+	// Parse using standard HTML node parser
+	doc, err := html.Parse(bytes.NewReader(b))
+	var hits []SearchHit
+	if err == nil {
+		hits = parseDDGHtml(doc)
+	}
 
-	var hits [][2]string
-	reTags := regexp.MustCompile(`(?s)<[^>]+>`)
-	for _, m := range matches {
-		link := strings.TrimSpace(m[1])
-		title := strings.TrimSpace(reTags.ReplaceAllString(m[2], " "))
-		title = strings.Join(strings.Fields(title), " ")
-
-		if title == "" || link == "" {
-			continue
-		}
-		if final, ok := unwrapDDGResultURL(link); ok {
-			hits = append(hits, [2]string{title, final})
+	// Regex-based fallback if HTML walking yielded 0 results
+	if len(hits) == 0 {
+		re := regexp.MustCompile(`(?is)<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>`)
+		matches := re.FindAllStringSubmatch(string(b), -1)
+		reTags := regexp.MustCompile(`(?s)<[^>]+>`)
+		for _, m := range matches {
+			link := strings.TrimSpace(m[1])
+			title := strings.TrimSpace(reTags.ReplaceAllString(m[2], " "))
+			title = strings.Join(strings.Fields(title), " ")
+			if title == "" || link == "" {
+				continue
+			}
+			if final, ok := unwrapDDGResultURL(link); ok {
+				lowerURL := strings.ToLower(final)
+				if !strings.Contains(lowerURL, "duckduckgo.com/y.js") &&
+					!strings.Contains(lowerURL, "doubleclick.net") &&
+					!strings.Contains(lowerURL, "googleadservices") &&
+					!strings.Contains(lowerURL, "bing.com/aclick") &&
+					!strings.Contains(lowerURL, "sponsored") {
+					hits = append(hits, SearchHit{
+						Title: title,
+						URL:   final,
+					})
+				}
+			}
 		}
 	}
 
@@ -458,18 +544,21 @@ func ddgLiteScrape(ctx context.Context, query string, max int) (string, error) {
 		if n >= max {
 			break
 		}
-		u := h[1]
-		if _, ok := seen[u]; ok {
+		if _, ok := seen[h.URL]; ok {
 			continue
 		}
-		seen[u] = struct{}{}
+		seen[h.URL] = struct{}{}
 		n++
-		fmt.Fprintf(&sb, "%d. %s\n%s\n", n, h[0], u)
+		fmt.Fprintf(&sb, "%d. %s\n   URL: %s\n", n, h.Title, h.URL)
+		if h.Snippet != "" {
+			fmt.Fprintf(&sb, "   Summary: %s\n", h.Snippet)
+		}
+		sb.WriteString("\n")
 	}
 	if sb.Len() == 0 {
 		return "", fmt.Errorf("no HTML results (layout may have changed)")
 	}
-	return sb.String(), nil
+	return strings.TrimSpace(sb.String()), nil
 }
 
 // Search uses DuckDuckGo JSON instant answers plus Lite HTML. No API key.
