@@ -815,7 +815,7 @@ async function sendMessage(event) {
       renderMessages();
     },
     tool_start: (value) => {
-      assistant.waiting = false;
+      assistant.waiting = true; // Show loading spinner while tool runs
       const name = value.name || "unknown";
       let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
       if (!step) {
@@ -827,7 +827,7 @@ async function sendMessage(event) {
       renderMessages();
     },
     tool_result: (value) => {
-      assistant.waiting = false;
+      assistant.waiting = true; // Keep loading spinner active until next round chunks arrive
       for (let i = assistant.steps.length - 1; i >= 0; i--) {
         const step = assistant.steps[i];
         if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
@@ -845,23 +845,30 @@ async function sendMessage(event) {
       renderMessages();
     },
     done: () => {
-      assistant.waiting = false;
-      assistant.streaming = false;
-      renderMessages();
-      updateContextBar();
-      saveSession();
-      loadModels();
-
-      // Auto-generate session title if enabled and it's the first message exchange
-      if (state.settings.web_auto_name !== false) {
-        const userMsgs = state.messages.filter((m) => m.role === "user");
-        const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
-        if (userMsgs.length === 1 && assistantMsgs.length === 1) {
-          autoGenerateSessionTitle(assistant.content);
-        }
+      const hasRunningTools = assistant.steps.some(s => s.type === "tool_exec" && s.status === "running");
+      if (hasRunningTools) {
+        assistant.waiting = true;
       }
+      renderMessages();
     },
   });
+
+  // Stream is fully closed by the server. All rounds are complete!
+  assistant.waiting = false;
+  assistant.streaming = false;
+  renderMessages();
+  updateContextBar();
+  await saveSession();
+  await loadModels();
+
+  // Auto-generate session title if enabled and it's the first message exchange
+  if (state.settings.session_auto_name !== false) {
+    const userMsgs = state.messages.filter((m) => m.role === "user");
+    const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
+    if (userMsgs.length === 1 && assistantMsgs.length === 1) {
+      autoGenerateSessionTitle(assistant.content);
+    }
+  }
 }
 
 async function readEventStream(stream, handlers) {
