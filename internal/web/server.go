@@ -84,6 +84,7 @@ type SettingsResponse struct {
 	Workspace           string `json:"workspace"`
 	SessionsPath        string `json:"sessions_path"`
 	MemoryPath          string `json:"memory_path"`
+	SkillsPath          string `json:"skills_path"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -233,6 +234,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(memoryPath, 0o755)
 
+	skillsPath := strings.TrimSpace(input.SkillsPath)
+	if skillsPath == "" {
+		skillsPath = "skills"
+	}
+	if !filepath.IsAbs(skillsPath) {
+		if exe, err := os.Executable(); err == nil {
+			skillsPath = filepath.Join(filepath.Dir(exe), skillsPath)
+		}
+	}
+	_ = os.MkdirAll(skillsPath, 0o755)
+
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
 	s.cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(input.ServerPort), ":")
@@ -249,6 +261,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
 	s.cfg.MemoryPath = memoryPath
+	s.cfg.SkillsPath = skillsPath
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -873,6 +886,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		Workspace:           cfg.Workspace,
 		SessionsPath:        cfg.SessionsPath,
 		MemoryPath:          cfg.MemoryPath,
+		SkillsPath:          cfg.SkillsPath,
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"path/filepath"
 	"strings"
 	"sync"
 
@@ -60,8 +59,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	a.currentGoal = goal
 	a.mu.Unlock()
 
-	// Load and inject custom skills from `<workspace>/skills/`
-	skillsDir := filepath.Join(a.cfg.Workspace, "skills")
+	// Load and inject custom skills from configurable skills path
+	skillsDir := a.cfg.SkillsPath
 	var skillsBlock string
 	if cat, err := skills.NewCatalog(skillsDir); err == nil {
 		if loaded, err := cat.LoadAll(); err == nil && len(loaded) > 0 {

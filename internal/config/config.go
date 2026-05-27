@@ -11,12 +11,12 @@ import (
 )
 
 type Config struct {
-	OllamaBaseURL      string
-	OllamaProbeModels  []string
-	OllamaDefaultModel string
-	OllamaModelVision  string
-	OllamaModelAudio   string
-	OllamaModelEmbed   string
+	OllamaBaseURL       string
+	OllamaProbeModels   []string
+	OllamaDefaultModel  string
+	OllamaModelVision   string
+	OllamaModelAudio    string
+	OllamaModelEmbed    string
 	TelegramBotToken    string
 	ServerPort          string
 	ServerEnabled       bool
@@ -26,6 +26,7 @@ type Config struct {
 	Workspace           string
 	SessionsPath        string
 	MemoryPath          string
+	SkillsPath          string
 }
 
 func Load(path string) (Config, error) {
@@ -56,6 +57,7 @@ func Load(path string) (Config, error) {
 		Workspace:           "workspace",
 		SessionsPath:        "sessions",
 		MemoryPath:          "memory",
+		SkillsPath:          "skills",
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -106,6 +108,9 @@ func Load(path string) (Config, error) {
 	if value := apply("MEMORY_PATH"); value != "" {
 		cfg.MemoryPath = value
 	}
+	if value := apply("SKILLS_PATH"); value != "" {
+		cfg.SkillsPath = value
+	}
 
 	normalized, err := NormalizeBaseURL(cfg.OllamaBaseURL)
 	if err != nil {
@@ -139,13 +144,13 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	if webPort == "" {
 		webPort = "8080"
 	}
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\n", baseURL, serverEnabled, webPort)
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\nSKILLS_PATH=skills\n", baseURL, serverEnabled, webPort)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -161,6 +166,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.Workspace,
 		cfg.SessionsPath,
 		cfg.MemoryPath,
+		cfg.SkillsPath,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)
 }

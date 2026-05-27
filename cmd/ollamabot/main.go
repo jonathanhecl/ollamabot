@@ -68,6 +68,13 @@ func run(args []string) error {
 	if err := os.MkdirAll(cfg.MemoryPath, 0o755); err != nil {
 		return err
 	}
+	cfg.SkillsPath, err = resolveWorkspace(cfg.SkillsPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(cfg.SkillsPath, 0o755); err != nil {
+		return err
+	}
 	if err := agent.EnsureSoulDirAndFile(); err != nil {
 		return err
 	}
