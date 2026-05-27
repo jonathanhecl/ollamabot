@@ -41,6 +41,7 @@ type Server struct {
 	cachePath    string
 	sessionStore *sessions.Store
 	memoryStore  *memory.Store
+	autoMgr      *agent.AutonomousManager
 }
 
 type ModelView struct {
@@ -106,7 +107,8 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 	mr := router.New(client, routerConfig(cfg))
 	ss := sessions.NewStore(cfg.SessionsPath)
 	ms := memory.NewStore(cfg.MemoryPath)
-	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss, memoryStore: ms}
+	am := agent.NewAutonomousManager(cfg, client, ms)
+	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss, memoryStore: ms, autoMgr: am}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -126,6 +128,15 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 
+	// Autonomous projects endpoints
+	mux.HandleFunc("GET /api/autonomous/projects", s.handleListProjects)
+	mux.HandleFunc("POST /api/autonomous/projects", s.handleCreateProject)
+	mux.HandleFunc("GET /api/autonomous/projects/{id}", s.handleGetProject)
+	mux.HandleFunc("GET /api/autonomous/projects/{id}/logs/{logName}", s.handleGetProjectLog)
+	mux.HandleFunc("POST /api/autonomous/projects/{id}/tick", s.handleTriggerProjectTick)
+	mux.HandleFunc("POST /api/autonomous/projects/{id}/todos", s.handleAddProjectTodo)
+	mux.HandleFunc("DELETE /api/autonomous/projects/{id}", s.handleDeleteProject)
+
 	static, err := fs.Sub(staticFiles, "static")
 	if err != nil {
 		return err
@@ -141,6 +152,11 @@ func (s *Server) ListenAndServe() error {
 	if !cfg.ServerExposeNetwork {
 		addr = "127.0.0.1" + addr
 	}
+
+	// Start background projects heartbeat ticker
+	s.autoMgr.Start(context.Background())
+	defer s.autoMgr.Stop()
+
 	log.Printf("ollamabot web listening on %s", addr)
 	return http.ListenAndServe(addr, mux)
 }
@@ -238,6 +254,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
 	s.sessionStore = sessions.NewStore(sessionsPath)
 	s.memoryStore = memory.NewStore(memoryPath)
+	if s.autoMgr != nil {
+		s.autoMgr.Stop()
+	}
+	s.autoMgr = agent.NewAutonomousManager(s.cfg, s.client, s.memoryStore)
+	s.autoMgr.Start(context.Background())
 	cfg := s.cfg
 	s.mu.Unlock()
 
@@ -863,4 +884,155 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen] + "..."
+}
+
+func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
+	list, err := s.autoMgr.ListProjects()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+type createProjectRequest struct {
+	Name string `json:"name"`
+	Goal string `json:"goal"`
+}
+
+func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
+	var req createProjectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Goal = strings.TrimSpace(req.Goal)
+	if req.Name == "" || req.Goal == "" {
+		writeError(w, http.StatusBadRequest, errors.New("name and goal are required"))
+		return
+	}
+	proj, err := s.autoMgr.CreateProject(r.Context(), req.Name, req.Goal)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proj)
+}
+
+type getProjectResponse struct {
+	Project agent.Project `json:"project"`
+	Logs    []string      `json:"logs"`
+}
+
+func (s *Server) handleGetProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	proj, err := s.autoMgr.LoadProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	logs, _ := s.autoMgr.GetProjectLogs(id)
+	writeJSON(w, http.StatusOK, getProjectResponse{
+		Project: proj,
+		Logs:    logs,
+	})
+}
+
+func (s *Server) handleGetProjectLog(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	logName := r.PathValue("logName")
+	logName = filepath.Clean(logName)
+	if strings.Contains(logName, "..") || filepath.IsAbs(logName) {
+		writeError(w, http.StatusBadRequest, errors.New("invalid log filename"))
+		return
+	}
+	logPath := filepath.Join(s.cfg.Workspace, id, "logs", logName)
+	content, err := os.ReadFile(logPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+}
+
+func (s *Server) handleTriggerProjectTick(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	proj, err := s.autoMgr.LoadProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	taskIdx := -1
+	for i, todo := range proj.Todos {
+		if todo.Status == "pending" || todo.Status == "in_progress" {
+			taskIdx = i
+			break
+		}
+	}
+
+	if taskIdx == -1 {
+		writeJSON(w, http.StatusOK, map[string]any{"status": "idle", "message": "All tasks are already completed"})
+		return
+	}
+
+	err = s.autoMgr.ExecuteTask(r.Context(), id, taskIdx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	updatedProj, _ := s.autoMgr.LoadProject(id)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "project": updatedProj})
+}
+
+type addProjectTodoRequest struct {
+	Content string `json:"content"`
+}
+
+func (s *Server) handleAddProjectTodo(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req addProjectTodoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.Content = strings.TrimSpace(req.Content)
+	if req.Content == "" {
+		writeError(w, http.StatusBadRequest, errors.New("content is required"))
+		return
+	}
+	proj, err := s.autoMgr.LoadProject(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+
+	newID := fmt.Sprintf("task-%d", len(proj.Todos)+1)
+	proj.Todos = append(proj.Todos, agent.ProjectTodo{
+		ID:        newID,
+		Content:   req.Content,
+		Status:    "pending",
+		UpdatedAt: time.Now(),
+	})
+	if proj.Status == "completed" {
+		proj.Status = "pending"
+	}
+	if err := s.autoMgr.SaveProject(proj); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, proj)
+}
+
+func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if err := s.autoMgr.DeleteProject(id); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }

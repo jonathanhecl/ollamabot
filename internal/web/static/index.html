@@ -25,6 +25,7 @@
           <p class="eyebrow">OllamaBot</p>
         </div>
         <div class="actions">
+          <button id="openProjects" class="ghost-button" type="button">Projects</button>
           <button id="openSettings" class="ghost-button" type="button">Settings</button>
           <button id="openModels" class="primary-button" type="button">Models</button>
         </div>
@@ -77,6 +78,107 @@
       </form>
     </main>
     </div>
+
+    <dialog id="projectsDialog" class="modal projects-modal">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Workspace Mini-Projects</p>
+          <h2>Autonomous Agent Projects</h2>
+        </div>
+        <button class="ghost-button" value="close">Close</button>
+      </form>
+      
+      <div class="projects-modal-body">
+        <!-- Sidebar: project list and new button -->
+        <aside class="projects-sidebar">
+          <div class="sidebar-action">
+            <button id="addNewProjectBtn" class="primary-button full-width" type="button">+ New Project</button>
+          </div>
+          <div id="projectsList" class="projects-list-nav"></div>
+        </aside>
+        
+        <!-- Main Panel: welcome, form or details -->
+        <div class="projects-main-content">
+          <!-- 1. Welcome / Empty State -->
+          <div id="projectsWelcomeState" class="projects-state active">
+            <div class="welcome-box">
+              <span class="welcome-icon">🤖</span>
+              <h3>Autonomous Projects Dashboard</h3>
+              <p>Spawn an autonomous agent inside a specific workspace directory. The agent will iterate on the project step-by-step, generating code, assets, and documentation on every heartbeat tick.</p>
+              <button id="welcomeNewProjBtn" class="ghost-button" type="button">Create your first project</button>
+            </div>
+          </div>
+          
+          <!-- 2. Create Project Form -->
+          <div id="projectsCreateState" class="projects-state">
+            <h3>Launch New Autonomous Project</h3>
+            <form id="createProjectForm" class="create-project-form">
+              <label>
+                Project Name
+                <input id="projNameInput" type="text" placeholder="e.g. Snake Game, Personal Website, Markdown Wiki" required />
+              </label>
+              <label>
+                Project Goal / Requirements
+                <textarea id="projGoalInput" rows="5" placeholder="Describe what the agent should build. E.g.: Create a fully playable classic Snake game using HTML, CSS, and JS. Include scoreboard, high-scores, and fluid keyboard controls." required></textarea>
+              </label>
+              <div class="form-actions">
+                <button type="button" id="cancelCreateProjBtn" class="ghost-button">Cancel</button>
+                <button type="submit" class="primary-button">Initialize & Generate TODOs</button>
+              </div>
+            </form>
+          </div>
+          
+          <!-- 3. Project Detail View -->
+          <div id="projectsDetailState" class="projects-state">
+            <div class="project-detail-header">
+              <div class="header-main">
+                <h3 id="detailProjName">Project Name</h3>
+                <span id="detailProjStatus" class="project-badge">pending</span>
+              </div>
+              <p id="detailProjGoal" class="goal-text">Project goal description goes here...</p>
+            </div>
+            
+            <div class="project-detail-grid">
+              <!-- Left Col: Checklist -->
+              <div class="detail-checklist-section">
+                <h4>Execution Roadmap (TODOs)</h4>
+                <div id="detailTodosList" class="detail-todos-list"></div>
+                
+                <form id="addTodoForm" class="add-todo-form">
+                  <input id="newTodoInput" type="text" placeholder="Add custom task..." required />
+                  <button type="submit" class="primary-button">+</button>
+                </form>
+              </div>
+              
+              <!-- Right Col: Heartbeat Logs -->
+              <div class="detail-logs-section">
+                <h4>Heartbeat Ticks & Logs</h4>
+                <div id="detailLogsList" class="detail-logs-list"></div>
+              </div>
+            </div>
+            
+            <!-- Bottom Actions -->
+            <div class="project-detail-actions">
+              <button id="triggerTickBtn" class="primary-button" type="button">
+                <span class="btn-spinner" id="tickSpinner" style="display: none;">🌀</span>
+                <span id="tickBtnText">Iterate Heartbeat Now</span>
+              </button>
+              <button id="deleteProjectBtn" class="danger-button" type="button">Delete Project</button>
+            </div>
+          </div>
+          
+          <!-- 4. Log Reader View -->
+          <div id="projectsLogReaderState" class="projects-state">
+            <div class="log-reader-header">
+              <button id="backToDetailBtn" class="ghost-button" type="button">◀ Back to Project</button>
+              <h3 id="logReaderTitle">Log Title</h3>
+            </div>
+            <div id="logReaderContent" class="log-reader-content markdown-body"></div>
+          </div>
+
+        </div>
+      </div>
+    </dialog>
 
     <dialog id="modelsDialog" class="modal">
       <form method="dialog" class="modal-head">

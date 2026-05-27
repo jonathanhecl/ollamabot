@@ -9,6 +9,9 @@ const state = {
   settings: {},
   sessions: [],
   activeSessionId: localStorage.getItem("ollamabot.activeSessionId") || null,
+  projects: [],
+  activeProjectId: null,
+  isTicking: false,
   sidebarCollapsed: (() => {
     const saved = localStorage.getItem("ollamabot.sidebarCollapsed");
     return saved === null ? true : saved === "true";
@@ -77,7 +80,41 @@ const els = {
   okConfirmBtn: document.querySelector("#okConfirmBtn"),
   skipBtn: document.querySelector("#skipBtn"),
   sendBtn: document.querySelector("#sendBtn"),
+  
+  // Projects DOM Elements
+  openProjects: document.querySelector("#openProjects"),
+  projectsDialog: document.querySelector("#projectsDialog"),
+  addNewProjectBtn: document.querySelector("#addNewProjectBtn"),
+  projectsList: document.querySelector("#projectsList"),
+  projectsWelcomeState: document.querySelector("#projectsWelcomeState"),
+  projectsCreateState: document.querySelector("#projectsCreateState"),
+  projectsDetailState: document.querySelector("#projectsDetailState"),
+  projectsLogReaderState: document.querySelector("#projectsLogReaderState"),
+  welcomeNewProjBtn: document.querySelector("#welcomeNewProjBtn"),
+  createProjectForm: document.querySelector("#createProjectForm"),
+  projNameInput: document.querySelector("#projNameInput"),
+  projGoalInput: document.querySelector("#projGoalInput"),
+  cancelCreateProjBtn: document.querySelector("#cancelCreateProjBtn"),
+  detailProjName: document.querySelector("#detailProjName"),
+  detailProjStatus: document.querySelector("#detailProjStatus"),
+  detailProjGoal: document.querySelector("#detailProjGoal"),
+  detailTodosList: document.querySelector("#detailTodosList"),
+  addTodoForm: document.querySelector("#addTodoForm"),
+  newTodoInput: document.querySelector("#newTodoInput"),
+  detailLogsList: document.querySelector("#detailLogsList"),
+  triggerTickBtn: document.querySelector("#triggerTickBtn"),
+  tickSpinner: document.querySelector("#tickSpinner"),
+  tickBtnText: document.querySelector("#tickBtnText"),
+  deleteProjectBtn: document.querySelector("#deleteProjectBtn"),
+  backToDetailBtn: document.querySelector("#backToDetailBtn"),
+  logReaderTitle: document.querySelector("#logReaderTitle"),
+  logReaderContent: document.querySelector("#logReaderContent"),
 };
+
+// Bind Projects click handler
+els.openProjects.addEventListener("click", () => {
+  openProjectsDashboard();
+});
 
 els.openModels.addEventListener("click", () => {
   state.modelSearchQuery = "";
@@ -1731,3 +1768,394 @@ async function autoGenerateSessionTitle(assistantContent) {
     console.warn("[Auto-Name] Auto-rename call overall failed:", err);
   }
 }
+
+/* ==========================================================================
+   Autonomous Projects Agent (APA) Frontend Integration
+   ========================================================================== */
+
+function openProjectsDashboard() {
+  els.projectsDialog.showModal();
+  switchProjectsState("welcome");
+  loadProjects();
+}
+
+function switchProjectsState(stateName) {
+  const states = {
+    welcome: els.projectsWelcomeState,
+    create: els.projectsCreateState,
+    detail: els.projectsDetailState,
+    logReader: els.projectsLogReaderState,
+  };
+  
+  for (const name in states) {
+    if (states[name]) {
+      if (name === stateName) {
+        states[name].classList.add("active");
+      } else {
+        states[name].classList.remove("active");
+      }
+    }
+  }
+}
+
+async function loadProjects() {
+  els.projectsList.innerHTML = `<div class="empty">Loading projects...</div>`;
+  try {
+    const res = await fetch("/api/autonomous/projects");
+    if (!res.ok) throw new Error("Failed to load projects");
+    state.projects = await res.json();
+    renderProjectsList();
+  } catch (err) {
+    els.projectsList.innerHTML = `<div class="empty error">Error: ${err.message}</div>`;
+  }
+}
+
+function renderProjectsList() {
+  els.projectsList.innerHTML = "";
+  if (state.projects.length === 0) {
+    els.projectsList.innerHTML = `<div class="empty">No projects active</div>`;
+    return;
+  }
+  
+  state.projects.forEach((proj) => {
+    const item = document.createElement("div");
+    const isSelected = state.activeProjectId === proj.id;
+    item.className = `project-nav-item ${isSelected ? "selected" : ""} ${proj.status}`;
+    item.innerHTML = `
+      <div class="project-nav-main">
+        <span class="project-nav-title">${escapeHtml(proj.name)}</span>
+        <span class="project-nav-status">${proj.status}</span>
+      </div>
+      <div class="project-nav-goal">${escapeHtml(proj.goal)}</div>
+    `;
+    item.addEventListener("click", () => selectProject(proj.id));
+    els.projectsList.appendChild(item);
+  });
+}
+
+async function selectProject(id) {
+  state.activeProjectId = id;
+  renderProjectsList();
+  switchProjectsState("detail");
+  
+  els.detailProjName.textContent = "Loading...";
+  els.detailProjStatus.textContent = "";
+  els.detailProjGoal.textContent = "";
+  els.detailTodosList.innerHTML = `<div class="empty">Loading tasks...</div>`;
+  els.detailLogsList.innerHTML = `<div class="empty">Loading logs...</div>`;
+  
+  try {
+    const res = await fetch(`/api/autonomous/projects/${id}`);
+    if (!res.ok) throw new Error("Failed to load project details");
+    const data = await res.json();
+    const proj = data.project;
+    const logs = data.logs || [];
+    
+    // Update header
+    els.detailProjName.textContent = proj.name;
+    els.detailProjStatus.textContent = proj.status;
+    els.detailProjStatus.className = `project-badge ${proj.status}`;
+    els.detailProjGoal.textContent = proj.goal;
+    
+    // Render todos checklist
+    renderProjectTodos(proj);
+    
+    // Render tick logs list
+    renderProjectLogs(id, logs);
+    
+    // Enable/disable tick button based on status
+    updateTickButtonUI(proj);
+    
+  } catch (err) {
+    els.detailProjName.textContent = "Error";
+    els.detailProjGoal.textContent = err.message;
+  }
+}
+
+function renderProjectTodos(proj) {
+  els.detailTodosList.innerHTML = "";
+  if (!proj.todos || proj.todos.length === 0) {
+    els.detailTodosList.innerHTML = `<div class="empty">No tasks defined</div>`;
+    return;
+  }
+  
+  proj.todos.forEach((todo) => {
+    const item = document.createElement("div");
+    item.className = `todo-item-row ${todo.status}`;
+    
+    let icon = "⏳";
+    if (todo.status === "completed") icon = "✅";
+    if (todo.status === "in_progress") icon = "🌀";
+    if (todo.status === "failed") icon = "❌";
+    
+    item.innerHTML = `
+      <span class="todo-icon">${icon}</span>
+      <div class="todo-content-block">
+        <span class="todo-task-text">${escapeHtml(todo.content)}</span>
+        ${todo.result ? `<div class="todo-result-preview">${escapeHtml(todo.result.slice(0, 100))}...</div>` : ""}
+      </div>
+    `;
+    els.detailTodosList.appendChild(item);
+  });
+}
+
+function renderProjectLogs(projectId, logs) {
+  els.detailLogsList.innerHTML = "";
+  if (!logs || logs.length === 0) {
+    els.detailLogsList.innerHTML = `<div class="empty">No execution logs yet</div>`;
+    return;
+  }
+  
+  // Sort logs descending (newest first)
+  logs.sort((a, b) => b.localeCompare(a));
+  
+  logs.forEach((logName) => {
+    const item = document.createElement("div");
+    item.className = "log-item-row";
+    
+    // Parse friendly date/time from filename e.g. heartbeat_task-1_20260527_003000.md
+    let friendlyName = logName;
+    const parts = logName.split("_");
+    if (parts.length >= 4) {
+      const taskId = parts[1];
+      const datePart = parts[2];
+      const timePart = parts[3].replace(".md", "");
+      if (datePart.length === 8 && timePart.length === 6) {
+        const year = datePart.slice(0,4);
+        const month = datePart.slice(4,6);
+        const day = datePart.slice(6,8);
+        const hour = timePart.slice(0,2);
+        const min = timePart.slice(2,4);
+        friendlyName = `${taskId} • ${day}/${month}/${year} ${hour}:${min}`;
+      }
+    }
+    
+    item.innerHTML = `
+      <span class="log-file-icon">📄</span>
+      <span class="log-file-name">${escapeHtml(friendlyName)}</span>
+    `;
+    item.addEventListener("click", () => readProjectLog(projectId, logName));
+    els.detailLogsList.appendChild(item);
+  });
+}
+
+async function readProjectLog(projectId, logName) {
+  switchProjectsState("logReader");
+  els.logReaderTitle.textContent = "Loading execution log...";
+  els.logReaderContent.innerHTML = `<div class="empty">Fetching log file...</div>`;
+  
+  try {
+    const res = await fetch(`/api/autonomous/projects/${projectId}/logs/${logName}`);
+    if (!res.ok) throw new Error("Could not read log file");
+    const markdown = await res.text();
+    els.logReaderTitle.textContent = logName.replace(".md", "");
+    els.logReaderContent.innerHTML = renderSimpleMarkdown(markdown);
+  } catch (err) {
+    els.logReaderTitle.textContent = "Error";
+    els.logReaderContent.innerHTML = `<div class="empty error">${err.message}</div>`;
+  }
+}
+
+function renderSimpleMarkdown(md) {
+  if (!md) return "";
+  let html = md;
+  // Escape HTML tags to prevent injections
+  html = html
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+  
+  // Titles
+  html = html.replace(/^# (.*?)$/gm, "<h1>$1</h1>");
+  html = html.replace(/^## (.*?)$/gm, "<h2>$1</h2>");
+  html = html.replace(/^### (.*?)$/gm, "<h3>$1</h3>");
+  html = html.replace(/^#### (.*?)$/gm, "<h4>$1</h4>");
+  
+  // Lists
+  html = html.replace(/^\- (.*?)$/gm, "<li>$1</li>");
+  html = html.replace(/(<li>.*?<\/li>)/gs, "<ul>$1</ul>");
+  html = html.replace(/<\/ul>\s*<ul>/g, ""); // deduplicate nested list wraps
+
+  // Formatting (Bold and Inline Code)
+  html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/`(.*?)`/g, "<code>$1</code>");
+  
+  // Interactive Details panel
+  html = html.replace(/&lt;details&gt;\s*&lt;summary&gt;(.*?)&lt;\/summary&gt;/g, "<details><summary>$1</summary><div class='details-inner'>");
+  html = html.replace(/&lt;\/details&gt;/g, "</div></details>");
+  
+  // Paragraph gaps
+  html = html.replace(/\n/g, "<br>");
+  return html;
+}
+
+function updateTickButtonUI(proj) {
+  if (state.isTicking) {
+    els.triggerTickBtn.disabled = true;
+    els.tickSpinner.style.display = "inline-block";
+    els.tickBtnText.textContent = "Autonomous Heartbeat Running...";
+    els.deleteProjectBtn.disabled = true;
+    els.addTodoForm.querySelector("button").disabled = true;
+  } else {
+    els.deleteProjectBtn.disabled = false;
+    els.addTodoForm.querySelector("button").disabled = false;
+    els.tickSpinner.style.display = "none";
+    
+    const hasPending = proj.todos && proj.todos.some(t => t.status === "pending" || t.status === "in_progress");
+    if (!hasPending) {
+      els.triggerTickBtn.disabled = true;
+      els.tickBtnText.textContent = "Project Completed!";
+    } else {
+      els.triggerTickBtn.disabled = false;
+      els.tickBtnText.textContent = "Iterate Heartbeat Now";
+    }
+  }
+}
+
+// Event bindings for projects modal actions
+els.addNewProjectBtn.addEventListener("click", () => {
+  els.projNameInput.value = "";
+  els.projGoalInput.value = "";
+  switchProjectsState("create");
+});
+
+els.welcomeNewProjBtn.addEventListener("click", () => {
+  els.projNameInput.value = "";
+  els.projGoalInput.value = "";
+  switchProjectsState("create");
+});
+
+els.cancelCreateProjBtn.addEventListener("click", () => {
+  if (state.activeProjectId) {
+    switchProjectsState("detail");
+  } else {
+    switchProjectsState("welcome");
+  }
+});
+
+els.createProjectForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const name = els.projNameInput.value.trim();
+  const goal = els.projGoalInput.value.trim();
+  if (!name || !goal) return;
+  
+  const submitBtn = els.createProjectForm.querySelector("button[type='submit']");
+  submitBtn.disabled = true;
+  const originalText = submitBtn.textContent;
+  submitBtn.textContent = "Creating and planning sequential tasks...";
+  
+  try {
+    const res = await fetch("/api/autonomous/projects", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, goal }),
+    });
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || "Failed to initialize project");
+    }
+    const newProj = await res.json();
+    await loadProjects();
+    selectProject(newProj.id);
+  } catch (err) {
+    alert(`Could not create project: ${err.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
+});
+
+els.addTodoForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!state.activeProjectId) return;
+  
+  const input = els.newTodoInput;
+  const content = input.value.trim();
+  if (!content) return;
+  
+  input.disabled = true;
+  try {
+    const res = await fetch(`/api/autonomous/projects/${state.activeProjectId}/todos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    if (!res.ok) throw new Error("Could not add task");
+    input.value = "";
+    // Reload details
+    selectProject(state.activeProjectId);
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    input.disabled = false;
+    input.focus();
+  }
+});
+
+els.triggerTickBtn.addEventListener("click", async () => {
+  if (!state.activeProjectId || state.isTicking) return;
+  
+  state.isTicking = true;
+  const proj = state.projects.find(p => p.id === state.activeProjectId);
+  if (proj) updateTickButtonUI(proj);
+  
+  try {
+    const res = await fetch(`/api/autonomous/projects/${state.activeProjectId}/tick`, {
+      method: "POST"
+    });
+    if (!res.ok) {
+      const errData = await res.json();
+      throw new Error(errData.error || "Heartbeat execution cycle failed");
+    }
+    const data = await res.json();
+    
+    // Reload projects state and select project to display the completed task status
+    await loadProjects();
+    await selectProject(state.activeProjectId);
+    
+    // Automatically select and display the newly created tick log for the user to read
+    const logsRes = await fetch(`/api/autonomous/projects/${state.activeProjectId}`);
+    if (logsRes.ok) {
+      const details = await logsRes.json();
+      if (details.logs && details.logs.length > 0) {
+        details.logs.sort((a, b) => b.localeCompare(a));
+        readProjectLog(state.activeProjectId, details.logs[0]);
+      }
+    }
+  } catch (err) {
+    alert(`Heartbeat tick failed: ${err.message}`);
+    // Reload project status in case it changed
+    await selectProject(state.activeProjectId);
+  } finally {
+    state.isTicking = false;
+    const reloadedProj = state.projects.find(p => p.id === state.activeProjectId);
+    if (reloadedProj) updateTickButtonUI(reloadedProj);
+  }
+});
+
+els.deleteProjectBtn.addEventListener("click", async () => {
+  if (!state.activeProjectId) return;
+  if (!confirm("Are you sure you want to delete this autonomous project permanently? All code files in its workspace directory and all execution logs will be erased.")) return;
+  
+  try {
+    const res = await fetch(`/api/autonomous/projects/${state.activeProjectId}`, {
+      method: "DELETE"
+    });
+    if (!res.ok) throw new Error("Could not delete project");
+    
+    state.activeProjectId = null;
+    await loadProjects();
+    switchProjectsState("welcome");
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+els.backToDetailBtn.addEventListener("click", () => {
+  if (state.activeProjectId) {
+    selectProject(state.activeProjectId);
+  } else {
+    switchProjectsState("welcome");
+  }
+});
+
