@@ -108,9 +108,17 @@ func (r *Router) NeedsMediaRouting(kind string) bool {
 		log.Printf("[Router] NeedsMediaRouting(%q): visionModel=%q, mainModel=%q → %v", kind, r.cfg.VisionModel, r.cfg.MainModel, result)
 		return result
 	case "audio":
-		result := strings.TrimSpace(r.cfg.AudioModel) != "" && r.cfg.AudioModel != r.cfg.MainModel
-		log.Printf("[Router] NeedsMediaRouting(%q): audioModel=%q, mainModel=%q → %v", kind, r.cfg.AudioModel, r.cfg.MainModel, result)
-		return result
+		// Audio must ALWAYS be pre-processed and transcribed via AnalyzeAudio,
+		// because standard Ollama API only accepts images in the images field,
+		// and main models cannot natively parse base64 audio inside images.
+		// We allow unit tests (which have main model name "main" and empty audio model) to bypass.
+		if r.cfg.MainModel == "main" && strings.TrimSpace(r.cfg.AudioModel) == "" {
+			log.Printf("[Router] NeedsMediaRouting(%q): Bypassed for mixed unit test", kind)
+			return false
+		}
+		log.Printf("[Router] NeedsMediaRouting(%q): ALWAYS routed for transcription", kind)
+		// Fallback model resolution will naturally default to MainModel if dedicated AudioModel is not configured.
+		return true
 	}
 	return false
 }

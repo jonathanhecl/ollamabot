@@ -456,6 +456,7 @@ async function saveRoleModels() {
       workspace: state.settings.workspace || "",
       sessions_path: state.settings.sessions_path || "",
       memory_path: state.settings.memory_path || "",
+      skills_path: state.settings.skills_path || "skills",
       model_default: state.activeModel,
       model_vision: state.visionModel,
       model_audio: state.audioModel,
@@ -713,6 +714,9 @@ function renderModels() {
         state.activeModel = model;
         localStorage.setItem("ollamabot.mainModel", state.activeModel);
         saveRoleModels();
+        if (state.activeSessionId) {
+          saveSession();
+        }
         renderActive();
         renderModels();
       } else {
