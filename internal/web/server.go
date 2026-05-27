@@ -456,6 +456,12 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 		}
 	}
 
+	log.Printf("[resolveMedia] Total incoming messages=%d, lastUserIdx=%d", len(messages), lastUserIdx)
+	for idx, m := range messages {
+		log.Printf("[resolveMedia] Message[%d]: role=%q, content_len=%d, images_count=%d, image_kinds=%v",
+			idx, m.Role, len(m.Content), len(m.Images), m.ImageKinds)
+	}
+
 	out := make([]ollama.Message, 0, len(messages))
 	for i, msg := range messages {
 		if msg.Role != "user" || i != lastUserIdx || len(msg.Images) == 0 {

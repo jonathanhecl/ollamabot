@@ -298,3 +298,102 @@ func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
 	}
 }
 
+func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		resp := ollama.ChatResponse{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "Third audio transcript.",
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	client := ollama.NewClient(ts.URL)
+	mr := router.New(client, router.Config{
+		MainModel:  "main",
+		AudioModel: "audio",
+	})
+
+	messages := []MediaMessage{
+		{
+			Message: ollama.Message{
+				Role:    "user",
+				Content: "First transcription output.",
+				Images:  nil, // cleared on Turn 1 completion
+			},
+			ImageKinds: nil, // cleared on Turn 1 completion
+		},
+		{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "The user has attached media. The pre-processing analysis is as follows:\n\n[Audio Transcription & Analysis]:\nFirst transcription output.",
+			},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "Hello!",
+			},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "user",
+				Content: "Second transcription output.",
+				Images:  nil, // cleared on Turn 2 completion
+			},
+			ImageKinds: nil, // cleared on Turn 2 completion
+		},
+		{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "The user has attached media. The pre-processing analysis is as follows:\n\n[Audio Transcription & Analysis]:\nSecond transcription output.",
+			},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "How are you?",
+			},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "user",
+				Content: "",
+				Images:  []string{"third_base64audio"},
+			},
+			ImageKinds: []string{"audio"},
+		},
+	}
+
+	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 6 historical messages (user1, pre1, assistant1, user2, pre2, assistant2)
+	// and 2 messages for Turn 3 (pre3, user3) = 8 messages total.
+	if len(out) != 8 {
+		t.Fatalf("expected 8 messages, got %d", len(out))
+	}
+
+	if calls != 1 {
+		t.Errorf("expected exactly 1 pre-processing call to Ollama (for the third active audio), but got %d", calls)
+	}
+
+	if out[0].Content != "First transcription output." {
+		t.Errorf("expected first user content untouched, got %q", out[0].Content)
+	}
+	if out[3].Content != "Second transcription output." {
+		t.Errorf("expected second user content untouched, got %q", out[3].Content)
+	}
+	if out[6].Role != "assistant" || !strings.Contains(out[6].Content, "Third audio transcript.") {
+		t.Errorf("expected pre3 to contain transcript, got: %+v", out[6])
+	}
+}
+
+

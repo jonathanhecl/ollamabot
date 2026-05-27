@@ -1452,6 +1452,9 @@ async function startRecording() {
   try {
     state.audioStream = await navigator.mediaDevices.getUserMedia(constraints);
     state.audioContext = new AudioContext();
+    if (state.audioContext.state === "suspended") {
+      await state.audioContext.resume();
+    }
     state.audioSampleRate = state.audioContext.sampleRate;
     state.audioBuffers = [];
     state.audioSource = state.audioContext.createMediaStreamSource(state.audioStream);
