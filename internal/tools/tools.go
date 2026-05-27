@@ -20,11 +20,20 @@ type Registry struct {
 	memoryStore *memory.Store
 	client      *ollama.Client
 	embedModel  string
+	todoStore   *TodoStore
 }
 
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string) *Registry {
-	r := &Registry{enabled: map[string]bool{}, workspace: workspace, memoryStore: memoryStore, client: client, embedModel: embedModel}
+	r := &Registry{
+		enabled:     map[string]bool{},
+		workspace:   workspace,
+		memoryStore: memoryStore,
+		client:      client,
+		embedModel:  embedModel,
+		todoStore:   NewTodoStore(),
+	}
+
 	if webSearch {
 		r.enabled["web_search"] = true
 		r.defs = append(r.defs, ollama.Tool{
@@ -68,12 +77,13 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			},
 		})
 	}
+
 	r.enabled["read_file"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "read_file",
-			Description: "Read the contents of a text file within the workspace. Returns the file content or an error if the file is missing, too large, or binary. If the path is a directory, it lists the entries.",
+			Description: "Read the contents of a text file within the workspace safely. Returns the file content or lists directory entries if path points to a directory.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -86,6 +96,95 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			},
 		},
 	})
+
+	// Register Write Tool
+	r.enabled["Write"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "Write",
+			Description: "Write file contents atomically to a path in the workspace. Overwrites existing files.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "Path to write the file, relative to the workspace.",
+					},
+					"contents": map[string]any{
+						"type":        "string",
+						"description": "The full code or text contents to write.",
+					},
+				},
+				"required": []string{"file_path", "contents"},
+			},
+		},
+	})
+
+	// Register Edit Tool
+	r.enabled["Edit"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "Edit",
+			Description: "Edit existing file content by replacing an exact old string with a new string.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "Path to the file to edit, relative to the workspace.",
+					},
+					"old_string": map[string]any{
+						"type":        "string",
+						"description": "The exact string block in the file to replace. Must match exactly including indentation.",
+					},
+					"new_string": map[string]any{
+						"type":        "string",
+						"description": "The replacement string.",
+					},
+					"replace_all": map[string]any{
+						"type":        "boolean",
+						"description": "If true, replaces all occurrences of old_string. Otherwise errors if duplicate blocks exist.",
+					},
+				},
+				"required": []string{"file_path", "old_string", "new_string"},
+			},
+		},
+	})
+
+	// Register TodoWrite Tool
+	r.enabled["TodoWrite"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "TodoWrite",
+			Description: "Maintain a live TODO checklist of steps during this turn. Use it when solving multi-step tasks. Statuses are: 'pending', 'in_progress', 'completed', 'cancelled'.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"merge": map[string]any{
+						"type":        "boolean",
+						"description": "If true, merges incoming todos into the existing list. Otherwise replaces the entire list.",
+					},
+					"todos": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "object",
+							"properties": map[string]any{
+								"id":      map[string]any{"type": "string", "description": "Unique short identifier (e.g. 'step-1')."},
+								"content": map[string]any{"type": "string", "description": "Short action item text."},
+								"status":  map[string]any{"type": "string", "enum": []string{"pending", "in_progress", "completed", "cancelled"}},
+							},
+							"required": []string{"id", "content", "status"},
+						},
+					},
+				},
+				"required": []string{"todos"},
+			},
+		},
+	})
+
 	if r.memoryStore != nil && r.embedModel != "" {
 		r.enabled["memory_search"] = true
 		r.defs = append(r.defs, ollama.Tool{
@@ -177,6 +276,11 @@ func (r *Registry) Definitions() []ollama.Tool {
 	return r.defs
 }
 
+// TodoStore returns the checklist store instance.
+func (r *Registry) TodoStore() *TodoStore {
+	return r.todoStore
+}
+
 // Execute runs a tool call and returns the result string.
 func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, error) {
 	name := call.Function.Name
@@ -234,6 +338,48 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("missing path")
 		}
 		return ReadFile(r.workspace, path)
+	case "Write":
+		filePath, _ := args["file_path"].(string)
+		contents, _ := args["contents"].(string)
+		if filePath == "" {
+			return "", fmt.Errorf("missing file_path")
+		}
+		err := WriteFile(r.workspace, filePath, contents)
+		if err != nil {
+			return "", err
+		}
+		return "Write successful.", nil
+	case "Edit":
+		filePath, _ := args["file_path"].(string)
+		oldString, _ := args["old_string"].(string)
+		newString, _ := args["new_string"].(string)
+		replaceAll, _ := args["replace_all"].(bool)
+		if filePath == "" || oldString == "" {
+			return "", fmt.Errorf("missing required edit arguments")
+		}
+		diff, err := EditFile(r.workspace, filePath, oldString, newString, replaceAll)
+		if err != nil {
+			return "", err
+		}
+		if diff == "" {
+			return "No changes made.", nil
+		}
+		return "Edit successful. Changes made:\n" + diff, nil
+	case "TodoWrite":
+		todosVal := args["todos"]
+		merge, _ := args["merge"].(bool)
+		if todosVal == nil {
+			return "", fmt.Errorf("missing todos")
+		}
+		items, err := DecodeTodos(todosVal)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode todos: %w", err)
+		}
+		if err := ValidateTodoContent(items, merge, r.todoStore.Snapshot()); err != nil {
+			return "", fmt.Errorf("invalid todos: %w", err)
+		}
+		finalList := r.todoStore.Apply(merge, items)
+		return RenderTodosForModel(finalList), nil
 	case "memory_search":
 		query, _ := args["query"].(string)
 		if query == "" {

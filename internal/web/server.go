@@ -320,7 +320,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
 
-	err = runChatStream(r.Context(), client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
+	err = runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
 		writeSSE(w, "error", err.Error())
 		if flusher != nil {
@@ -329,102 +329,71 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// runChatStream handles the chat streaming loop including tool calls.
-func runChatStream(ctx context.Context, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
-	maxToolRounds := 10
-	for round := 0; round <= maxToolRounds; round++ {
-		var assistantContent strings.Builder
-		var assistantThinking strings.Builder
-		var toolCalls []ollama.ToolCall
-		seenTool := map[string]struct{}{}
+type sseStreamHandler struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+	model   string
+}
 
-		req := ollama.ChatRequest{
-			Model:    model,
-			Messages: messages,
-			Think:    think,
-		}
-		defs := registry.Definitions()
-		if len(defs) > 0 && round < maxToolRounds {
-			req.Tools = defs
-		}
+func (h *sseStreamHandler) OnThinking(delta string) {
+	writeSSE(h.w, "thinking", delta)
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
 
-		done := false
-		err := client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
-			if chunk.Message.Thinking != "" {
-				assistantThinking.WriteString(chunk.Message.Thinking)
-				writeSSE(w, "thinking", chunk.Message.Thinking)
-			}
-			if chunk.Message.Content != "" {
-				assistantContent.WriteString(chunk.Message.Content)
-				writeSSE(w, "content", chunk.Message.Content)
-			}
-			for _, call := range chunk.Message.ToolCalls {
-				key := call.Function.Name + "|" + string(call.Function.Arguments)
-				if _, ok := seenTool[key]; ok {
-					continue
-				}
-				seenTool[key] = struct{}{}
-				toolCalls = append(toolCalls, call)
-				writeSSE(w, "tool_call", call)
-			}
-			if chunk.Done {
-				done = true
-				writeSSE(w, "done", map[string]any{
-					"model":                chunk.Model,
-					"reason":               chunk.DoneReason,
-					"total_duration":       chunk.TotalDuration,
-					"load_duration":        chunk.LoadDuration,
-					"prompt_eval_count":    chunk.PromptEvalCount,
-					"prompt_eval_duration": chunk.PromptEvalDuration,
-					"eval_count":           chunk.EvalCount,
-					"eval_duration":        chunk.EvalDuration,
-				})
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if !done {
-			return nil
-		}
-		if len(toolCalls) == 0 {
-			return nil
-		}
+func (h *sseStreamHandler) OnContent(delta string) {
+	writeSSE(h.w, "content", delta)
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
 
-		// Build assistant message with tool calls.
-		assistantMsg := ollama.Message{
-			Role:      "assistant",
-			Content:   assistantContent.String(),
-			ToolCalls: toolCalls,
-		}
-		messages = append(messages, assistantMsg)
+func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
+	writeSSE(h.w, "tool_call", call)
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
 
-		// Execute tools and append results.
-		for _, call := range toolCalls {
-			writeSSE(w, "tool_start", map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments})
-			if flusher != nil {
-				flusher.Flush()
-			}
-			result, terr := registry.Execute(ctx, call)
-			if terr != nil {
-				result = fmt.Sprintf("Error: %v", terr)
-			}
-			writeSSE(w, "tool_result", map[string]any{"name": call.Function.Name, "result": result})
-			if flusher != nil {
-				flusher.Flush()
-			}
-			messages = append(messages, ollama.Message{
-				Role:    "tool",
-				Name:    call.Function.Name,
-				Content: result,
-			})
-		}
+func (h *sseStreamHandler) OnToolStart(name string, args any) {
+	writeSSE(h.w, "tool_start", map[string]any{"name": name, "arguments": args})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
 
-		// Continue loop to get model's final response using tool results.
+func (h *sseStreamHandler) OnToolResult(name string, result string) {
+	writeSSE(h.w, "tool_result", map[string]any{"name": name, "result": result})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
+func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
+	writeSSE(h.w, "media_pre_processing", content)
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
+// runChatStream handles the chat streaming loop by delegating to the iterative agent.
+func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
+	a := agent.NewAgent(cfg, client, registry)
+	handler := &sseStreamHandler{w: w, flusher: flusher, model: model}
+
+	_, err := a.Run(ctx, model, messages, think, handler)
+	if err != nil {
+		return err
+	}
+
+	// Send final done chunk to signal completion to frontend
+	writeSSE(w, "done", map[string]any{
+		"model":  model,
+		"reason": "stop",
+	})
+	if flusher != nil {
+		flusher.Flush()
 	}
 	return nil
 }
