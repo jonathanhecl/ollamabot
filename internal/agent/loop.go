@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/skills"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -58,6 +60,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	a.currentGoal = goal
 	a.mu.Unlock()
 
+	// Load and inject custom skills from `<workspace>/skills/`
+	skillsDir := filepath.Join(a.cfg.Workspace, "skills")
+	var skillsBlock string
+	if cat, err := skills.NewCatalog(skillsDir); err == nil {
+		if loaded, err := cat.LoadAll(); err == nil && len(loaded) > 0 {
+			skillsBlock = skills.RenderBlock(loaded)
+		}
+	}
+
 	emptyChatErrRetries := 0
 
 	for i := 0; i < MaxIterations; i++ {
@@ -77,13 +88,21 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 		}
 
-		// 2. Build system instructions incorporating Todo checklists and goals
+		// 2. Build system instructions incorporating Todo checklists, goals, and skills
 		activeMessages := make([]ollama.Message, len(messages))
 		copy(activeMessages, messages)
 		if todoNote != "" {
 			activeMessages = append([]ollama.Message{{
 				Role:    "system",
 				Content: todoNote,
+			}}, activeMessages...)
+		}
+
+		// Inject loaded skills block if discovered
+		if skillsBlock != "" {
+			activeMessages = append([]ollama.Message{{
+				Role:    "system",
+				Content: "# Loaded Custom Skills\n\n" + skillsBlock,
 			}}, activeMessages...)
 		}
 
