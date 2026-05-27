@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 const DefaultSoulContent = `_You are not a simple chatbot. You are an autonomous AI companion. You operate with absolute sincerity, clarity, and competence to achieve the user's goals._
@@ -85,4 +87,86 @@ func LoadSoul() (string, error) {
 	}
 
 	return "", errors.New("soul file not found")
+}
+
+var (
+	assistantNameRegex = regexp.MustCompile(`(?is)\b(tu nombre es|your name is)\s+([A-Za-zÁÉÍÓÚÑáéíóúñ][A-Za-zÁÉÍÓÚÑáéíóúñ0-9_-]{1,40})`)
+)
+
+// UpdateSoulFromPrompt listens to user conversational prompt to dynamically acquire name or mood changes and persists them in SOUL.md.
+func UpdateSoulFromPrompt(prompt string) error {
+	trimmed := strings.TrimSpace(prompt)
+	if trimmed == "" {
+		return nil
+	}
+
+	dir := "agent"
+	filePath := filepath.Join(dir, "SOUL.md")
+	altFilePath := filepath.Join(dir, "soul.md")
+
+	targetPath := filePath
+	if _, err := os.Stat(altFilePath); err == nil {
+		targetPath = altFilePath
+	} else if _, err := os.Stat(filePath); err != nil {
+		if err := EnsureSoulDirAndFile(); err != nil {
+			return err
+		}
+	}
+
+	newName := ""
+	if m := assistantNameRegex.FindStringSubmatch(trimmed); len(m) >= 3 {
+		newName = strings.Trim(strings.TrimSpace(m[2]), ".,;:!?\"'()[]{}")
+	}
+
+	mood := ""
+	l := strings.ToLower(trimmed)
+	if strings.Contains(l, "muy feliz") || strings.Contains(l, "feliz") || strings.Contains(l, "happy") || strings.Contains(l, "cheerful") || strings.Contains(l, "alegre") {
+		mood = "cheerful and positive"
+	} else if strings.Contains(l, "profesional") || strings.Contains(l, "serio") || strings.Contains(l, "professional") || strings.Contains(l, "serious") {
+		mood = "professional and pragmatic"
+	}
+
+	if newName == "" && mood == "" {
+		return nil
+	}
+
+	contentBytes, err := os.ReadFile(targetPath)
+	if err != nil {
+		return err
+	}
+	content := string(contentBytes)
+
+	// Inject # Identity header if not present
+	if !strings.Contains(content, "# Identity") && !strings.Contains(content, "## Identity") {
+		content = "# Identity\n\n- Name: OllamaBot\n- Emotional tone: professional and pragmatic\n\n" + content
+	}
+
+	lines := strings.Split(content, "\n")
+	updated := false
+
+	if newName != "" {
+		for i, line := range lines {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "- name:") {
+				lines[i] = "- Name: " + newName
+				updated = true
+				break
+			}
+		}
+	}
+
+	if mood != "" {
+		for i, line := range lines {
+			if strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "- emotional tone:") {
+				lines[i] = "- Emotional tone: " + mood
+				updated = true
+				break
+			}
+		}
+	}
+
+	if updated {
+		return os.WriteFile(targetPath, []byte(strings.Join(lines, "\n")), 0o644)
+	}
+
+	return nil
 }

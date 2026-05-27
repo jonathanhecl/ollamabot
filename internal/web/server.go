@@ -331,6 +331,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}}, ollamaMessages...)
 	}
 
+	// Dynamically acquire personality/name from the latest user message
+	if len(input.Messages) > 0 {
+		lastMsg := input.Messages[len(input.Messages)-1]
+		if lastMsg.Role == "user" {
+			_ = agent.UpdateSoulFromPrompt(lastMsg.Content)
+		}
+	}
+
 	// Prepend SOUL.md system instruction at the very top.
 	if soulContent, err := agent.LoadSoul(); err == nil && soulContent != "" {
 		ollamaMessages = append([]ollama.Message{{
