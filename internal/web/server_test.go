@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -224,3 +225,76 @@ func TestResolveMedia_PassthroughMixedWithAnalysis(t *testing.T) {
 		t.Errorf("expected passthrough base64audio, got %s", out[1].Images[0])
 	}
 }
+
+func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
+	calls := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		resp := ollama.ChatResponse{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "Second audio transcript.",
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer ts.Close()
+
+	client := ollama.NewClient(ts.URL)
+	mr := router.New(client, router.Config{
+		MainModel:  "main",
+		AudioModel: "audio",
+	})
+
+	messages := []MediaMessage{
+		{
+			Message: ollama.Message{
+				Role:    "user",
+				Content: "First transcription output.",
+				Images:  []string{"first_base64audio"},
+			},
+			ImageKinds: []string{"audio"},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: "Hello!",
+			},
+		},
+		{
+			Message: ollama.Message{
+				Role:    "user",
+				Content: "",
+				Images:  []string{"second_base64audio"},
+			},
+			ImageKinds: []string{"audio"},
+		},
+	}
+
+	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// For the first message (historical), it should remain unmodified and not split/transcribed again.
+	// For the second message (assistant), it remains as is.
+	// For the third message (latest user message), it should be processed and split into assistant analysis + user.
+	// Total expected messages: 1 (first user) + 1 (assistant) + 2 (processed third user) = 4 messages.
+	if len(out) != 4 {
+		t.Fatalf("expected 4 messages, got %d: %+v", len(out), out)
+	}
+
+	if calls != 1 {
+		t.Errorf("expected exactly 1 pre-processing call to Ollama (for the latest user message), but got %d", calls)
+	}
+
+	if out[0].Content != "First transcription output." {
+		t.Errorf("expected first user message to remain untouched, but got: %q", out[0].Content)
+	}
+
+	if out[2].Role != "assistant" || !strings.Contains(out[2].Content, "Second audio transcript.") {
+		t.Errorf("expected third message (processed audio assistant block), got: %+v", out[2])
+	}
+}
+

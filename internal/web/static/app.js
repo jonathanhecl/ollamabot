@@ -855,11 +855,15 @@ async function processNextQueueItem() {
       break;
     }
     if (msg.role === "user" || msg.role === "assistant") {
+      const hasAudio = msg.attachments?.some((a) => a.kind === "audio");
+      const hasRoutedVision = msg.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
+      const shouldClearImages = hasAudio || hasRoutedVision;
+
       outboundMessages.push({
         role: msg.role,
         content: msg.content || "",
-        images: msg.images || undefined,
-        image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
+        images: shouldClearImages ? undefined : (msg.images || undefined),
+        image_kinds: shouldClearImages ? undefined : (msg.attachments?.map((a) => a.kind) || undefined),
       });
     }
   }
@@ -923,6 +927,37 @@ async function processNextQueueItem() {
         } else {
           state.messages.unshift(mediaRouterMsg);
         }
+
+        // Extract transcription/analysis and assign to nextItem.content to preserve context
+        if (nextItem && !nextItem.content) {
+          let textParts = [];
+          const parts = value.split("\n\n");
+          const transcriptions = [];
+          const analyses = [];
+          for (let i = 1; i < parts.length; i++) {
+            const part = parts[i].trim();
+            if (part.startsWith("[Audio Transcription & Analysis]:")) {
+              transcriptions.push(part.slice("[Audio Transcription & Analysis]:".length).trim());
+            } else if (part.startsWith("[Image Analysis")) {
+              const closingIdx = part.indexOf(")]:");
+              if (closingIdx !== -1) {
+                analyses.push(part.slice(closingIdx + 3).trim());
+              } else {
+                analyses.push(part);
+              }
+            }
+          }
+          if (transcriptions.length > 0) {
+            textParts.push(transcriptions.join("\n\n"));
+          }
+          if (analyses.length > 0) {
+            textParts.push(analyses.join("\n\n"));
+          }
+          if (textParts.length > 0) {
+            nextItem.content = textParts.join("\n\n");
+          }
+        }
+
         renderMessages();
       },
       thinking: (value) => {
@@ -1022,6 +1057,16 @@ async function processNextQueueItem() {
     assistant.streaming = false;
     renderMessages();
     updateContextBar();
+    // Clear binary base64 images from user messages that were pre-processed (transcribed/analyzed)
+    // to prevent re-sending and reduce session size.
+    if (nextItem && nextItem.role === "user") {
+      const hasAudio = nextItem.attachments?.some((a) => a.kind === "audio");
+      const hasRoutedVision = nextItem.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
+      if (hasAudio || hasRoutedVision) {
+        nextItem.images = [];
+      }
+    }
+
     await saveSession();
     await loadModels();
 

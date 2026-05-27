@@ -447,9 +447,18 @@ func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client
 // media that did not need routing). This ensures the main model understands the
 // analysis as context from another model, not as text sent by the user.
 func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage, w http.ResponseWriter, flusher http.Flusher) ([]ollama.Message, error) {
+	// Find the last user message to ensure we only pre-process the active/latest query
+	lastUserIdx := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			lastUserIdx = i
+			break
+		}
+	}
+
 	out := make([]ollama.Message, 0, len(messages))
-	for _, msg := range messages {
-		if msg.Role != "user" || len(msg.Images) == 0 {
+	for i, msg := range messages {
+		if msg.Role != "user" || i != lastUserIdx || len(msg.Images) == 0 {
 			out = append(out, msg.Message)
 			continue
 		}
