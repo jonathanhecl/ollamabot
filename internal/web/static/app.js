@@ -788,6 +788,9 @@ function renderAttachments() {
 
 async function sendMessage(event) {
   event.preventDefault();
+  if (state.isRecording) {
+    await stopRecording();
+  }
   const content = els.prompt.value.trim();
   console.log("[sendMessage] Triggered. content_len:", content.length, "attachments:", state.attachments.length, "activeModel:", state.activeModel);
   if (state.attachments.length > 0) {
