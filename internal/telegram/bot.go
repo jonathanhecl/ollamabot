@@ -15,6 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"os/exec"
+	"runtime"
+
 	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
@@ -22,7 +25,6 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
-	"os/exec"
 )
 
 // Telegram API structures
@@ -40,14 +42,14 @@ type User struct {
 }
 
 type Message struct {
-	MessageID int64        `json:"message_id"`
-	From      *User        `json:"from,omitempty"`
-	Chat      Chat         `json:"chat"`
-	Text      string       `json:"text,omitempty"`
-	Date      int64        `json:"date"`
-	Photo     []PhotoSize  `json:"photo,omitempty"`
-	Voice     *Voice       `json:"voice,omitempty"`
-	Audio     *Audio       `json:"audio,omitempty"`
+	MessageID int64       `json:"message_id"`
+	From      *User       `json:"from,omitempty"`
+	Chat      Chat        `json:"chat"`
+	Text      string      `json:"text,omitempty"`
+	Date      int64       `json:"date"`
+	Photo     []PhotoSize `json:"photo,omitempty"`
+	Voice     *Voice      `json:"voice,omitempty"`
+	Audio     *Audio      `json:"audio,omitempty"`
 }
 
 type Chat struct {
@@ -185,6 +187,26 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 func (b *Bot) Start(ctx context.Context) error {
 	if err := b.sessManager.Load(); err != nil {
 		return fmt.Errorf("failed to load telegram session mapping: %w", err)
+	}
+
+	// Verify ffmpeg presence and log clear warnings in console if missing
+	if _, err := exec.LookPath("ffmpeg"); err == nil {
+		log.Println("ffmpeg detected. Multimedia audio features are fully enabled.")
+	} else {
+		log.Println("WARNING: 'ffmpeg' was not found in PATH.")
+		log.Println("Voice notes and audio features require 'ffmpeg' to be installed.")
+		log.Println("Without it, voice messages will fail with errors (e.g., status 500 image: unknown format from Ollama).")
+		log.Println("Please install it manually using your platform's package manager:")
+		switch runtime.GOOS {
+		case "windows":
+			log.Println("-> Windows (PowerShell): winget install Gyan.FFmpeg")
+		case "darwin":
+			log.Println("-> macOS: brew install ffmpeg")
+		case "linux":
+			log.Println("-> Linux: sudo apt install ffmpeg")
+		default:
+			log.Println("-> Please install 'ffmpeg' using your OS package manager.")
+		}
 	}
 
 	log.Println("[Telegram] Polling loop started successfully")
@@ -361,7 +383,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 					mediaBytes = wavBytes
 					mediaName = strings.TrimSuffix(filepath.Base(fileInfo.FilePath), filepath.Ext(fileInfo.FilePath)) + ".wav"
 				} else {
-					log.Printf("[Telegram] Warning: Audio conversion failed, using raw bytes: %v", convErr)
+					log.Printf("Warning: Audio conversion failed: %v", convErr)
+					if strings.Contains(convErr.Error(), "not found") {
+						b.sendMessage(chatID, "⚠️ *Voice transcription is unavailable* because `ffmpeg` is not installed on this server.\n\n*How to install:*\n• *Windows (PowerShell):* `winget install Gyan.FFmpeg`\n• *macOS:* `brew install ffmpeg`\n• *Linux:* `sudo apt install ffmpeg`\n\nPlease contact the administrator to enable voice notes.", msg.MessageID, "Markdown")
+						return
+					}
 					mediaBytes = bytes
 					mediaName = filepath.Base(fileInfo.FilePath)
 				}
@@ -379,7 +405,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 					mediaBytes = wavBytes
 					mediaName = strings.TrimSuffix(filepath.Base(fileInfo.FilePath), filepath.Ext(fileInfo.FilePath)) + ".wav"
 				} else {
-					log.Printf("[Telegram] Warning: Audio conversion failed, using raw bytes: %v", convErr)
+					log.Printf("Warning: Audio conversion failed: %v", convErr)
+					if strings.Contains(convErr.Error(), "not found") {
+						b.sendMessage(chatID, "⚠️ *Voice transcription is unavailable* because `ffmpeg` is not installed on this server.\n\n*How to install:*\n• *Windows (PowerShell):* `winget install Gyan.FFmpeg`\n• *macOS:* `brew install ffmpeg`\n• *Linux:* `sudo apt install ffmpeg`\n\nPlease contact the administrator to enable voice notes.", msg.MessageID, "Markdown")
+						return
+					}
 					mediaBytes = bytes
 					mediaName = filepath.Base(fileInfo.FilePath)
 				}
@@ -933,6 +963,10 @@ func parseChatID(s string) (int64, error) {
 }
 
 func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return nil, fmt.Errorf("ffmpeg not found in PATH: %w", err)
+	}
+
 	tempDir := filepath.Join(b.cfg.Workspace, "temp")
 	_ = os.MkdirAll(tempDir, 0755)
 
