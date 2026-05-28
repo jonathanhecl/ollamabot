@@ -17,6 +17,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/docs"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
+	"github.com/jonathanhecl/ollamabot/internal/telegram"
 	"github.com/jonathanhecl/ollamabot/internal/web"
 )
 
@@ -92,6 +93,7 @@ func run(args []string) error {
 
 	if len(remaining) == 0 {
 		if cfg.ServerEnabled {
+			startTelegramBot(cfg, client)
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			return web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath).ListenAndServe()
 		}
@@ -244,7 +246,21 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		return err
 	}
 	cfg.ServerPort = *port
+	startTelegramBot(cfg, client)
 	return web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath).ListenAndServe()
+}
+
+func startTelegramBot(cfg config.Config, client *ollama.Client) {
+	if cfg.TelegramBotToken == "" {
+		return
+	}
+	go func() {
+		log.Println("[Telegram] Starting background Telegram bot service...")
+		bot := telegram.NewBot(cfg, client)
+		if err := bot.Start(context.Background()); err != nil {
+			log.Printf("[Telegram] Bot service error: %v", err)
+		}
+	}()
 }
 
 func writeSnapshot(ctx context.Context, out string, cfg config.Config, client *ollama.Client, runner *probe.Runner) error {
