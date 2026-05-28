@@ -30,8 +30,17 @@ type Update struct {
 	Message  *Message `json:"message,omitempty"`
 }
 
+type User struct {
+	ID        int64  `json:"id"`
+	IsBot     bool   `json:"is_bot"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name,omitempty"`
+	Username  string `json:"username,omitempty"`
+}
+
 type Message struct {
 	MessageID int64        `json:"message_id"`
+	From      *User        `json:"from,omitempty"`
 	Chat      Chat         `json:"chat"`
 	Text      string       `json:"text,omitempty"`
 	Date      int64        `json:"date"`
@@ -233,6 +242,19 @@ func (b *Bot) handleMessage(msg *Message) {
 	chatID := msg.Chat.ID
 	chatIDStr := fmt.Sprintf("%d", chatID)
 
+	var fromID int64
+	if msg.From != nil {
+		fromID = msg.From.ID
+	} else {
+		fromID = chatID
+	}
+
+	if !b.isAuthorized(fromID) {
+		log.Printf("[Telegram] Unauthorized access attempt from user ID: %d (chat ID: %d)", fromID, chatID)
+		b.sendMessage(chatID, "⚠️ *Access Denied.*\nYou are not authorized to use this bot.", 0, "Markdown")
+		return
+	}
+
 	// Handle standard command prefixes
 	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") {
 		parts := strings.Fields(msg.Text)
@@ -259,6 +281,19 @@ func (b *Bot) handleMessage(msg *Message) {
 
 	// Process message input asynchronously
 	go b.processMessageInput(msg, sessionID)
+}
+
+func (b *Bot) isAuthorized(fromID int64) bool {
+	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+		return true
+	}
+	idStr := fmt.Sprintf("%d", fromID)
+	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+		if strings.TrimSpace(authID) == idStr {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Bot) startNewSession(chatIDStr string) string {
