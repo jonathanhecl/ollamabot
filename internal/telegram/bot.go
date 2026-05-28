@@ -187,6 +187,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 
 	log.Println("[Telegram] Polling loop started successfully")
+	b.sendStartupNotification()
 	offset := int64(0)
 
 	for {
@@ -862,4 +863,56 @@ func splitMessage(text string, maxLen int) []string {
 		chunks = append(chunks, text)
 	}
 	return chunks
+}
+
+func (b *Bot) sendStartupNotification() {
+	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("🚀 *OllamaBot Initialized*\n\n")
+
+	sb.WriteString("🤖 *Active Models:*\n")
+	sb.WriteString(fmt.Sprintf("• *Main:* `%s`\n", b.cfg.OllamaDefaultModel))
+	if b.cfg.OllamaModelVision != "" {
+		sb.WriteString(fmt.Sprintf("• *Vision:* `%s`\n", b.cfg.OllamaModelVision))
+	}
+	if b.cfg.OllamaModelAudio != "" {
+		sb.WriteString(fmt.Sprintf("• *Audio:* `%s`\n", b.cfg.OllamaModelAudio))
+	}
+	if b.cfg.OllamaModelEmbed != "" {
+		sb.WriteString(fmt.Sprintf("• *Memory:* `%s`\n", b.cfg.OllamaModelEmbed))
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("🛠️ *Active Capabilities:*\n")
+	sb.WriteString("• 💬 Local Chat\n")
+	if b.cfg.OllamaModelVision != "" || b.cfg.OllamaDefaultModel != "" {
+		sb.WriteString("• 👁️ Image Analysis\n")
+	}
+	if b.cfg.OllamaModelAudio != "" {
+		sb.WriteString("• 🎙️ Voice Transcription\n")
+	}
+	if b.cfg.WebSearchEnabled {
+		sb.WriteString("• 🔍 Web Search\n")
+	}
+	if b.cfg.OllamaModelEmbed != "" {
+		sb.WriteString("• 💾 Long-Term Memory (RAG)\n")
+	}
+
+	messageText := strings.TrimSpace(sb.String())
+
+	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+		id, err := parseChatID(authID)
+		if err == nil {
+			_, _ = b.sendMessage(id, messageText, 0, "Markdown")
+		}
+	}
+}
+
+func parseChatID(s string) (int64, error) {
+	var val int64
+	_, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &val)
+	return val, err
 }
