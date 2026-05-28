@@ -22,6 +22,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
+	"os/exec"
 )
 
 // Telegram API structures
@@ -355,9 +356,16 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		if err == nil {
 			bytes, err := b.downloadFile(fileInfo.FilePath)
 			if err == nil {
-				mediaBytes = bytes
+				wavBytes, convErr := b.convertToWav(bytes)
+				if convErr == nil {
+					mediaBytes = wavBytes
+					mediaName = strings.TrimSuffix(filepath.Base(fileInfo.FilePath), filepath.Ext(fileInfo.FilePath)) + ".wav"
+				} else {
+					log.Printf("[Telegram] Warning: Audio conversion failed, using raw bytes: %v", convErr)
+					mediaBytes = bytes
+					mediaName = filepath.Base(fileInfo.FilePath)
+				}
 				mediaKind = "audio"
-				mediaName = filepath.Base(fileInfo.FilePath)
 			}
 		}
 	} else if msg.Audio != nil {
@@ -366,9 +374,16 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		if err == nil {
 			bytes, err := b.downloadFile(fileInfo.FilePath)
 			if err == nil {
-				mediaBytes = bytes
+				wavBytes, convErr := b.convertToWav(bytes)
+				if convErr == nil {
+					mediaBytes = wavBytes
+					mediaName = strings.TrimSuffix(filepath.Base(fileInfo.FilePath), filepath.Ext(fileInfo.FilePath)) + ".wav"
+				} else {
+					log.Printf("[Telegram] Warning: Audio conversion failed, using raw bytes: %v", convErr)
+					mediaBytes = bytes
+					mediaName = filepath.Base(fileInfo.FilePath)
+				}
 				mediaKind = "audio"
-				mediaName = filepath.Base(fileInfo.FilePath)
 			}
 		}
 	}
@@ -915,4 +930,35 @@ func parseChatID(s string) (int64, error) {
 	var val int64
 	_, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &val)
 	return val, err
+}
+
+func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
+	tempDir := filepath.Join(b.cfg.Workspace, "temp")
+	_ = os.MkdirAll(tempDir, 0755)
+
+	inputPath := filepath.Join(tempDir, fmt.Sprintf("temp_input_%d.bin", time.Now().UnixNano()))
+	outputPath := filepath.Join(tempDir, fmt.Sprintf("temp_output_%d.wav", time.Now().UnixNano()))
+
+	if err := os.WriteFile(inputPath, inputBytes, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write temporary input file: %w", err)
+	}
+	defer os.Remove(inputPath)
+
+	log.Printf("[Telegram] Converting audio to WAV using ffmpeg...")
+	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-acodec", "pcm_s16le", "-ac", "1", "-ar", "16000", outputPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		log.Printf("[Telegram] ffmpeg error: %v. Stderr: %s", err, stderr.String())
+		return nil, fmt.Errorf("ffmpeg conversion failed: %w (stderr: %s)", err, stderr.String())
+	}
+	defer os.Remove(outputPath)
+
+	wavBytes, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read converted WAV file: %w", err)
+	}
+
+	log.Printf("[Telegram] Audio successfully converted to WAV, size: %d bytes", len(wavBytes))
+	return wavBytes, nil
 }
