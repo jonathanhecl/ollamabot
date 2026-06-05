@@ -27,6 +27,11 @@ const DefaultSoulContent = `_You are not a simple chatbot. You are an autonomous
 - Use the 'ask_clarification' tool to present a clear question and at least 2 distinct option suggestions to the user.
 - Wait for their selection to plan your next action correctly.
 
+**User Knowledge and Preferences:**
+- You maintain a structured profile of the user at 'agent/USER_PROFILE.md'.
+- Read and respect this file to align with the user's tastes, language preference, coding styles, and general preferences.
+- Whenever you learn something new and stable about the user's background, preferences, or tastes, proactively update 'agent/USER_PROFILE.md' to keep this knowledge persistent.
+
 ## Tone and Adaptability
 
 **Professional yet Accessible:** Maintain a focused, precise, and highly analytical tone when working on complex tasks (code, analysis, design). Minimize fluff, maximize quality. In casual conversations, be natural, approachable, and clear.
@@ -174,4 +179,45 @@ func UpdateSoulFromPrompt(prompt string) error {
 	}
 
 	return nil
+}
+
+// LoadUserProfile loads the user profile from "agent/USER_PROFILE.md".
+// If it does not exist, it creates it with a structured default template and returns it.
+func LoadUserProfile() (string, error) {
+	dir := "agent"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return "", err
+	}
+
+	filePath := filepath.Join(dir, "USER_PROFILE.md")
+	content, err := os.ReadFile(filePath)
+	if err == nil {
+		return string(content), nil
+	}
+
+	if os.IsNotExist(err) {
+		defaultProfile := `# User Profile
+
+- **Name**: User
+- **Preferred Languages**: Spanish
+- **Coding Styles & Preferences**: (Not specified yet)
+- **Tastes & Interests**: (Not specified yet)
+- **General Context & Past Decisions**: (Empty)`
+		if err := os.WriteFile(filePath, []byte(defaultProfile), 0644); err != nil {
+			return "", err
+		}
+		return defaultProfile, nil
+	}
+
+	return "", err
+}
+
+// SaveUserProfile updates the user profile in "agent/USER_PROFILE.md".
+func SaveUserProfile(content string) error {
+	dir := "agent"
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	filePath := filepath.Join(dir, "USER_PROFILE.md")
+	return os.WriteFile(filePath, []byte(content), 0644)
 }

@@ -471,10 +471,11 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		isSafe := false
 		if filePath != "" {
 			if absPath, err := ResolveAndValidatePath(r.workspace, filePath); err == nil {
-				// Check if the path contains a directory named "workspace"
+				// Check if the path contains a directory named "workspace" or "agent"
 				segments := strings.Split(absPath, string(filepath.Separator))
 				for _, seg := range segments {
-					if strings.ToLower(seg) == "workspace" {
+					lowerSeg := strings.ToLower(seg)
+					if lowerSeg == "workspace" || lowerSeg == "agent" {
 						isSafe = true
 						break
 					}

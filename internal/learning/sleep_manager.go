@@ -252,7 +252,9 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 	}
 
 	analysisPrompt := fmt.Sprintf(`You are the OllamaBot self-refining learning analyzer.
-Analyze the following conversation history for potential errors, user frustration, repetitive mistakes, or areas where the assistant struggled or required multiple attempts to complete a task.
+Analyze the following conversation history for:
+- Potential errors, user frustration, repetitive mistakes, or areas where the assistant struggled.
+- User preferences, coding style preferences, spoken language preferences, tastes, background info, or user name.
 
 ---
 CONVERSATION HISTORY:
@@ -260,17 +262,13 @@ CONVERSATION HISTORY:
 ---
 
 Your goal:
-1. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration.
-2. If yes, decide what new skill should be created, or what existing skill should be edited or deleted, or if the assistant's personality/instructions (SOUL.md) should be updated.
-3. Call the appropriate skill-management tools to make these improvements. You have access to:
-   - 'skill_list' to list current skills.
-   - 'skill_get' to inspect an existing skill.
-   - 'skill_create' to create a new skill directory and SKILL.md.
-   - 'skill_edit' to modify an existing skill.
-   - 'skill_delete' to delete a skill.
-   - You can also read and write workspace files using 'read_file', 'Write', or 'Edit' if you decide to update 'agent/SOUL.md' or other core files.
+1. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
+2. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
+3. Call the appropriate tools to make these improvements. You have access to:
+   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management.
+   - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
 
-If everything was perfect and no changes are needed, respond explaining why, and do not call any tools.
+If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, historyText.String())
 
 	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed)
@@ -280,18 +278,25 @@ Provide a clear final summary of what you did.`, historyText.String())
 
 	systemPrompt := `You are the OllamaBot Self-Improvement Reflector.
 You operate in the background during sleep mode.
-You have access to tools to modify skills and core settings.
+You have access to tools to modify skills, identity, and the user profile.
 Be precise and constructive. Focus on creating high-quality, actionable, clear skill guidelines.
 When editing or creating skills, use standard SKILL.md format:
 - Frontmatter containing name, description, homepage.
 - ## Description header.
 - ## Instructions header containing list items starting with - [ ], -, or numbered steps.
 
+Keep the user profile ('agent/USER_PROFILE.md') structured:
+- Name
+- Preferred Languages
+- Coding Styles & Preferences
+- Tastes & Interests
+- General Context & Past Decisions
+
 Log all updates you make in the audit log ('skills/audit_log.md'). You can write or edit this file using 'Write' or 'Edit' tools. Each log entry must include:
 - Date/time
 - Chat Session ID analyzed
-- Issue detected
-- Actions executed (skills created, modified, etc.)
+- Issue or user preferences detected
+- Actions executed (skills created, user profile updated, etc.)
 - Justification/Reasoning`
 
 	messages := []ollama.Message{

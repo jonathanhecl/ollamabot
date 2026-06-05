@@ -555,6 +555,14 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}}, ollamaMessages...)
 	}
 
+	// Inject USER_PROFILE.md system instruction
+	if profileContent, err := agent.LoadUserProfile(); err == nil && profileContent != "" {
+		ollamaMessages = append([]ollama.Message{{
+			Role:    "system",
+			Content: "# User Profile & Preferences\n" + profileContent,
+		}}, ollamaMessages...)
+	}
+
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed)
 	registry.SetApprovalHandler(&telegramApprovalHandler{

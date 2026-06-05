@@ -410,6 +410,14 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}}, ollamaMessages...)
 	}
 
+	// Prepend USER_PROFILE.md system instruction.
+	if profileContent, err := agent.LoadUserProfile(); err == nil && profileContent != "" {
+		ollamaMessages = append([]ollama.Message{{
+			Role:    "system",
+			Content: "# User Profile & Preferences\n" + profileContent,
+		}}, ollamaMessages...)
+	}
+
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
 	registry.SetApprovalHandler(&webApprovalHandler{
 		server:  s,
