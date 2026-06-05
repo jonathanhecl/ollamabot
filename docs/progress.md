@@ -78,9 +78,6 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ## Pendiente
 
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
-- Crear canal Telegram.
-- Confirmar audio con pruebas reales cuando Ollama exponga o documente un payload estable.
-- Definir soporte de video como pipeline de frames.
 - Confirmacion de acciones riesgosas para tools (ej. borrar/modificar archivos, ejecutar comandos).
 - ~~Agregar indexacion automatica de mensajes de chat a la memoria RAG~~: descartado. Las sesiones ya persisten el historial completo de cada conversacion. La memoria RAG se reserva para informacion con utilidad futura, gestionada manualmente por el agente via `memory_add` con criterio propio.
 

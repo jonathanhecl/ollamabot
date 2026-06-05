@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -12,16 +13,28 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
+// ApprovalHandler is implemented by clients wishing to approve or deny execution of risky tools.
+type ApprovalHandler interface {
+	RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error)
+}
+
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
-	enabled     map[string]bool
-	defs        []ollama.Tool
-	workspace   string
-	memoryStore *memory.Store
-	client      *ollama.Client
-	embedModel  string
-	todoStore   *TodoStore
+	enabled         map[string]bool
+	defs            []ollama.Tool
+	workspace       string
+	memoryStore     *memory.Store
+	client          *ollama.Client
+	embedModel      string
+	todoStore       *TodoStore
+	approvalHandler ApprovalHandler
 }
+
+// SetApprovalHandler assigns a callback handler to approve risky tools.
+func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
+	r.approvalHandler = h
+}
+
 
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string) *Registry {
@@ -291,6 +304,40 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	var args map[string]any
 	if err := json.Unmarshal(call.Function.Arguments, &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	// Risks check: write/edit operations require approval if a handler is configured
+	if r.approvalHandler != nil && (name == "Write" || name == "Edit") {
+		filePath, _ := args["file_path"].(string)
+		isSafe := false
+		if filePath != "" {
+			if absPath, err := ResolveAndValidatePath(r.workspace, filePath); err == nil {
+				// Check if the path contains a directory named "workspace"
+				segments := strings.Split(absPath, string(filepath.Separator))
+				for _, seg := range segments {
+					if strings.ToLower(seg) == "workspace" {
+						isSafe = true
+						break
+					}
+				}
+			}
+		}
+
+		if !isSafe {
+			log.Printf("[tool] Intercepting risky tool %q outside safe workspace. Requesting user approval...", name)
+			approved, err := r.approvalHandler.RequestApproval(ctx, name, args)
+			if err != nil {
+				log.Printf("[tool] Approval error for %q: %v", name, err)
+				return "", fmt.Errorf("tool approval failed: %w", err)
+			}
+			if !approved {
+				log.Printf("[tool] Risky tool %q execution DENIED by user", name)
+				return "Error: Execution denied by user.", nil
+			}
+			log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
+		} else {
+			log.Printf("[tool] Risky tool %q is inside safe workspace. Bypassing approval.", name)
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)

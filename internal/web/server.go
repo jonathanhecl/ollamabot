@@ -42,6 +42,8 @@ type Server struct {
 	sessionStore *sessions.Store
 	memoryStore  *memory.Store
 	autoMgr      *agent.AutonomousManager
+	approvalsMu  sync.Mutex
+	approvals    map[string]chan bool
 }
 
 type ModelView struct {
@@ -109,7 +111,18 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 	ss := sessions.NewStore(cfg.SessionsPath)
 	ms := memory.NewStore(cfg.MemoryPath)
 	am := agent.NewAutonomousManager(cfg, client, ms)
-	return &Server{cfg: cfg, envPath: envPath, client: client, runner: runner, mediaro: mr, cachePath: cachePath, sessionStore: ss, memoryStore: ms, autoMgr: am}
+	return &Server{
+		cfg:          cfg,
+		envPath:      envPath,
+		client:       client,
+		runner:       runner,
+		mediaro:      mr,
+		cachePath:    cachePath,
+		sessionStore: ss,
+		memoryStore:  ms,
+		autoMgr:      am,
+		approvals:    make(map[string]chan bool),
+	}
 }
 
 func (s *Server) ListenAndServe() error {
@@ -128,6 +141,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
 	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 
 	// Autonomous projects endpoints
 	mux.HandleFunc("GET /api/autonomous/projects", s.handleListProjects)
@@ -361,6 +375,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
+	registry.SetApprovalHandler(&webApprovalHandler{
+		server:  s,
+		w:       w,
+		flusher: flusher,
+	})
 
 	err = runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
@@ -1080,4 +1099,92 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+type approveToolRequest struct {
+	ID       string `json:"id"`
+	Approved bool   `json:"approved"`
+}
+
+func (s *Server) handleApproveTool(w http.ResponseWriter, r *http.Request) {
+	var req approveToolRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("missing id"))
+		return
+	}
+
+	s.approvalsMu.Lock()
+	ch, ok := s.approvals[req.ID]
+	s.approvalsMu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("approval request not found or expired"))
+		return
+	}
+
+	// Notify the waiting block
+	select {
+	case ch <- req.Approved:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "processed"})
+	default:
+		writeError(w, http.StatusGone, fmt.Errorf("approval channel was closed or already answered"))
+	}
+}
+
+type webApprovalHandler struct {
+	server  *Server
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (h *webApprovalHandler) RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error) {
+	approvalID := fmt.Sprintf("web_%d_%s", time.Now().UnixNano(), toolName)
+	ch := make(chan bool, 1) // buffered to avoid blocking the responder
+
+	h.server.approvalsMu.Lock()
+	h.server.approvals[approvalID] = ch
+	h.server.approvalsMu.Unlock()
+
+	defer func() {
+		h.server.approvalsMu.Lock()
+		delete(h.server.approvals, approvalID)
+		h.server.approvalsMu.Unlock()
+	}()
+
+	// Send SSE approval request event
+	writeSSE(h.w, "tool_approval_required", map[string]any{
+		"id":        approvalID,
+		"tool":      toolName,
+		"arguments": args,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case approved := <-ch:
+			return approved, nil
+		case <-ticker.C:
+			// Send ping comment to keep SSE stream open
+			_, _ = h.w.Write([]byte(": ping\n\n"))
+			if h.flusher != nil {
+				h.flusher.Flush()
+			}
+		case <-ctx.Done():
+			return false, ctx.Err()
+		case <-timeout:
+			return false, fmt.Errorf("approval timeout")
+		}
+	}
 }

@@ -29,9 +29,27 @@ import (
 
 // Telegram API structures
 type Update struct {
-	UpdateID int64    `json:"update_id"`
-	Message  *Message `json:"message,omitempty"`
+	UpdateID      int64          `json:"update_id"`
+	Message       *Message       `json:"message,omitempty"`
+	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
 }
+
+type CallbackQuery struct {
+	ID      string   `json:"id"`
+	From    User     `json:"from"`
+	Message *Message `json:"message,omitempty"`
+	Data    string   `json:"data"`
+}
+
+type InlineKeyboardMarkup struct {
+	InlineKeyboard [][]InlineKeyboardButton `json:"inline_keyboard"`
+}
+
+type InlineKeyboardButton struct {
+	Text         string `json:"text"`
+	CallbackData string `json:"callback_data,omitempty"`
+}
+
 
 type User struct {
 	ID        int64  `json:"id"`
@@ -168,6 +186,8 @@ type Bot struct {
 	memoryStore *memory.Store
 	apiBase     string
 	httpClient  *http.Client
+	approvalsMu sync.Mutex
+	approvals   map[string]chan bool
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
@@ -180,6 +200,7 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		memoryStore: memory.NewStore(cfg.MemoryPath),
 		apiBase:     "https://api.telegram.org/bot" + token,
 		httpClient:  &http.Client{Timeout: 40 * time.Second},
+		approvals:   make(map[string]chan bool),
 	}
 }
 
@@ -259,6 +280,9 @@ func (b *Bot) getUpdates(offset int64) ([]Update, error) {
 func (b *Bot) handleUpdate(update Update) {
 	if update.Message != nil {
 		b.handleMessage(update.Message)
+	}
+	if update.CallbackQuery != nil {
+		b.handleCallbackQuery(update.CallbackQuery)
 	}
 }
 
@@ -516,6 +540,10 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed)
+	registry.SetApprovalHandler(&telegramApprovalHandler{
+		bot:    b,
+		chatID: chatID,
+	})
 	a := agent.NewAgent(b.cfg, b.client, registry)
 	handler := &telegramStreamHandler{bot: b, chatID: chatID}
 
@@ -995,4 +1023,208 @@ func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
 
 	log.Printf("[Telegram] Audio successfully converted to WAV, size: %d bytes", len(wavBytes))
 	return wavBytes, nil
+}
+
+type telegramApprovalHandler struct {
+	bot    *Bot
+	chatID int64
+}
+
+func (h *telegramApprovalHandler) RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error) {
+	approvalID := fmt.Sprintf("tg_%d_%s", time.Now().UnixNano(), toolName)
+	ch := make(chan bool, 1)
+
+	h.bot.approvalsMu.Lock()
+	h.bot.approvals[approvalID] = ch
+	h.bot.approvalsMu.Unlock()
+
+	defer func() {
+		h.bot.approvalsMu.Lock()
+		delete(h.bot.approvals, approvalID)
+		h.bot.approvalsMu.Unlock()
+	}()
+
+	argsJSON, _ := json.MarshalIndent(args, "", "  ")
+	text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe AI agent is attempting to execute a potentially risky action:\n\n*Tool:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", toolName, string(argsJSON))
+
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Approve ✅", CallbackData: "approve:" + approvalID},
+				{Text: "Deny ❌", CallbackData: "deny:" + approvalID},
+			},
+		},
+	}
+
+	msgID, err := h.bot.sendMessageWithMarkup(h.chatID, text, 0, "Markdown", markup)
+	if err != nil {
+		return false, fmt.Errorf("failed to send Telegram approval request: %w", err)
+	}
+
+	select {
+	case approved := <-ch:
+		var statusText string
+		if approved {
+			statusText = fmt.Sprintf("✅ *Approved:* executed `%s`", toolName)
+		} else {
+			statusText = fmt.Sprintf("❌ *Denied:* skipped `%s`", toolName)
+		}
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		return approved, nil
+	case <-ctx.Done():
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "")
+		return false, ctx.Err()
+	case <-time.After(5 * time.Minute):
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* auto-denied after 5 minutes.", "")
+		return false, fmt.Errorf("approval timeout")
+	}
+}
+
+func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
+	if !b.isAuthorized(cb.From.ID) {
+		log.Printf("[Telegram] Unauthorized callback query attempt from user ID: %d", cb.From.ID)
+		_ = b.answerCallbackQuery(cb.ID, "⚠️ Unauthorized", true)
+		return
+	}
+
+	data := cb.Data
+	if !strings.HasPrefix(data, "approve:") && !strings.HasPrefix(data, "deny:") {
+		_ = b.answerCallbackQuery(cb.ID, "Unknown action", false)
+		return
+	}
+
+	parts := strings.SplitN(data, ":", 2)
+	action := parts[0]
+	approvalID := parts[1]
+
+	b.approvalsMu.Lock()
+	ch, ok := b.approvals[approvalID]
+	b.approvalsMu.Unlock()
+
+	if !ok {
+		_ = b.answerCallbackQuery(cb.ID, "⚠️ Request expired or not found", true)
+		if cb.Message != nil {
+			_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "")
+		}
+		return
+	}
+
+	approved := action == "approve"
+	select {
+	case ch <- approved:
+		_ = b.answerCallbackQuery(cb.ID, "Response processed", false)
+	default:
+		_ = b.answerCallbackQuery(cb.ID, "⚠️ Already answered", true)
+	}
+}
+
+func (b *Bot) answerCallbackQuery(callbackQueryID string, text string, showAlert bool) error {
+	type AnswerCallbackQueryRequest struct {
+		CallbackQueryID string `json:"callback_query_id"`
+		Text            string `json:"text,omitempty"`
+		ShowAlert       bool   `json:"show_alert,omitempty"`
+	}
+
+	reqBody := AnswerCallbackQueryRequest{
+		CallbackQueryID: callbackQueryID,
+		Text:            text,
+		ShowAlert:       showAlert,
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := b.apiBase + "/answerCallbackQuery"
+	resp, err := b.httpClient.Post(url, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func (b *Bot) editMessageText(chatID int64, messageID int64, text string, parseMode string) error {
+	type EditMessageTextRequest struct {
+		ChatID    int64  `json:"chat_id"`
+		MessageID int64  `json:"message_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode,omitempty"`
+	}
+
+	reqBody := EditMessageTextRequest{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Text:      text,
+		ParseMode: parseMode,
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := b.apiBase + "/editMessageText"
+	resp, err := b.httpClient.Post(url, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
+func (b *Bot) sendMessageWithMarkup(chatID int64, text string, replyToID int64, parseMode string, markup *InlineKeyboardMarkup) (int64, error) {
+	type SendMessageRequest struct {
+		ChatID           int64                 `json:"chat_id"`
+		Text             string                `json:"text"`
+		ParseMode        string                `json:"parse_mode,omitempty"`
+		ReplyToMessageID int64                 `json:"reply_to_message_id,omitempty"`
+		ReplyMarkup      *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
+	}
+
+	reqBody := SendMessageRequest{
+		ChatID:           chatID,
+		Text:             text,
+		ParseMode:        parseMode,
+		ReplyToMessageID: replyToID,
+		ReplyMarkup:      markup,
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return 0, err
+	}
+
+	url := b.apiBase + "/sendMessage"
+	resp, err := b.httpClient.Post(url, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      *struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return 0, err
+	}
+
+	if !apiResp.OK {
+		if parseMode != "" && (strings.Contains(apiResp.Description, "parse") || strings.Contains(apiResp.Description, "markdown")) {
+			log.Printf("[Telegram] Warning: markdown parsing failed (%s). Retrying as plain text.", apiResp.Description)
+			return b.sendMessageWithMarkup(chatID, text, replyToID, "", markup)
+		}
+		return 0, fmt.Errorf("telegram api error: %s", apiResp.Description)
+	}
+
+	if apiResp.Result != nil {
+		return apiResp.Result.MessageID, nil
+	}
+	return 0, nil
 }

@@ -318,6 +318,29 @@
       </div>
     </dialog>
 
+    <dialog id="approvalDialog" class="modal">
+      <div class="modal-head">
+        <div>
+          <p class="eyebrow">Security Confirmation</p>
+          <h2>Approve Tool Execution?</h2>
+        </div>
+      </div>
+      <div class="confirm-body">
+        <p>The AI agent wants to execute a potentially risky action:</p>
+        <div class="approval-info" style="margin: 16px 0; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; font-family: monospace; font-size: 13px;">
+          <div><strong>Tool:</strong> <span id="approvalToolName">Write</span></div>
+          <div style="margin-top: 8px; max-height: 200px; overflow-y: auto;">
+            <strong>Arguments:</strong>
+            <pre id="approvalToolArgs" style="margin: 4px 0 0 0; white-space: pre-wrap; word-break: break-all;"></pre>
+          </div>
+        </div>
+        <div class="confirm-actions">
+          <button id="denyToolBtn" class="danger-button" type="button" style="background: #ef4444; border-color: #ef4444; color: white;">Deny ❌</button>
+          <button id="approveToolBtn" class="primary-button" type="button">Approve ✅</button>
+        </div>
+      </div>
+    </dialog>
+
     <script>
       (function () {
         try {

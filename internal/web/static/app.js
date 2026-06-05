@@ -30,6 +30,7 @@ const state = {
   messageQueue: [],
   isProcessing: false,
   currentAbortController: null,
+  currentApprovalId: null,
 };
 
 const els = {
@@ -80,6 +81,11 @@ const els = {
   okConfirmBtn: document.querySelector("#okConfirmBtn"),
   skipBtn: document.querySelector("#skipBtn"),
   sendBtn: document.querySelector("#sendBtn"),
+  approvalDialog: document.querySelector("#approvalDialog"),
+  approvalToolName: document.querySelector("#approvalToolName"),
+  approvalToolArgs: document.querySelector("#approvalToolArgs"),
+  approveToolBtn: document.querySelector("#approveToolBtn"),
+  denyToolBtn: document.querySelector("#denyToolBtn"),
   
   // Projects DOM Elements
   openProjects: document.querySelector("#openProjects"),
@@ -219,6 +225,22 @@ if (els.okConfirmBtn) {
       state.sessionIdToDelete = null;
     }
     els.confirmDialog.close();
+  });
+}
+
+if (els.approveToolBtn) {
+  els.approveToolBtn.addEventListener("click", () => {
+    if (state.currentApprovalId) {
+      respondToApproval(state.currentApprovalId, true);
+    }
+  });
+}
+
+if (els.denyToolBtn) {
+  els.denyToolBtn.addEventListener("click", () => {
+    if (state.currentApprovalId) {
+      respondToApproval(state.currentApprovalId, false);
+    }
   });
 }
 
@@ -913,6 +935,9 @@ async function processNextQueueItem() {
       return;
     }
     await readEventStream(response.body, {
+      tool_approval_required: (value) => {
+        showApprovalDialog(value.id, value.tool, value.arguments);
+      },
       media_pre_processing: (value) => {
         assistant.waiting = false;
         const mediaRouterMsg = {
@@ -1557,6 +1582,32 @@ function writePcm16(view, offset, samples) {
 function writeAscii(view, offset, value) {
   for (let i = 0; i < value.length; i++) {
     view.setUint8(offset + i, value.charCodeAt(i));
+  }
+}
+
+function showApprovalDialog(id, toolName, args) {
+  state.currentApprovalId = id;
+  els.approvalToolName.textContent = toolName;
+  try {
+    els.approvalToolArgs.textContent = JSON.stringify(args, null, 2);
+  } catch {
+    els.approvalToolArgs.textContent = String(args);
+  }
+  els.approvalDialog.showModal();
+}
+
+async function respondToApproval(id, approved) {
+  try {
+    await fetch("/api/tools/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, approved }),
+    });
+  } catch (err) {
+    console.error("Failed to send tool approval response:", err);
+  } finally {
+    state.currentApprovalId = null;
+    els.approvalDialog.close();
   }
 }
 
