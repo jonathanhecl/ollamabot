@@ -46,6 +46,7 @@ Hecho:
 - Sidebar de sesiones en la web: panel lateral izquierdo ocultable con lista de sesiones previas. Cada sesion es una carpeta (`sessions/{id}/`) con `session.json` (metadata), `messages.json` (mensajes) y `attachments/` (archivos binarios extraidos de base64). La ruta de sesiones es configurable via `SESSIONS_PATH` (default `sessions`, relativo al ejecutable). Se puede crear una nueva sesion, cambiar entre sesiones, y el estado se guarda automaticamente al finalizar cada respuesta del modelo.
 - Barra de contexto con porcentaje estimado de uso del context window del modelo main: calcula tokens aproximados (caracteres / 4) sobre `context_length` del modelo activo. Cambia de color a naranja (>70%) o rojo (>90%).
 - Memoria a largo plazo local (RAG): sistema de semantic search usando el modelo definido en `OLLAMA_MODEL_EMBED`. Persiste en `memory.jsonl` dentro de una carpeta configurable (`MEMORY_PATH`, default `memory`, relativo al ejecutable). Cada entrada tiene texto, embedding vector, source y timestamp. La busqueda usa cosine similarity en memoria (O(n) eficiente para uso local). El agente gestiona su memoria de forma autonoma via tools: `memory_add` (almacena), `memory_search` (recupera), `memory_delete` (elimina desactualizado), `memory_list` (revisa lo guardado). Un system prompt inyectado en cada conversacion le da criterio: ser proactivo almacenando hechos importantes, buscar cuando se beneficie del contexto pasado, consolidar borrando versiones viejas y guardando nuevas, y priorizar informacion util. Los resultados de tools se devuelven al modelo como tool result para que decida como usarlos. Endpoints REST: `GET /api/memory`, `POST /api/memory`, `POST /api/memory/search`, `DELETE /api/memory/{id}`.
+- Confirmación de acciones riesgosas para tools (Write/Edit) integrada tanto en la interfaz Web (mediante SSE y modal) como en Telegram (usando inline keyboards interactivos), con omisión automática para ediciones que tengan lugar dentro del directorio 'workspace'.
 
 Comandos disponibles:
 
@@ -78,7 +79,7 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ## Pendiente
 
 - Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
-- Confirmacion de acciones riesgosas para tools (ej. borrar/modificar archivos, ejecutar comandos).
+- ~~Confirmacion de acciones riesgosas para tools~~: completado tanto en web como en Telegram con omisión en el directorio 'workspace'.
 - ~~Agregar indexacion automatica de mensajes de chat a la memoria RAG~~: descartado. Las sesiones ya persisten el historial completo de cada conversacion. La memoria RAG se reserva para informacion con utilidad futura, gestionada manualmente por el agente via `memory_add` con criterio propio.
 
 ## Riesgos y Notas
