@@ -114,6 +114,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}}, activeMessages...)
 		}
 
+		// Inject reinforcement for clarification
+		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool to present a clear question with at least 2 proposed options. Do not assume or guess if key details are missing."
+		activeMessages = append([]ollama.Message{{
+			Role:    "system",
+			Content: clarificationReinforce,
+		}}, activeMessages...)
+
 		// 3. Prepare the request
 		req := ollama.ChatRequest{
 			Model:    model,

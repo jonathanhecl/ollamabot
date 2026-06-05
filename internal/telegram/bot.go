@@ -178,31 +178,39 @@ type MediaMessage struct {
 	ImageKinds []string `json:"image_kinds,omitempty"`
 }
 
+type pendingClarification struct {
+	ch      chan string
+	options []string
+}
+
 // Bot represents the Telegram polling bot
 type Bot struct {
-	cfg         config.Config
-	client      *ollama.Client
-	sessions    *sessions.Store
-	sessManager *SessionManager
-	memoryStore *memory.Store
-	apiBase     string
-	httpClient  *http.Client
-	approvalsMu sync.Mutex
-	approvals   map[string]chan bool
-	sleepMgr    *learning.SleepManager
+	cfg              config.Config
+	client           *ollama.Client
+	sessions         *sessions.Store
+	sessManager      *SessionManager
+	memoryStore      *memory.Store
+	apiBase          string
+	httpClient       *http.Client
+	approvalsMu      sync.Mutex
+	approvals        map[string]chan bool
+	clarificationsMu sync.Mutex
+	clarifications   map[string]pendingClarification
+	sleepMgr         *learning.SleepManager
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	token := cfg.TelegramBotToken
 	return &Bot{
-		cfg:         cfg,
-		client:      client,
-		sessions:    sessions.NewStore(cfg.SessionsPath),
-		sessManager: NewSessionManager(cfg.SessionsPath),
-		memoryStore: memory.NewStore(cfg.MemoryPath),
-		apiBase:     "https://api.telegram.org/bot" + token,
-		httpClient:  &http.Client{Timeout: 40 * time.Second},
-		approvals:   make(map[string]chan bool),
+		cfg:            cfg,
+		client:         client,
+		sessions:       sessions.NewStore(cfg.SessionsPath),
+		sessManager:    NewSessionManager(cfg.SessionsPath),
+		memoryStore:    memory.NewStore(cfg.MemoryPath),
+		apiBase:        "https://api.telegram.org/bot" + token,
+		httpClient:     &http.Client{Timeout: 40 * time.Second},
+		approvals:      make(map[string]chan bool),
+		clarifications: make(map[string]pendingClarification),
 	}
 }
 
@@ -550,6 +558,10 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed)
 	registry.SetApprovalHandler(&telegramApprovalHandler{
+		bot:    b,
+		chatID: chatID,
+	})
+	registry.SetClarificationHandler(&telegramClarificationHandler{
 		bot:    b,
 		chatID: chatID,
 	})
@@ -1034,6 +1046,62 @@ func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
 	return wavBytes, nil
 }
 
+type telegramClarificationHandler struct {
+	bot    *Bot
+	chatID int64
+}
+
+func (h *telegramClarificationHandler) RequestClarification(ctx context.Context, question string, options []string) (string, error) {
+	clarifyID := fmt.Sprintf("tgc_%d", time.Now().UnixNano())
+	ch := make(chan string, 1)
+
+	h.bot.clarificationsMu.Lock()
+	h.bot.clarifications[clarifyID] = pendingClarification{
+		ch:      ch,
+		options: options,
+	}
+	h.bot.clarificationsMu.Unlock()
+
+	defer func() {
+		h.bot.clarificationsMu.Lock()
+		delete(h.bot.clarifications, clarifyID)
+		h.bot.clarificationsMu.Unlock()
+	}()
+
+	var rows [][]InlineKeyboardButton
+	for idx, opt := range options {
+		rows = append(rows, []InlineKeyboardButton{
+			{
+				Text:         opt,
+				CallbackData: fmt.Sprintf("clarify:%s:%d", clarifyID, idx),
+			},
+		})
+	}
+
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+
+	text := fmt.Sprintf("❓ *Clarification Required*\n\n%s", question)
+	msgID, err := h.bot.sendMessageWithMarkup(h.chatID, text, 0, "Markdown", markup)
+	if err != nil {
+		return "", fmt.Errorf("failed to send Telegram clarification request: %w", err)
+	}
+
+	select {
+	case chosenOption := <-ch:
+		statusText := fmt.Sprintf("💬 *Selected option:* %s", chosenOption)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		return chosenOption, nil
+	case <-ctx.Done():
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "")
+		return "", ctx.Err()
+	case <-time.After(5 * time.Minute):
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* clarification request timed out.", "")
+		return "", fmt.Errorf("clarification timeout")
+	}
+}
+
 type telegramApprovalHandler struct {
 	bot    *Bot
 	chatID int64
@@ -1097,6 +1165,47 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 	}
 
 	data := cb.Data
+	if strings.HasPrefix(data, "clarify:") {
+		parts := strings.Split(data, ":") // clarify:id:index
+		if len(parts) < 3 {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Invalid action", false)
+			return
+		}
+		clarifyID := parts[1]
+		idxStr := parts[2]
+		var idx int
+		if _, err := fmt.Sscanf(idxStr, "%d", &idx); err != nil {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Invalid option index", false)
+			return
+		}
+
+		b.clarificationsMu.Lock()
+		pc, ok := b.clarifications[clarifyID]
+		b.clarificationsMu.Unlock()
+
+		if !ok {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Clarification expired or not found", true)
+			if cb.Message != nil {
+				_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "")
+			}
+			return
+		}
+
+		if idx < 0 || idx >= len(pc.options) {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Option out of range", true)
+			return
+		}
+
+		chosen := pc.options[idx]
+		select {
+		case pc.ch <- chosen:
+			_ = b.answerCallbackQuery(cb.ID, "Clarification submitted", false)
+		default:
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Already answered", true)
+		}
+		return
+	}
+
 	if !strings.HasPrefix(data, "approve:") && !strings.HasPrefix(data, "deny:") {
 		_ = b.answerCallbackQuery(cb.ID, "Unknown action", false)
 		return

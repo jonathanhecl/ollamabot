@@ -90,6 +90,9 @@ const els = {
   approvalToolArgs: document.querySelector("#approvalToolArgs"),
   approveToolBtn: document.querySelector("#approveToolBtn"),
   denyToolBtn: document.querySelector("#denyToolBtn"),
+  clarificationDialog: document.querySelector("#clarificationDialog"),
+  clarificationQuestion: document.querySelector("#clarificationQuestion"),
+  clarificationOptionsContainer: document.querySelector("#clarificationOptionsContainer"),
   
   // Projects DOM Elements
   openProjects: document.querySelector("#openProjects"),
@@ -954,6 +957,9 @@ async function processNextQueueItem() {
       tool_approval_required: (value) => {
         showApprovalDialog(value.id, value.tool, value.arguments);
       },
+      tool_clarification_required: (value) => {
+        showClarificationDialog(value.id, value.question, value.options);
+      },
       media_pre_processing: (value) => {
         assistant.waiting = false;
         const mediaRouterMsg = {
@@ -1624,6 +1630,41 @@ async function respondToApproval(id, approved) {
   } finally {
     state.currentApprovalId = null;
     els.approvalDialog.close();
+  }
+}
+
+function showClarificationDialog(id, question, options) {
+  state.currentClarificationId = id;
+  els.clarificationQuestion.textContent = question;
+  els.clarificationOptionsContainer.innerHTML = "";
+  
+  options.forEach(opt => {
+    const btn = document.createElement("button");
+    btn.className = "primary-button";
+    btn.style.width = "100%";
+    btn.style.textAlign = "left";
+    btn.style.padding = "10px 14px";
+    btn.style.justifyContent = "flex-start";
+    btn.textContent = opt;
+    btn.addEventListener("click", () => respondToClarification(id, opt));
+    els.clarificationOptionsContainer.appendChild(btn);
+  });
+  
+  els.clarificationDialog.showModal();
+}
+
+async function respondToClarification(id, option) {
+  try {
+    await fetch("/api/tools/clarify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, option }),
+    });
+  } catch (err) {
+    console.error("Failed to send clarification response:", err);
+  } finally {
+    state.currentClarificationId = null;
+    els.clarificationDialog.close();
   }
 }
 

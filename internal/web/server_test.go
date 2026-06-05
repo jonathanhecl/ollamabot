@@ -396,4 +396,36 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 	}
 }
 
+func TestClarifyTool(t *testing.T) {
+	s := &Server{
+		clarifications: make(map[string]chan string),
+	}
+
+	// Setup a pending clarification request channel
+	clarifyID := "test_clarify_id"
+	ch := make(chan string, 1)
+	s.clarifications[clarifyID] = ch
+
+	// Post response
+	reqBody := `{"id": "test_clarify_id", "option": "Option B"}`
+	req := httptest.NewRequest("POST", "/api/tools/clarify", strings.NewReader(reqBody))
+	w := httptest.NewRecorder()
+
+	s.handleClarifyTool(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200, got %d", resp.StatusCode)
+	}
+
+	select {
+	case chosen := <-ch:
+		if chosen != "Option B" {
+			t.Errorf("expected chosen option 'Option B', got %q", chosen)
+		}
+	default:
+		t.Error("expected channel to receive the option")
+	}
+}
+
 

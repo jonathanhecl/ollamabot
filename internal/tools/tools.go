@@ -18,22 +18,33 @@ type ApprovalHandler interface {
 	RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error)
 }
 
+// ClarificationHandler is implemented by clients wishing to ask clarifying questions to the user.
+type ClarificationHandler interface {
+	RequestClarification(ctx context.Context, question string, options []string) (string, error)
+}
+
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
-	enabled         map[string]bool
-	defs            []ollama.Tool
-	workspace       string
-	memoryStore     *memory.Store
-	client          *ollama.Client
-	embedModel      string
-	todoStore       *TodoStore
-	approvalHandler ApprovalHandler
-	skillsPath      string
+	enabled              map[string]bool
+	defs                 []ollama.Tool
+	workspace            string
+	memoryStore          *memory.Store
+	client               *ollama.Client
+	embedModel           string
+	todoStore            *TodoStore
+	approvalHandler      ApprovalHandler
+	clarificationHandler ClarificationHandler
+	skillsPath           string
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
 func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
 	r.approvalHandler = h
+}
+
+// SetClarificationHandler assigns a callback handler to ask clarification questions.
+func (r *Registry) SetClarificationHandler(h ClarificationHandler) {
+	r.clarificationHandler = h
 }
 
 // SetSkillsPath assigns the skills directory path.
@@ -403,6 +414,32 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["ask_clarification"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "ask_clarification",
+			Description: "Ask the user a clarifying question with a list of pre-defined options (at least 2) to resolve ambiguity in their instruction and plan the next action better.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"question": map[string]any{
+						"type":        "string",
+						"description": "The clarifying question to ask the user.",
+					},
+					"options": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "A list of at least 2 option suggestions for the user to choose from.",
+					},
+				},
+				"required": []string{"question", "options"},
+			},
+		},
+	})
+
 	return r
 }
 
@@ -676,6 +713,27 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", err
 		}
 		return fmt.Sprintf("Skill '%s' deleted successfully.", skillName), nil
+	case "ask_clarification":
+		question, _ := args["question"].(string)
+		optionsVal := args["options"]
+		if question == "" || optionsVal == nil {
+			return "", fmt.Errorf("missing required arguments for ask_clarification")
+		}
+		var options []string
+		bytes, err := json.Marshal(optionsVal)
+		if err != nil {
+			return "", fmt.Errorf("failed to encode options: %w", err)
+		}
+		if err := json.Unmarshal(bytes, &options); err != nil {
+			return "", fmt.Errorf("failed to decode options: %w", err)
+		}
+		if len(options) < 2 {
+			return "", fmt.Errorf("ask_clarification requires at least 2 options")
+		}
+		if r.clarificationHandler == nil {
+			return "", fmt.Errorf("no clarification handler configured")
+		}
+		return r.clarificationHandler.RequestClarification(ctx, question, options)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

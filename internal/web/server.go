@@ -33,19 +33,21 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	mu           sync.RWMutex
-	cfg          config.Config
-	envPath      string
-	client       *ollama.Client
-	runner       *probe.Runner
-	mediaro      *router.Router
-	cachePath    string
-	sessionStore *sessions.Store
-	memoryStore  *memory.Store
-	autoMgr      *agent.AutonomousManager
-	approvalsMu  sync.Mutex
-	approvals    map[string]chan bool
-	sleepMgr     *learning.SleepManager
+	mu               sync.RWMutex
+	cfg              config.Config
+	envPath          string
+	client           *ollama.Client
+	runner           *probe.Runner
+	mediaro          *router.Router
+	cachePath        string
+	sessionStore     *sessions.Store
+	memoryStore      *memory.Store
+	autoMgr          *agent.AutonomousManager
+	approvalsMu      sync.Mutex
+	approvals        map[string]chan bool
+	clarificationsMu sync.Mutex
+	clarifications   map[string]chan string
+	sleepMgr         *learning.SleepManager
 }
 
 type ModelView struct {
@@ -118,16 +120,17 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 	ms := memory.NewStore(cfg.MemoryPath)
 	am := agent.NewAutonomousManager(cfg, client, ms)
 	return &Server{
-		cfg:          cfg,
-		envPath:      envPath,
-		client:       client,
-		runner:       runner,
-		mediaro:      mr,
-		cachePath:    cachePath,
-		sessionStore: ss,
-		memoryStore:  ms,
-		autoMgr:      am,
-		approvals:    make(map[string]chan bool),
+		cfg:            cfg,
+		envPath:        envPath,
+		client:         client,
+		runner:         runner,
+		mediaro:        mr,
+		cachePath:      cachePath,
+		sessionStore:   ss,
+		memoryStore:    ms,
+		autoMgr:        am,
+		approvals:      make(map[string]chan bool),
+		clarifications: make(map[string]chan string),
 	}
 }
 
@@ -154,6 +157,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
+	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
 
 	// Autonomous projects endpoints
 	mux.HandleFunc("GET /api/autonomous/projects", s.handleListProjects)
@@ -408,6 +412,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
 	registry.SetApprovalHandler(&webApprovalHandler{
+		server:  s,
+		w:       w,
+		flusher: flusher,
+	})
+	registry.SetClarificationHandler(&webClarificationHandler{
 		server:  s,
 		w:       w,
 		flusher: flusher,
@@ -1221,6 +1230,95 @@ func (h *webApprovalHandler) RequestApproval(ctx context.Context, toolName strin
 			return false, ctx.Err()
 		case <-timeout:
 			return false, fmt.Errorf("approval timeout")
+		}
+	}
+}
+
+type clarifyToolRequest struct {
+	ID     string `json:"id"`
+	Option string `json:"option"`
+}
+
+func (s *Server) handleClarifyTool(w http.ResponseWriter, r *http.Request) {
+	var req clarifyToolRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	req.Option = strings.TrimSpace(req.Option)
+	if req.ID == "" || req.Option == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("missing id or option"))
+		return
+	}
+
+	s.clarificationsMu.Lock()
+	ch, ok := s.clarifications[req.ID]
+	s.clarificationsMu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("clarification request not found or expired"))
+		return
+	}
+
+	// Notify the waiting block
+	select {
+	case ch <- req.Option:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "processed"})
+	default:
+		writeError(w, http.StatusGone, fmt.Errorf("clarification channel was closed or already answered"))
+	}
+}
+
+type webClarificationHandler struct {
+	server  *Server
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (h *webClarificationHandler) RequestClarification(ctx context.Context, question string, options []string) (string, error) {
+	clarifyID := fmt.Sprintf("web_clarify_%d", time.Now().UnixNano())
+	ch := make(chan string, 1)
+
+	h.server.clarificationsMu.Lock()
+	h.server.clarifications[clarifyID] = ch
+	h.server.clarificationsMu.Unlock()
+
+	defer func() {
+		h.server.clarificationsMu.Lock()
+		delete(h.server.clarifications, clarifyID)
+		h.server.clarificationsMu.Unlock()
+	}()
+
+	// Send SSE clarification request event
+	writeSSE(h.w, "tool_clarification_required", map[string]any{
+		"id":       clarifyID,
+		"question": question,
+		"options":  options,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case chosen := <-ch:
+			return chosen, nil
+		case <-ticker.C:
+			// Send ping comment to keep SSE stream open
+			_, _ = h.w.Write([]byte(": ping\n\n"))
+			if h.flusher != nil {
+				h.flusher.Flush()
+			}
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timeout:
+			return "", fmt.Errorf("clarification timeout")
 		}
 	}
 }
