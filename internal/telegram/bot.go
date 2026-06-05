@@ -20,6 +20,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/router"
@@ -188,6 +189,7 @@ type Bot struct {
 	httpClient  *http.Client
 	approvalsMu sync.Mutex
 	approvals   map[string]chan bool
+	sleepMgr    *learning.SleepManager
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
@@ -202,6 +204,10 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		httpClient:  &http.Client{Timeout: 40 * time.Second},
 		approvals:   make(map[string]chan bool),
 	}
+}
+
+func (b *Bot) SetSleepManager(sm *learning.SleepManager) {
+	b.sleepMgr = sm
 }
 
 // Start initiates the long polling loop
@@ -278,6 +284,9 @@ func (b *Bot) getUpdates(offset int64) ([]Update, error) {
 }
 
 func (b *Bot) handleUpdate(update Update) {
+	if b.sleepMgr != nil {
+		b.sleepMgr.NotifyUserActivity()
+	}
 	if update.Message != nil {
 		b.handleMessage(update.Message)
 	}

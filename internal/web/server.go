@@ -20,6 +20,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
@@ -44,6 +45,7 @@ type Server struct {
 	autoMgr      *agent.AutonomousManager
 	approvalsMu  sync.Mutex
 	approvals    map[string]chan bool
+	sleepMgr     *learning.SleepManager
 }
 
 type ModelView struct {
@@ -123,6 +125,12 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		autoMgr:      am,
 		approvals:    make(map[string]chan bool),
 	}
+}
+
+func (s *Server) SetSleepManager(sm *learning.SleepManager) {
+	s.mu.Lock()
+	s.sleepMgr = sm
+	s.mu.Unlock()
 }
 
 func (s *Server) ListenAndServe() error {
@@ -286,6 +294,15 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.autoMgr = agent.NewAutonomousManager(s.cfg, s.client, s.memoryStore)
 	s.autoMgr.Start(context.Background())
+	if s.sleepMgr != nil {
+		s.sleepMgr.Pause()
+	}
+	if s.cfg.SleepModeEnabled {
+		s.sleepMgr = learning.NewSleepManager(s.cfg, s.client)
+		s.sleepMgr.Start(context.Background())
+	} else {
+		s.sleepMgr = nil
+	}
 	cfg := s.cfg
 	s.mu.Unlock()
 
@@ -313,6 +330,13 @@ func routerConfig(cfg config.Config) router.Config {
 }
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	sm := s.sleepMgr
+	s.mu.RUnlock()
+	if sm != nil {
+		sm.NotifyUserActivity()
+	}
+
 	var input ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, err)

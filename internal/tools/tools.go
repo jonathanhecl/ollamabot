@@ -28,11 +28,17 @@ type Registry struct {
 	embedModel      string
 	todoStore       *TodoStore
 	approvalHandler ApprovalHandler
+	skillsPath      string
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
 func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
 	r.approvalHandler = h
+}
+
+// SetSkillsPath assigns the skills directory path.
+func (r *Registry) SetSkillsPath(p string) {
+	r.skillsPath = p
 }
 
 
@@ -45,6 +51,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		client:      client,
 		embedModel:  embedModel,
 		todoStore:   NewTodoStore(),
+		skillsPath:  "skills",
 	}
 
 	if webSearch {
@@ -281,6 +288,121 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			},
 		})
 	}
+
+	// Register Skill Management Tools
+	r.enabled["skill_list"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "skill_list",
+			Description: "List all custom skills currently installed in the system.",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	})
+
+	r.enabled["skill_get"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "skill_get",
+			Description: "Retrieve the raw instruction contents of a specific skill.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Name of the skill to fetch.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+	})
+
+	r.enabled["skill_create"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "skill_create",
+			Description: "Create a new custom skill with frontmatter and checklist instructions.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Unique short name (alphanumeric/dashes) for the skill folder.",
+					},
+					"description": map[string]any{
+						"type":        "string",
+						"description": "Short explanation of the workflow this skill implements.",
+					},
+					"homepage": map[string]any{
+						"type":        "string",
+						"description": "Author homepage or reference URL.",
+					},
+					"instructions": map[string]any{
+						"type":        "string",
+						"description": "Step-by-step checklist instructions (lines starting with - [ ] or similar).",
+					},
+				},
+				"required": []string{"name", "description", "homepage", "instructions"},
+			},
+		},
+	})
+
+	r.enabled["skill_edit"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "skill_edit",
+			Description: "Modify or merge properties of an existing custom skill.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Name of the skill to modify.",
+					},
+					"description": map[string]any{
+						"type":        "string",
+						"description": "New description (optional).",
+					},
+					"homepage": map[string]any{
+						"type":        "string",
+						"description": "New homepage URL (optional).",
+					},
+					"instructions": map[string]any{
+						"type":        "string",
+						"description": "New checklist instructions (optional).",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+	})
+
+	r.enabled["skill_delete"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "skill_delete",
+			Description: "Remove a custom skill entirely from the system.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Name of the skill to delete.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+	})
+
 	return r
 }
 
@@ -510,6 +632,50 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			fmt.Fprintf(&sb, "[%d] ID: %s | Source: %s | Created: %s | Text: %s\n", i+1, e.ID, e.Source, e.CreatedAt.Format(time.RFC3339), e.Text)
 		}
 		return sb.String(), nil
+	case "skill_list":
+		return ListSkills(r.skillsPath)
+	case "skill_get":
+		skillName, _ := args["name"].(string)
+		if skillName == "" {
+			return "", fmt.Errorf("missing skill name")
+		}
+		return GetSkill(r.skillsPath, skillName)
+	case "skill_create":
+		skillName, _ := args["name"].(string)
+		desc, _ := args["description"].(string)
+		hp, _ := args["homepage"].(string)
+		inst, _ := args["instructions"].(string)
+		if skillName == "" || desc == "" || hp == "" || inst == "" {
+			return "", fmt.Errorf("missing required arguments for skill_create")
+		}
+		err := CreateSkill(r.skillsPath, skillName, desc, hp, inst)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Skill '%s' created successfully.", skillName), nil
+	case "skill_edit":
+		skillName, _ := args["name"].(string)
+		desc, _ := args["description"].(string)
+		hp, _ := args["homepage"].(string)
+		inst, _ := args["instructions"].(string)
+		if skillName == "" {
+			return "", fmt.Errorf("missing skill name")
+		}
+		err := EditSkill(r.skillsPath, skillName, desc, hp, inst)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Skill '%s' updated successfully.", skillName), nil
+	case "skill_delete":
+		skillName, _ := args["name"].(string)
+		if skillName == "" {
+			return "", fmt.Errorf("missing skill name")
+		}
+		err := DeleteSkill(r.skillsPath, skillName)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Skill '%s' deleted successfully.", skillName), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

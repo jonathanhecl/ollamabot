@@ -15,6 +15,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/docs"
+	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/telegram"
@@ -93,9 +94,18 @@ func run(args []string) error {
 
 	if len(remaining) == 0 {
 		if cfg.ServerEnabled {
-			startTelegramBot(cfg, client)
+			var sleepMgr *learning.SleepManager
+			if cfg.SleepModeEnabled {
+				sleepMgr = learning.NewSleepManager(cfg, client)
+				sleepMgr.Start(ctx)
+			}
+			startTelegramBot(cfg, client, sleepMgr)
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
-			return web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath).ListenAndServe()
+			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
+			if sleepMgr != nil {
+				srv.SetSleepManager(sleepMgr)
+			}
+			return srv.ListenAndServe()
 		}
 		fmt.Println("Server disabled in .env (SERVER_ENABLED=false).")
 		usage()
@@ -246,17 +256,31 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		return err
 	}
 	cfg.ServerPort = *port
-	startTelegramBot(cfg, client)
-	return web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath).ListenAndServe()
+
+	var sleepMgr *learning.SleepManager
+	if cfg.SleepModeEnabled {
+		sleepMgr = learning.NewSleepManager(cfg, client)
+		sleepMgr.Start(context.Background())
+	}
+
+	startTelegramBot(cfg, client, sleepMgr)
+	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
+	if sleepMgr != nil {
+		srv.SetSleepManager(sleepMgr)
+	}
+	return srv.ListenAndServe()
 }
 
-func startTelegramBot(cfg config.Config, client *ollama.Client) {
+func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager) {
 	if cfg.TelegramBotToken == "" {
 		return
 	}
 	go func() {
 		log.Println("[Telegram] Starting background Telegram bot service...")
 		bot := telegram.NewBot(cfg, client)
+		if sleepMgr != nil {
+			bot.SetSleepManager(sleepMgr)
+		}
 		if err := bot.Start(context.Background()); err != nil {
 			log.Printf("[Telegram] Bot service error: %v", err)
 		}

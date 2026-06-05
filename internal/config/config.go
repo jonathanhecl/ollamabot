@@ -28,6 +28,10 @@ type Config struct {
 	SessionsPath          string
 	MemoryPath            string
 	SkillsPath            string
+	SleepModeEnabled             bool
+	SleepModeInactivityThreshold string
+	SleepModeResumeDelay         string
+	OllamaModelLearning          string
 }
 
 func Load(path string) (Config, error) {
@@ -59,6 +63,10 @@ func Load(path string) (Config, error) {
 		SessionsPath:        "sessions",
 		MemoryPath:          "memory",
 		SkillsPath:          "skills",
+		SleepModeEnabled:             false,
+		SleepModeInactivityThreshold: "30m",
+		SleepModeResumeDelay:         "10m",
+		OllamaModelLearning:          "",
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -113,6 +121,18 @@ func Load(path string) (Config, error) {
 	if value := apply("SKILLS_PATH"); value != "" {
 		cfg.SkillsPath = value
 	}
+	if value := apply("SLEEP_MODE_ENABLED"); value != "" {
+		cfg.SleepModeEnabled = parseBool(value)
+	}
+	if value := apply("SLEEP_MODE_INACTIVITY_THRESHOLD"); value != "" {
+		cfg.SleepModeInactivityThreshold = value
+	}
+	if value := apply("SLEEP_MODE_RESUME_DELAY"); value != "" {
+		cfg.SleepModeResumeDelay = value
+	}
+	if value := apply("OLLAMA_MODEL_LEARNING"); value != "" {
+		cfg.OllamaModelLearning = value
+	}
 
 	normalized, err := NormalizeBaseURL(cfg.OllamaBaseURL)
 	if err != nil {
@@ -152,7 +172,7 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -170,6 +190,10 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.SessionsPath,
 		cfg.MemoryPath,
 		cfg.SkillsPath,
+		cfg.SleepModeEnabled,
+		cfg.SleepModeInactivityThreshold,
+		cfg.SleepModeResumeDelay,
+		cfg.OllamaModelLearning,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
