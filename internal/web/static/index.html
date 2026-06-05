@@ -282,6 +282,24 @@
                 <option value="ddg">DuckDuckGo</option>
               </select>
             </label>
+            <div class="checkbox-row" style="margin-top: 14px;">
+              <label class="think-toggle">
+                <input id="sleepModeToggle" type="checkbox" />
+                <span>Enable Sleep Mode (Continuous Learning)</span>
+              </label>
+            </div>
+            <label style="margin-top: 14px;">
+              Inactivity Threshold
+              <input id="sleepModeInactivity" type="text" placeholder="30m" />
+            </label>
+            <label style="margin-top: 14px;">
+              Resume Delay
+              <input id="sleepModeResumeDelay" type="text" placeholder="10m" />
+            </label>
+            <label style="margin-top: 14px;">
+              Reflector Learning Model
+              <input id="sleepModeModel" type="text" placeholder="e.g. qwen3:8b" />
+            </label>
           </div>
           
           <div class="settings-actions">

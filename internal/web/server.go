@@ -75,20 +75,24 @@ type ModelsResponse struct {
 }
 
 type SettingsResponse struct {
-	OllamaBaseURL       string `json:"ollama_base_url"`
-	ServerPort          string `json:"server_port"`
-	ServerEnabled       bool   `json:"server_enabled"`
-	WebSearchEnabled    bool   `json:"web_search_enabled"`
-	ServerExposeNetwork bool   `json:"server_expose_network"`
-	SessionAutoName     bool   `json:"session_auto_name"`
-	ModelDefault        string `json:"model_default"`
-	ModelVision         string `json:"model_vision"`
-	ModelAudio          string `json:"model_audio"`
-	ModelEmbeddings     string `json:"model_embeddings"`
-	Workspace           string `json:"workspace"`
-	SessionsPath        string `json:"sessions_path"`
-	MemoryPath          string `json:"memory_path"`
-	SkillsPath          string `json:"skills_path"`
+	OllamaBaseURL                string `json:"ollama_base_url"`
+	ServerPort                   string `json:"server_port"`
+	ServerEnabled                bool   `json:"server_enabled"`
+	WebSearchEnabled             bool   `json:"web_search_enabled"`
+	ServerExposeNetwork          bool   `json:"server_expose_network"`
+	SessionAutoName              bool   `json:"session_auto_name"`
+	ModelDefault                 string `json:"model_default"`
+	ModelVision                  string `json:"model_vision"`
+	ModelAudio                   string `json:"model_audio"`
+	ModelEmbeddings              string `json:"model_embeddings"`
+	Workspace                    string `json:"workspace"`
+	SessionsPath                 string `json:"sessions_path"`
+	MemoryPath                   string `json:"memory_path"`
+	SkillsPath                   string `json:"skills_path"`
+	SleepModeEnabled             bool   `json:"sleep_mode_enabled"`
+	SleepModeInactivityThreshold string `json:"sleep_mode_inactivity_threshold"`
+	SleepModeResumeDelay         string `json:"sleep_mode_resume_delay"`
+	ModelLearning                string `json:"model_learning"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -284,6 +288,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.SessionsPath = sessionsPath
 	s.cfg.MemoryPath = memoryPath
 	s.cfg.SkillsPath = skillsPath
+	s.cfg.SleepModeEnabled = input.SleepModeEnabled
+	s.cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
+	s.cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
+	s.cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -939,20 +947,24 @@ func writeError(w http.ResponseWriter, status int, err error) {
 
 func settingsResponse(cfg config.Config) SettingsResponse {
 	return SettingsResponse{
-		OllamaBaseURL:       cfg.OllamaBaseURL,
-		ServerPort:          cfg.ServerPort,
-		ServerEnabled:       cfg.ServerEnabled,
-		WebSearchEnabled:    cfg.WebSearchEnabled,
-		ServerExposeNetwork: cfg.ServerExposeNetwork,
-		SessionAutoName:     cfg.SessionAutoName,
-		ModelDefault:        cfg.OllamaDefaultModel,
-		ModelVision:         cfg.OllamaModelVision,
-		ModelAudio:          cfg.OllamaModelAudio,
-		ModelEmbeddings:     cfg.OllamaModelEmbed,
-		Workspace:           cfg.Workspace,
-		SessionsPath:        cfg.SessionsPath,
-		MemoryPath:          cfg.MemoryPath,
-		SkillsPath:          cfg.SkillsPath,
+		OllamaBaseURL:                cfg.OllamaBaseURL,
+		ServerPort:                   cfg.ServerPort,
+		ServerEnabled:                cfg.ServerEnabled,
+		WebSearchEnabled:             cfg.WebSearchEnabled,
+		ServerExposeNetwork:          cfg.ServerExposeNetwork,
+		SessionAutoName:              cfg.SessionAutoName,
+		ModelDefault:                 cfg.OllamaDefaultModel,
+		ModelVision:                  cfg.OllamaModelVision,
+		ModelAudio:                   cfg.OllamaModelAudio,
+		ModelEmbeddings:              cfg.OllamaModelEmbed,
+		Workspace:                    cfg.Workspace,
+		SessionsPath:                 cfg.SessionsPath,
+		MemoryPath:                   cfg.MemoryPath,
+		SkillsPath:                   cfg.SkillsPath,
+		SleepModeEnabled:             cfg.SleepModeEnabled,
+		SleepModeInactivityThreshold: cfg.SleepModeInactivityThreshold,
+		SleepModeResumeDelay:         cfg.SleepModeResumeDelay,
+		ModelLearning:                cfg.OllamaModelLearning,
 	}
 }
 

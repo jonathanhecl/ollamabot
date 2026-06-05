@@ -66,6 +66,10 @@ const els = {
   webSearchSelect: document.querySelector("#webSearchSelect"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
+  sleepModeToggle: document.querySelector("#sleepModeToggle"),
+  sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
+  sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
+  sleepModeModel: document.querySelector("#sleepModeModel"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
@@ -425,6 +429,10 @@ async function loadSettings() {
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
   els.webPort.value = state.settings.server_port || "8080";
+  els.sleepModeToggle.checked = !!state.settings.sleep_mode_enabled;
+  els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
+  els.sleepModeResumeDelay.value = state.settings.sleep_mode_resume_delay || "10m";
+  els.sleepModeModel.value = state.settings.model_learning || "";
   if (state.settings.model_default) {
     state.activeModel = state.settings.model_default;
     localStorage.setItem("ollamabot.mainModel", state.activeModel);
@@ -457,6 +465,10 @@ async function saveSettings(event) {
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
       server_port: els.webPort.value.trim() || "8080",
+      sleep_mode_enabled: els.sleepModeToggle.checked,
+      sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
+      sleep_mode_resume_delay: els.sleepModeResumeDelay.value.trim(),
+      model_learning: els.sleepModeModel.value.trim(),
     }),
   });
   const data = await response.json();
@@ -487,6 +499,10 @@ async function saveRoleModels() {
       server_expose_network: state.settings.server_expose_network || false,
       session_auto_name: state.settings.session_auto_name !== false,
       server_port: state.settings.server_port || "8080",
+      sleep_mode_enabled: state.settings.sleep_mode_enabled || false,
+      sleep_mode_inactivity_threshold: state.settings.sleep_mode_inactivity_threshold || "30m",
+      sleep_mode_resume_delay: state.settings.sleep_mode_resume_delay || "10m",
+      model_learning: state.settings.model_learning || "",
     }),
   });
 }
