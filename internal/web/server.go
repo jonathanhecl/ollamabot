@@ -997,10 +997,11 @@ func SnapshotPath(path string) string {
 
 // truncate returns s truncated to maxLen characters with "..." appended if needed.
 func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
 		return s
 	}
-	return s[:maxLen] + "..."
+	return string(runes[:maxLen]) + "..."
 }
 
 func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
@@ -1064,7 +1065,8 @@ func (s *Server) handleGetProjectLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("invalid log filename"))
 		return
 	}
-	logPath := filepath.Join(s.cfg.Workspace, id, "logs", logName)
+	cfg := s.config()
+	logPath := filepath.Join(cfg.Workspace, id, "logs", logName)
 	content, err := os.ReadFile(logPath)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err)

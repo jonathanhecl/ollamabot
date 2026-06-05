@@ -101,7 +101,7 @@ func (s *Store) List() []Entry {
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	filtered := s.entries[:0]
+	filtered := make([]Entry, 0, len(s.entries))
 	found := false
 	for _, e := range s.entries {
 		if e.ID == id {

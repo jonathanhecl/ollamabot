@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync/atomic"
 	"time"
 )
 
@@ -262,7 +263,12 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 	return out, nil
 }
 
+// idCounter ensures GenerateID produces unique values even when called
+// within the same nanosecond (e.g., on low-resolution timer systems like Windows).
+var idCounter atomic.Uint64
+
 // GenerateID creates a time-based unique identifier.
 func GenerateID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	seq := idCounter.Add(1)
+	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), seq)
 }
