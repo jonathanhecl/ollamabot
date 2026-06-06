@@ -19,10 +19,13 @@ import (
 	"runtime"
 
 	"github.com/jonathanhecl/ollamabot/internal/agent"
+	"github.com/jonathanhecl/ollamabot/internal/cache"
+	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
@@ -375,17 +378,85 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	return sessionID
 }
 
+func snapshotPath() string {
+	if _, err := os.Stat("docs"); err == nil {
+		return "docs/probe-cache.json"
+	}
+	return "probe-cache.json"
+}
+
 func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	chatIDStr := fmt.Sprintf("%d", chatID)
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI autonomous companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI autonomous companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/reloadmodels` - Force reload Ollama models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
+	case "/reloadmodels":
+		b.sendMessage(chatID, "⏳ *Reloading models...* Please wait.", 0, "Markdown")
+
+		ctx := context.Background()
+		runner := probe.NewRunner(b.client)
+		version, err := b.client.Version(ctx)
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error reloading:* %v", err), 0, "Markdown")
+			return
+		}
+
+		reports, err := runner.Inventory(ctx, b.cfg.OllamaProbeModels)
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error reloading:* %v", err), 0, "Markdown")
+			return
+		}
+
+		ps, _ := b.client.Ps(ctx)
+
+		cachePath := snapshotPath()
+		var oldSnapshot cache.Snapshot
+		if loaded, err := cache.Load(cachePath); err == nil {
+			oldSnapshot = loaded
+		}
+
+		snapshot := cache.Snapshot{
+			GeneratedAt:   time.Now(),
+			BaseURL:       b.cfg.OllamaBaseURL,
+			OllamaVersion: version.Version,
+			Models:        reports,
+			Running:       ps.Models,
+			Expected:      oldSnapshot.Expected,
+			ProbeRuns:     oldSnapshot.ProbeRuns,
+		}
+
+		if len(snapshot.Expected) == 0 {
+			snapshot.Expected = []cache.ExpectedProbe{
+				{Name: "models", Status: capabilities.Confirmed, Details: "Inventory from /api/tags and /api/show"},
+				{Name: "audio", Status: capabilities.Pending, Details: "Audio remains pending unless an end-to-end REST payload is confirmed"},
+				{Name: "video", Status: capabilities.Pending, Details: "Video remains pending; planned path is frame extraction plus vision"},
+			}
+		}
+
+		if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err == nil {
+			_ = cache.Save(cachePath, snapshot)
+		}
+
+		var modelNames []string
+		for _, m := range reports {
+			status := "offline"
+			for _, r := range ps.Models {
+				if r.Name == m.Name || r.Model == m.Name {
+					status = "loaded"
+					break
+				}
+			}
+			modelNames = append(modelNames, fmt.Sprintf("• `%s` (%s)", m.Name, status))
+		}
+
+		responseMsg := fmt.Sprintf("✅ *Models reloaded successfully!*\n\n*Detected Models (%d):*\n%s", len(reports), strings.Join(modelNames, "\n"))
+		b.sendMessage(chatID, responseMsg, 0, "Markdown")
 	default:
-		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new` or `/start`", 0, "Markdown")
+		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/reloadmodels` or `/start`", 0, "Markdown")
 	}
 }
 

@@ -193,13 +193,19 @@
           <span class="search-icon">🔍</span>
           <input type="text" id="modelSearch" placeholder="Search models by name, family or parameters..." />
         </div>
-        <div class="filter-group">
-          <button type="button" class="filter-btn active" data-filter="all">All</button>
-          <button type="button" class="filter-btn" data-filter="loaded">Loaded</button>
-          <button type="button" class="filter-btn" data-filter="main">Main</button>
-          <button type="button" class="filter-btn" data-filter="vision">Vision</button>
-          <button type="button" class="filter-btn" data-filter="audio">Audio</button>
-          <button type="button" class="filter-btn" data-filter="embeddings">Embed</button>
+        <div class="toolbar-bottom-row" style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; width: 100%;">
+          <div class="filter-group" style="margin: 0; padding: 0;">
+            <button type="button" class="filter-btn active" data-filter="all">All</button>
+            <button type="button" class="filter-btn" data-filter="loaded">Loaded</button>
+            <button type="button" class="filter-btn" data-filter="main">Main</button>
+            <button type="button" class="filter-btn" data-filter="vision">Vision</button>
+            <button type="button" class="filter-btn" data-filter="audio">Audio</button>
+            <button type="button" class="filter-btn" data-filter="embeddings">Embed</button>
+          </div>
+          <button id="reloadModelsBtn" class="primary-button" type="button" style="min-height: 28px; padding: 2px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+            <span class="btn-spinner" id="reloadSpinner" style="display: none;">🌀</span>
+            Reload Models
+          </button>
         </div>
       </div>
       <div id="modelsBody" class="model-list"></div>

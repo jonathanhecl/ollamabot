@@ -143,6 +143,7 @@ func (s *Server) SetSleepManager(sm *learning.SleepManager) {
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/models", s.handleModels)
+	mux.HandleFunc("POST /api/models/reload", s.handleReloadModels)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -328,6 +329,67 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	response, err := s.models(r.Context())
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleReloadModels(w http.ResponseWriter, r *http.Request) {
+	cfg, client, runner, _ := s.deps()
+	version, err := client.Version(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+
+	reports, err := runner.Inventory(r.Context(), cfg.OllamaProbeModels)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err)
+		return
+	}
+
+	ps, _ := client.Ps(r.Context())
+
+	// Read existing snapshot first to preserve expected probes & probe runs
+	path := s.cachePath
+	if path == "" {
+		path = SnapshotPath("")
+	}
+
+	var oldSnapshot cache.Snapshot
+	if path != "" {
+		if loaded, err := cache.Load(path); err == nil {
+			oldSnapshot = loaded
+		}
+	}
+
+	snapshot := cache.Snapshot{
+		GeneratedAt:   time.Now(),
+		BaseURL:       cfg.OllamaBaseURL,
+		OllamaVersion: version.Version,
+		Models:        reports,
+		Running:       ps.Models,
+		Expected:      oldSnapshot.Expected,
+		ProbeRuns:     oldSnapshot.ProbeRuns,
+	}
+
+	if len(snapshot.Expected) == 0 {
+		snapshot.Expected = []cache.ExpectedProbe{
+			{Name: "models", Status: capabilities.Confirmed, Details: "Inventory from /api/tags and /api/show"},
+			{Name: "audio", Status: capabilities.Pending, Details: "Audio remains pending unless an end-to-end REST payload is confirmed"},
+			{Name: "video", Status: capabilities.Pending, Details: "Video remains pending; planned path is frame extraction plus vision"},
+		}
+	}
+
+	if path != "" {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
+			_ = cache.Save(path, snapshot)
+		}
+	}
+
+	response, err := s.models(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)

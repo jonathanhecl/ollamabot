@@ -55,6 +55,8 @@ const els = {
   imageDialog: document.querySelector("#imageDialog"),
   imageDialogImg: document.querySelector("#imageDialogImg"),
   modelsBody: document.querySelector("#modelsBody"),
+  reloadModelsBtn: document.querySelector("#reloadModelsBtn"),
+  reloadSpinner: document.querySelector("#reloadSpinner"),
   openModels: document.querySelector("#openModels"),
   openSettings: document.querySelector("#openSettings"),
   settingsForm: document.querySelector("#settingsForm"),
@@ -140,6 +142,42 @@ els.openModels.addEventListener("click", () => {
   });
   renderModels();
   els.modelsDialog.showModal();
+});
+
+els.reloadModelsBtn.addEventListener("click", async () => {
+  els.reloadModelsBtn.disabled = true;
+  els.reloadSpinner.style.display = "inline-block";
+  try {
+    const response = await fetch("/api/models/reload", {
+      method: "POST",
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      addSystemMessage(`Reload error: ${data.error || "failed to reload models"}`);
+      renderMessages();
+      return;
+    }
+    state.models = data.models || [];
+    if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
+      const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
+      state.activeModel = preferred?.name || "";
+    }
+    els.baseUrl.textContent = data.base_url;
+    els.version.textContent = `Ollama ${data.ollama_version || "unknown"}`;
+    els.cacheState.textContent = data.from_cache ? "cache fallback" : "live";
+    const loaded = state.models.filter((m) => m.loaded);
+    const vram = loaded.reduce((sum, model) => sum + (model.size_vram || 0), 0);
+    els.memoryState.textContent = `${loaded.length} loaded · ${formatBytes(vram)}`;
+    renderActive();
+    renderModels();
+  } catch (err) {
+    console.error("Reload models failed:", err);
+    addSystemMessage(`Reload error: ${err.message || "failed to connect to server"}`);
+    renderMessages();
+  } finally {
+    els.reloadSpinner.style.display = "none";
+    els.reloadModelsBtn.disabled = false;
+  }
 });
 els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
