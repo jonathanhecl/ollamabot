@@ -47,6 +47,7 @@ func NewAgent(cfg config.Config, client *ollama.Client, registry *tools.Registry
 
 // Run executes the iterative multi-turn planning and tool loop.
 func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message, think bool, handler StreamHandler) ([]ollama.Message, error) {
+	toolCallCounts := make(map[string]int)
 	// Find the current goal from the last user message
 	var goal string
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -188,6 +189,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 						Arguments: argsJSON,
 					},
 				})
+			} else if errMsg, malformed := detectMalformedXMLFallback(assistantText); malformed {
+				messages = append(messages, ollama.Message{
+					Role:    "system",
+					Content: errMsg,
+				})
+				if handler != nil {
+					handler.OnContent("\n\n" + errMsg)
+				}
+				continue
 			}
 		}
 
@@ -227,6 +237,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				result, terr := a.registry.Execute(ctx, call)
 				if terr != nil {
 					result = fmt.Sprintf("Error: %v", terr)
+				}
+
+				// Check for repetitive loops
+				argsStr := string(call.Function.Arguments)
+				key := toolName + ":" + argsStr
+				toolCallCounts[key]++
+				if toolCallCounts[key] >= 3 {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. To avoid a repetitive loop, please check the file path, verify the contents of the file using read_file, or try a different approach.]", result, toolName, toolCallCounts[key])
 				}
 
 				// Remember observed paths

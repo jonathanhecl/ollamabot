@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 )
@@ -156,4 +157,70 @@ func isJSONSpace(c byte) bool {
 
 func containsFold(haystack, needle string) bool {
 	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
+}
+
+// detectMalformedXMLFallback checks if the text contains tool calls that are malformed
+// (e.g. missing closing tags, unbalanced braces, or invalid JSON syntax).
+// Returns a descriptive error message and true if a malformed call is detected.
+func detectMalformedXMLFallback(text string) (string, bool) {
+	clean := strings.TrimSpace(text)
+
+	// 1. Check for <invoke ...> tags
+	if strings.Contains(clean, "<invoke") {
+		loc := openInvokeRe.FindStringSubmatchIndex(clean)
+		if loc != nil {
+			name := strings.TrimSpace(clean[loc[2]:loc[3]])
+			body, _, ok := extractBalancedJSON(clean, loc[1])
+			if !ok {
+				return fmt.Sprintf("Error: Malformed JSON arguments in <invoke name=\"%s\">. Braces must be balanced.", name), true
+			}
+			_, ok = decodeToolJSON(body)
+			if !ok {
+				return fmt.Sprintf("Error: Invalid JSON syntax in <invoke name=\"%s\">: %s", name, body), true
+			}
+			if !containsFold(clean, "</invoke>") {
+				return fmt.Sprintf("Error: Missing closing tag </invoke> for tool %s.", name), true
+			}
+		}
+	}
+
+	// 2. Check for <tool_call ...> tags
+	if strings.Contains(clean, "<tool_call") {
+		loc := openToolCallRe.FindStringSubmatchIndex(clean)
+		if loc != nil {
+			name := strings.TrimSpace(clean[loc[2]:loc[3]])
+			body, _, ok := extractBalancedJSON(clean, loc[1])
+			if !ok {
+				return fmt.Sprintf("Error: Malformed JSON arguments in <tool_call name=\"%s\">. Braces must be balanced.", name), true
+			}
+			_, ok = decodeToolJSON(body)
+			if !ok {
+				return fmt.Sprintf("Error: Invalid JSON syntax in <tool_call name=\"%s\">: %s", name, body), true
+			}
+			if !containsFold(clean, "</tool_call>") {
+				return fmt.Sprintf("Error: Missing closing tag </tool_call> for tool %s.", name), true
+			}
+		}
+	}
+
+	// 3. Check for custom tag envelopes like <READ_FILE>...</READ_FILE>
+	loc := toolTagOpenRe.FindStringSubmatchIndex(clean)
+	if loc != nil {
+		tag := clean[loc[2]:loc[3]]
+		name := toToolName(tag)
+		body, _, ok := extractBalancedJSON(clean, loc[1])
+		if !ok {
+			return fmt.Sprintf("Error: Malformed JSON arguments in <%s>. Braces must be balanced.", tag), true
+		}
+		_, ok = decodeToolJSON(body)
+		if !ok {
+			return fmt.Sprintf("Error: Invalid JSON syntax in <%s>: %s", tag, body), true
+		}
+		closeTag := "</" + tag + ">"
+		if !strings.Contains(clean, closeTag) {
+			return fmt.Sprintf("Error: Missing closing tag %s for tool %s.", closeTag, name), true
+		}
+	}
+
+	return "", false
 }

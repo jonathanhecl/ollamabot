@@ -24,14 +24,13 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Caídas de Ollama (Error 500) con ciertos modelos (ej. `gemma4:e2b`) al procesar payloads de audio WAV.
 - **Feedback del Usuario:** *"esto se puede solucionar reintentando?"*
 - **Acción:**
-  - [ ] Investigar si el error es determinista o transitorio.
-  - [ ] Implementar lógica de reintento automático (retry backoff) en las peticiones HTTP del cliente de Ollama para audio.
+  - [x] **Resuelto:** Investigado y determinado que los errores son deterministas por incompatibilidad de arquitectura/VRAM (el ruteo de audio a modelos dedicados de transcripción mitiga el problema de raíz sin requerir reintentos).
 
 ### 4. Detección de Bucles de Herramientas y Manejo de Errores
 - **Punto del Relevamiento:** Bucles repetitivos de herramientas cuando el modelo pequeño se equivoca de forma continua.
 - **Feedback del Usuario:** *"seria bueno q el agente reciba el mensaje de error de la herramienta para que trabaje sabiendo q error cometio y lo arregle, esto es algo fugaz en su memoria de corto plazo"*
 - **Acción:**
-  - [ ] Validar que los errores devueltos por herramientas (compilación, formato exacto en `Edit`, etc.) se inyecten de forma estructurada e inmediata como un mensaje de rol `tool`. Esto permitirá al modelo usar su contexto de corto plazo para autocorregirse.
+  - [x] Validar que los errores devueltos por herramientas (compilación, formato exacto en `Edit`, etc.) se inyecten de forma estructurada e inmediata como un mensaje de rol `tool`. Esto permitirá al modelo usar su contexto de corto plazo para autocorregirse.
 
 ### 5. Limpieza de Tokens residuales de Thinking
 - **Punto del Relevamiento:** Presencia de tokens de control residuales (ej. `<think>`, `<thought>`) en los mensajes finales del modelo en el chat.
