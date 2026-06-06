@@ -10,9 +10,9 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** El snapshot y el inventario estático no se actualizan dinámicamente si se descarga/instala un nuevo modelo en Ollama mientras el servidor está activo.
 - **Feedback del Usuario:** *"es buena idea ponerle un comando `/reloadmodels` y un boton en la web para recargar los modelos de ollama"*
 - **Acción:**
-  - [ ] Añadir botón de **"Recargar Modelos"** en el diálogo de modelos de la Web.
-  - [ ] Implementar el comando `/reloadmodels` en el Bot de Telegram.
-  - [ ] Crear endpoint HTTP para forzar la actualización del inventario y guardado de snapshot.
+  - [x] Añadir botón de **"Recargar Modelos"** en el diálogo de modelos de la Web.
+  - [x] Implementar el comando `/reloadmodels` en el Bot de Telegram.
+  - [x] Crear endpoint HTTP para forzar la actualización del inventario y guardado de snapshot.
 
 ### 2. Detección de Video
 - **Punto del Relevamiento:** Falta probe automático para video (propuesto mediante extracción de frames y análisis por visión).
