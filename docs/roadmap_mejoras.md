@@ -36,7 +36,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Presencia de tokens de control residuales (ej. `<think>`, `<thought>`) en los mensajes finales del modelo en el chat.
 - **Feedback del Usuario:** *"claro"*
 - **Acción:**
-  - [ ] Implementar un limpiador Regex antes de transmitir texto final por SSE o enviar mensajes a Telegram.
+  - [x] Implementar un limpiador Regex antes de transmitir texto final por SSE o enviar mensajes a Telegram. (Util `agent.CleanThinkingTokens` + filtro de streaming `agent.StreamThinkingFilter` aplicados en el loop del agente, SSE y Telegram.)
 
 ### 6. Alternativas de Búsqueda Web
 - **Punto del Relevamiento:** La búsqueda actual depende de scraping básico de DuckDuckGo sin API key (riesgo de rate limits y bloqueos).

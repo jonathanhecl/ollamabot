@@ -139,6 +139,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		var toolCalls []ollama.ToolCall
 		seenTool := map[string]struct{}{}
 		done := false
+		var contentFilter StreamThinkingFilter
 
 		err := a.client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
 			if chunk.Message.Thinking != "" {
@@ -148,9 +149,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 			}
 			if chunk.Message.Content != "" {
+				// Keep raw content for XML tool fallback parsing, but stream a
+				// version with residual thinking tokens (<think>, <thought>, ...) removed.
 				assistantContent.WriteString(chunk.Message.Content)
 				if handler != nil {
-					handler.OnContent(chunk.Message.Content)
+					if emit := contentFilter.Write(chunk.Message.Content); emit != "" {
+						handler.OnContent(emit)
+					}
 				}
 			}
 			for _, call := range chunk.Message.ToolCalls {
@@ -174,6 +179,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 		if !done {
 			return messages, fmt.Errorf("Ollama connection closed unexpectedly")
+		}
+
+		// Emit any content held back by the thinking-token filter.
+		if handler != nil {
+			if emit := contentFilter.Flush(); emit != "" {
+				handler.OnContent(emit)
+			}
 		}
 
 		assistantText := assistantContent.String()
@@ -201,10 +213,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 		}
 
-		// 6. Append assistant message to local trace history
+		// 6. Append assistant message to local trace history.
+		// Strip residual thinking tokens (<think>, <thought>, ...) from the stored
+		// content so downstream consumers (Telegram messages, persisted sessions)
+		// receive clean final text.
+		cleanedText := CleanThinkingTokens(assistantText)
 		assistantMsg := ollama.Message{
 			Role:      "assistant",
-			Content:   assistantText,
+			Content:   cleanedText,
 			Thinking:  assistantThinking.String(),
 			ToolCalls: toolCalls,
 		}
@@ -266,8 +282,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			continue
 		}
 
-		// 8. Handle empty completions
-		if strings.TrimSpace(assistantText) == "" && strings.TrimSpace(assistantThinking.String()) != "" {
+		// 8. Handle empty completions (including content that was purely residual
+		// thinking tokens and is now empty after cleaning).
+		if strings.TrimSpace(cleanedText) == "" && (strings.TrimSpace(assistantThinking.String()) != "" || strings.TrimSpace(assistantText) != "") {
 			if emptyChatErrRetries < 2 {
 				emptyChatErrRetries++
 				messages = append(messages, ollama.Message{

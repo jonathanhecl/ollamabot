@@ -54,7 +54,6 @@ type InlineKeyboardButton struct {
 	CallbackData string `json:"callback_data,omitempty"`
 }
 
-
 type User struct {
 	ID        int64  `json:"id"`
 	IsBot     bool   `json:"is_bot"`
@@ -702,6 +701,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			break
 		}
 	}
+
+	// Strip any residual thinking tokens (<think>, <thought>, ...) before sending.
+	finalAnswer = agent.CleanThinkingTokens(finalAnswer)
 
 	if finalAnswer == "" {
 		b.sendMessage(chatID, "⚠️ I did not generate a text response. Please try again.", msg.MessageID, "")
