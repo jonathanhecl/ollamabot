@@ -550,7 +550,7 @@ if (els.messages) {
       if (!article) return;
       const idx = Array.from(els.messages.children).indexOf(article);
       if (idx === -1) return;
-      const displayedMessages = state.messages.filter(m => m.role !== "system");
+      const displayedMessages = groupMessagesAndTools(state.messages).filter(m => m.role !== "system");
       const msg = displayedMessages[idx];
       if (msg && msg.content) {
         try {
