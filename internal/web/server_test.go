@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/router"
 )
@@ -470,5 +471,70 @@ func TestSelectDefaultOption(t *testing.T) {
 		})
 	}
 }
+
+func TestAuthentication(t *testing.T) {
+	s := &Server{
+		cfg: config.Config{
+			WebPassword: "secretpassword",
+		},
+	}
+
+	handler := s.authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+
+	// Case 1: Unprotected path (/api/health) should not require authentication
+	req := httptest.NewRequest("GET", "/api/health", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("expected unprotected path /api/health to succeed, got %d", w.Result().StatusCode)
+	}
+
+	// Case 2: Protected path (/api/settings) without password should return 401 Unauthorized
+	req = httptest.NewRequest("GET", "/api/settings", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected protected path without auth to return 401, got %d", w.Result().StatusCode)
+	}
+
+	// Case 3: Protected path (/api/settings) with correct X-Web-Password header should succeed
+	req = httptest.NewRequest("GET", "/api/settings", nil)
+	req.Header.Set("X-Web-Password", "secretpassword")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("expected protected path with X-Web-Password header to succeed, got %d", w.Result().StatusCode)
+	}
+
+	// Case 4: Protected path (/api/settings) with correct Bearer token in Authorization header should succeed
+	req = httptest.NewRequest("GET", "/api/settings", nil)
+	req.Header.Set("Authorization", "Bearer secretpassword")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("expected protected path with Authorization header to succeed, got %d", w.Result().StatusCode)
+	}
+
+	// Case 5: Protected path (/api/settings) with incorrect password should return 401 Unauthorized
+	req = httptest.NewRequest("GET", "/api/settings", nil)
+	req.Header.Set("X-Web-Password", "wrongpassword")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected protected path with incorrect password to return 401, got %d", w.Result().StatusCode)
+	}
+
+	// Case 6: Non-API path (e.g. static files like /index.html) should not require authentication
+	req = httptest.NewRequest("GET", "/index.html", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("expected static path /index.html to succeed without auth, got %d", w.Result().StatusCode)
+	}
+}
+
 
 

@@ -29,6 +29,7 @@
           <button id="openProjects" class="ghost-button" type="button">Projects</button>
           <button id="openSettings" class="ghost-button" type="button">Settings</button>
           <button id="openModels" class="primary-button" type="button">Models</button>
+          <button id="logoutBtn" class="ghost-button" type="button" style="display: none;">Log Out</button>
         </div>
       </header>
 
@@ -352,6 +353,10 @@
               Server port
               <input id="webPort" type="text" placeholder="8080" />
             </label>
+            <label style="margin-top: 10px;">
+              Web password
+              <input id="webPassword" type="password" placeholder="Leave blank for no password" />
+            </label>
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
                 <input id="webExposeToggle" type="checkbox" />
@@ -484,6 +489,18 @@
         </div>
       </div>
     </dialog>
+
+    <div id="loginOverlay" class="login-overlay" style="display: none;">
+      <div class="login-card">
+        <h2>OllamaBot Console</h2>
+        <p>Enter password to access the Web Console</p>
+        <form id="loginForm">
+          <input id="loginPassword" type="password" placeholder="Password" required />
+          <button class="primary-button" type="submit" style="width: 100%; margin-top: 10px;">Unlock Console</button>
+          <div id="loginError" class="login-error" style="display: none;"></div>
+        </form>
+      </div>
+    </div>
 
     <script>
       (function () {

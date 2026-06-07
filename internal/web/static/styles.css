@@ -2747,5 +2747,72 @@ textarea {
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
 }
 
+/* Login Overlay Styling */
+.login-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+}
+
+.login-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  padding: 30px;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  text-align: center;
+}
+
+.login-card h2 {
+  margin-top: 0;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-family: "Outfit", sans-serif;
+  font-size: 24px;
+}
+
+.login-card p {
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-card input[type="password"] {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  padding: 12px;
+  border-radius: 6px;
+  color: var(--text);
+  outline: none;
+  font-size: 16px;
+  transition: border-color 0.2s;
+}
+
+.login-card input[type="password"]:focus {
+  border-color: var(--accent);
+}
+
+.login-error {
+  color: var(--bad);
+  font-size: 13px;
+  margin-top: 8px;
+  text-align: left;
+}
+
 
 

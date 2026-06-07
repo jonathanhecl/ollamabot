@@ -95,7 +95,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** La consola expuesta en LAN no tiene autenticación, permitiendo manipulación de archivos del workspace a terceros.
 - **Feedback del Usuario:** *"si, se podria poner un pass por .env para la web"*
 - **Acción:**
-  - [ ] Implementar autenticación básica mediante una variable de entorno `WEB_PASSWORD` (o similar) y una pantalla sencilla de login en la SPA.
+  - [x] Implementar autenticación básica mediante una variable de entorno `WEB_PASSWORD` (o similar) y una pantalla sencilla de login en la SPA.
 
 ### 15. Paneles Visuales de Recursos Persistentes
 - **Punto del Relevamiento:** La interfaz web carece de visores gráficos para el catálogo de Skills y los registros de Memoria Semántica.
