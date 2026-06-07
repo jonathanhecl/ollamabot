@@ -47,6 +47,17 @@ Hecho:
 - Barra de contexto con porcentaje estimado de uso del context window del modelo main: calcula tokens aproximados (caracteres / 4) sobre `context_length` del modelo activo. Cambia de color a naranja (>70%) o rojo (>90%).
 - Memoria a largo plazo local (RAG): sistema de semantic search usando el modelo definido en `OLLAMA_MODEL_EMBED`. Persiste en `memory.jsonl` dentro de una carpeta configurable (`MEMORY_PATH`, default `memory`, relativo al ejecutable). Cada entrada tiene texto, embedding vector, source y timestamp. La busqueda usa cosine similarity en memoria (O(n) eficiente para uso local). El agente gestiona su memoria de forma autonoma via tools: `memory_add` (almacena), `memory_search` (recupera), `memory_delete` (elimina desactualizado), `memory_list` (revisa lo guardado). Un system prompt inyectado en cada conversacion le da criterio: ser proactivo almacenando hechos importantes, buscar cuando se beneficie del contexto pasado, consolidar borrando versiones viejas y guardando nuevas, y priorizar informacion util. Los resultados de tools se devuelven al modelo como tool result para que decida como usarlos. Endpoints REST: `GET /api/memory`, `POST /api/memory`, `POST /api/memory/search`, `DELETE /api/memory/{id}`.
 - Confirmación de acciones riesgosas para tools (Write/Edit) integrada tanto en la interfaz Web (mediante SSE y modal) como en Telegram (usando inline keyboards interactivos), con omisión automática para ediciones que tengan lugar dentro del directorio 'workspace'.
+- Gestión de Modelos y Carga en Caliente: Botón de "Recargar Modelos" en la Web, comando `/reloadmodels` en Telegram y endpoint HTTP para actualizar inventario y guardar snapshot.
+- Alternativas de Búsqueda Web: Soporte configurable para Brave Search API, Tavily Search API y DuckDuckGo con orden de proveedores reordenable en la Web.
+- Detección de Bucles y Manejo de Errores: Inyección estructurada de errores de ejecución de herramientas en mensajes de rol `tool` para permitir la autocorrección y evitar bucles repetitivos.
+- Limpieza de Tokens Residuales de Thinking: Eliminación de tags de razonamiento (`<think>`, `<thought>`, etc.) mediante Regex en respuestas finales y filtro incremental en streaming SSE.
+- Herramienta de Edición Robusta: Reemplazo con fallback de coincidencia difusa (fuzzy match) de líneas y generación de diffs unificados en la herramienta `Edit`.
+- Gestión de Aprobaciones Asíncronas: Suspensión en el loop del agente para esperar respuestas de aprobación en Web (SSE) y Telegram (botones inline) sin timeouts rígidos de 5 minutos.
+- Consolidación y Desduplicación de Memoria: Umbral de similitud coseno de 0.85 y coincidencia de texto exacta para prevenir duplicados en la memoria RAG.
+- Integración en Telegram Bot (Comandos): Comandos `/status` (VRAM y estado de Ollama), `/settings` (cambio de modelos), `/projects` (tareas en curso) y `/memory` (búsqueda RAG).
+- Sleep Mode y GPU Safety: Reflector de Sleep Mode secuencial en segundo plano que comprueba la carga de hardware en Ollama (`/api/ps`) antes de iniciar la iteración para no ralentizar el equipo.
+- Seguridad en Consola Web: Autenticación básica mediante cabecera `X-Web-Password` y variable de entorno `WEB_PASSWORD` con pantalla de login en la SPA.
+- Explorador Visual de Memoria Semántica: Panel en la Web Console para buscar, agregar, borrar y re-indexar manualmente los vectores RAG tras un cambio de modelo de embeddings.
 
 Comandos disponibles:
 
