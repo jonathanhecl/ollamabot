@@ -894,25 +894,36 @@ async function saveRoleModels() {
 
 async function loadModels() {
   els.modelsBody.innerHTML = `<div class="empty">Loading models...</div>`;
-  const response = await fetch("/api/models");
-  const data = await response.json();
-  if (!response.ok) {
-    els.modelsBody.innerHTML = `<div class="empty">${escapeHtml(data.error || "Failed to load models")}</div>`;
-    return;
+  try {
+    const response = await fetch("/api/models");
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.error || "Failed to load models");
+    }
+    state.models = data.models || [];
+    if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
+      const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
+      state.activeModel = preferred?.name || "";
+    }
+    els.baseUrl.textContent = `Ollama: Connected`;
+    els.baseUrl.style.borderColor = "var(--accent)";
+    els.baseUrl.style.color = "var(--accent)";
+    els.version.textContent = `Ollama ${data.ollama_version || "unknown"}`;
+    els.cacheState.textContent = data.from_cache ? "cache fallback" : "live";
+    const loaded = state.models.filter((m) => m.loaded);
+    const vram = loaded.reduce((sum, model) => sum + (model.size_vram || 0), 0);
+    els.memoryState.textContent = `VRAM: ${formatBytes(vram)} (${loaded.length} models)`;
+    renderActive();
+    renderModels();
+  } catch (err) {
+    els.modelsBody.innerHTML = `<div class="empty">${escapeHtml(err.message || err)}</div>`;
+    els.baseUrl.textContent = `Ollama: Offline`;
+    els.baseUrl.style.borderColor = "var(--bad)";
+    els.baseUrl.style.color = "var(--bad)";
+    els.version.textContent = `Disconnected`;
+    els.cacheState.textContent = `offline`;
+    els.memoryState.textContent = `VRAM: -`;
   }
-  state.models = data.models || [];
-  if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
-    const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
-    state.activeModel = preferred?.name || "";
-  }
-  els.baseUrl.textContent = data.base_url;
-  els.version.textContent = `Ollama ${data.ollama_version || "unknown"}`;
-  els.cacheState.textContent = data.from_cache ? "cache fallback" : "live";
-  const loaded = state.models.filter((m) => m.loaded);
-  const vram = loaded.reduce((sum, model) => sum + (model.size_vram || 0), 0);
-  els.memoryState.textContent = `${loaded.length} loaded · ${formatBytes(vram)}`;
-  renderActive();
-  renderModels();
 }
 
 function activeModel() {

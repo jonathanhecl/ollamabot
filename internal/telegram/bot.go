@@ -192,6 +192,7 @@ type Bot struct {
 	sessions         *sessions.Store
 	sessManager      *SessionManager
 	memoryStore      *memory.Store
+	autoMgr          *agent.AutonomousManager
 	apiBase          string
 	httpClient       *http.Client
 	approvalsMu      sync.Mutex
@@ -199,21 +200,31 @@ type Bot struct {
 	clarificationsMu sync.Mutex
 	clarifications   map[string]pendingClarification
 	sleepMgr         *learning.SleepManager
+	envPath          string
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	token := cfg.TelegramBotToken
+	ms := memory.NewStore(cfg.MemoryPath)
 	return &Bot{
 		cfg:            cfg,
 		client:         client,
 		sessions:       sessions.NewStore(cfg.SessionsPath),
 		sessManager:    NewSessionManager(cfg.SessionsPath),
-		memoryStore:    memory.NewStore(cfg.MemoryPath),
+		memoryStore:    ms,
+		autoMgr:        agent.NewAutonomousManager(cfg, client, ms),
 		apiBase:        "https://api.telegram.org/bot" + token,
 		httpClient:     &http.Client{Timeout: 40 * time.Second},
 		approvals:      make(map[string]chan bool),
 		clarifications: make(map[string]pendingClarification),
+		envPath:        ".env",
 	}
+}
+
+func NewBotWithEnv(cfg config.Config, client *ollama.Client, envPath string) *Bot {
+	bot := NewBot(cfg, client)
+	bot.envPath = envPath
+	return bot
 }
 
 func (b *Bot) SetSleepManager(sm *learning.SleepManager) {
@@ -246,6 +257,7 @@ func (b *Bot) Start(ctx context.Context) error {
 		}
 	}
 
+	b.registerCommands()
 	log.Println("[Telegram] Polling loop started successfully")
 	b.sendStartupNotification()
 	offset := int64(0)
@@ -389,10 +401,116 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI autonomous companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/reloadmodels` - Force reload Ollama models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
+	case "/status":
+		ctx := context.Background()
+		version, err := b.client.Version(ctx)
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("🔴 *Ollama Status:* Disconnected\nCould not connect to Ollama at %s:\n%v", b.cfg.OllamaBaseURL, err), 0, "Markdown")
+			return
+		}
+		ps, err := b.client.Ps(ctx)
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("🟢 *Ollama Status:* Connected (%s)\n⚠️ *Error querying loaded models:* %v", version.Version, err), 0, "Markdown")
+			return
+		}
+		
+		var totalVRAM int64
+		var lines []string
+		for _, m := range ps.Models {
+			totalVRAM += m.SizeVRAM
+			lines = append(lines, fmt.Sprintf("• `%s` (VRAM: %s, Expires in: %s)", m.Name, formatBytes(m.SizeVRAM), m.ExpiresAt))
+		}
+
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("🟢 *Ollama Status:* Connected (%s)\n", version.Version))
+		sb.WriteString(fmt.Sprintf("🧠 *VRAM Consumption:* %s\n\n", formatBytes(totalVRAM)))
+		if len(lines) > 0 {
+			sb.WriteString(fmt.Sprintf("*Loaded Models (%d):*\n%s", len(lines), strings.Join(lines, "\n")))
+		} else {
+			sb.WriteString("No models are currently loaded in VRAM.")
+		}
+		b.sendMessage(chatID, sb.String(), 0, "Markdown")
+	case "/settings":
+		text := b.buildSettingsText()
+		markup := b.buildSettingsMarkup()
+		_, _ = b.sendMessageWithMarkup(chatID, text, 0, "Markdown", markup)
+	case "/projects":
+		projects, err := b.autoMgr.ListProjects()
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error listing projects:* %v", err), 0, "Markdown")
+			return
+		}
+		if len(projects) == 0 {
+			b.sendMessage(chatID, "📁 *Active Projects:*\nNo active projects found in workspace.", 0, "Markdown")
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("📁 *Active Projects (%d):*\n\n", len(projects)))
+		for i, proj := range projects {
+			completed := 0
+			for _, todo := range proj.Todos {
+				if todo.Status == "completed" {
+					completed++
+				}
+			}
+			statusEmoji := "⏳"
+			switch proj.Status {
+			case "completed":
+				statusEmoji = "✅"
+			case "pending":
+				statusEmoji = "💤"
+			case "failed":
+				statusEmoji = "❌"
+			}
+			sb.WriteString(fmt.Sprintf("%d. *Project:* `%s`\n", i+1, proj.Name))
+			sb.WriteString(fmt.Sprintf("   • *Goal:* %s\n", proj.Goal))
+			sb.WriteString(fmt.Sprintf("   • *Status:* %s `%s`\n", statusEmoji, proj.Status))
+			sb.WriteString(fmt.Sprintf("   • *Tasks:* %d/%d completed\n", completed, len(proj.Todos)))
+			if proj.CurrentTask != "" {
+				sb.WriteString(fmt.Sprintf("   • *Current:* %s\n", proj.CurrentTask))
+			}
+			sb.WriteString("\n")
+		}
+		b.sendMessage(chatID, strings.TrimSpace(sb.String()), 0, "Markdown")
+	case "/memory":
+		if strings.TrimSpace(args) == "" {
+			b.sendMessage(chatID, "ℹ️ *Usage:* `/memory <query>` to search semantic memory.", 0, "Markdown")
+			return
+		}
+		if b.cfg.OllamaModelEmbed == "" {
+			b.sendMessage(chatID, "⚠️ *Error:* No embedding model is configured.", 0, "Markdown")
+			return
+		}
+		ctx := context.Background()
+		resp, err := b.client.Embed(ctx, ollama.EmbedRequest{
+			Model: b.cfg.OllamaModelEmbed,
+			Input: args,
+		})
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error generating embedding:* %v", err), 0, "Markdown")
+			return
+		}
+		if len(resp.Embeddings) == 0 {
+			b.sendMessage(chatID, "❌ *Error:* Empty embedding response from Ollama.", 0, "Markdown")
+			return
+		}
+		results := b.memoryStore.Search(resp.Embeddings[0], 3)
+		if len(results) == 0 {
+			b.sendMessage(chatID, fmt.Sprintf("💾 *Memory Search for:* \"%s\"\n\nNo matching memory records found.", args), 0, "Markdown")
+			return
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("💾 *Memory Search for:* \"%s\"\n\n", args))
+		for i, r := range results {
+			sb.WriteString(fmt.Sprintf("%d. *Score:* `%.2f`\n", i+1, r.Score))
+			sb.WriteString(fmt.Sprintf("   • *Source:* `%s`\n", r.Entry.Source))
+			sb.WriteString(fmt.Sprintf("   • *Text:* \"%s\"\n\n", r.Entry.Text))
+		}
+		b.sendMessage(chatID, strings.TrimSpace(sb.String()), 0, "Markdown")
 	case "/reloadmodels":
 		b.sendMessage(chatID, "⏳ *Reloading models...* Please wait.", 0, "Markdown")
 
@@ -455,7 +573,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		responseMsg := fmt.Sprintf("✅ *Models reloaded successfully!*\n\n*Detected Models (%d):*\n%s", len(reports), strings.Join(modelNames, "\n"))
 		b.sendMessage(chatID, responseMsg, 0, "Markdown")
 	default:
-		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/reloadmodels` or `/start`", 0, "Markdown")
+		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/start`", 0, "Markdown")
 	}
 }
 
@@ -1176,15 +1294,15 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 	select {
 	case chosenOption := <-ch:
 		statusText := fmt.Sprintf("💬 *Selected option:* %s", chosenOption)
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return chosenOption, nil
 	case <-ctx.Done():
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "", nil)
 		return "", ctx.Err()
 	case <-time.After(5 * time.Minute):
 		chosen := selectDefaultOption(options)
 		statusText := fmt.Sprintf("⚠️ *Timed out:* auto-selected option: %s", chosen)
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return chosen, nil
 	}
 }
@@ -1233,13 +1351,13 @@ func (h *telegramApprovalHandler) RequestApproval(ctx context.Context, toolName 
 		} else {
 			statusText = fmt.Sprintf("❌ *Denied:* skipped `%s`", toolName)
 		}
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return approved, nil
 	case <-ctx.Done():
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "", nil)
 		return false, ctx.Err()
 	case <-time.After(5 * time.Minute):
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* auto-denied after 5 minutes.", "")
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* auto-denied after 5 minutes.", "", nil)
 		return false, fmt.Errorf("approval timeout")
 	}
 }
@@ -1252,6 +1370,15 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 	}
 
 	data := cb.Data
+	if strings.HasPrefix(data, "settings_role:") {
+		b.handleSettingsRoleCallback(cb)
+		return
+	}
+	if strings.HasPrefix(data, "settings_model:") {
+		b.handleSettingsModelCallback(cb)
+		return
+	}
+
 	if strings.HasPrefix(data, "clarify:") {
 		parts := strings.Split(data, ":") // clarify:id:index
 		if len(parts) < 3 {
@@ -1273,7 +1400,7 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 		if !ok {
 			_ = b.answerCallbackQuery(cb.ID, "⚠️ Clarification expired or not found", true)
 			if cb.Message != nil {
-				_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "")
+				_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "", nil)
 			}
 			return
 		}
@@ -1309,7 +1436,7 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 	if !ok {
 		_ = b.answerCallbackQuery(cb.ID, "⚠️ Request expired or not found", true)
 		if cb.Message != nil {
-			_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "")
+			_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* request is no longer active.", "", nil)
 		}
 		return
 	}
@@ -1350,19 +1477,21 @@ func (b *Bot) answerCallbackQuery(callbackQueryID string, text string, showAlert
 	return nil
 }
 
-func (b *Bot) editMessageText(chatID int64, messageID int64, text string, parseMode string) error {
+func (b *Bot) editMessageText(chatID int64, messageID int64, text string, parseMode string, markup *InlineKeyboardMarkup) error {
 	type EditMessageTextRequest struct {
-		ChatID    int64  `json:"chat_id"`
-		MessageID int64  `json:"message_id"`
-		Text      string `json:"text"`
-		ParseMode string `json:"parse_mode,omitempty"`
+		ChatID      int64                 `json:"chat_id"`
+		MessageID   int64                 `json:"message_id"`
+		Text        string                `json:"text"`
+		ParseMode   string                `json:"parse_mode,omitempty"`
+		ReplyMarkup *InlineKeyboardMarkup `json:"reply_markup,omitempty"`
 	}
 
 	reqBody := EditMessageTextRequest{
-		ChatID:    chatID,
-		MessageID: messageID,
-		Text:      text,
-		ParseMode: parseMode,
+		ChatID:      chatID,
+		MessageID:   messageID,
+		Text:        text,
+		ParseMode:   parseMode,
+		ReplyMarkup: markup,
 	}
 
 	payload, err := json.Marshal(reqBody)
@@ -1445,4 +1574,272 @@ func selectDefaultOption(options []string) string {
 		}
 	}
 	return options[0]
+}
+
+func (b *Bot) buildSettingsMarkup() *InlineKeyboardMarkup {
+	return &InlineKeyboardMarkup{
+		InlineKeyboard: [][]InlineKeyboardButton{
+			{
+				{Text: "Configure Main 🤖", CallbackData: "settings_role:main"},
+				{Text: "Configure Vision 👁️", CallbackData: "settings_role:vision"},
+			},
+			{
+				{Text: "Configure Audio 🎙️", CallbackData: "settings_role:audio"},
+				{Text: "Configure Memory 💾", CallbackData: "settings_role:embed"},
+			},
+			{
+				{Text: "Configure Learning 🧠", CallbackData: "settings_role:learn"},
+			},
+			{
+				{Text: "Close ❌", CallbackData: "settings_role:close"},
+			},
+		},
+	}
+}
+
+func (b *Bot) buildSettingsText() string {
+	var sb strings.Builder
+	sb.WriteString("⚙️ *OllamaBot Settings*\n\n")
+	sb.WriteString("*Current Model Configuration:*\n")
+	sb.WriteString(fmt.Sprintf("• 🤖 *Main (Default):* `%s`\n", b.cfg.OllamaDefaultModel))
+	
+	vis := b.cfg.OllamaModelVision
+	if vis == "" {
+		vis = "disabled 🚫"
+	}
+	sb.WriteString(fmt.Sprintf("• 👁️ *Vision:* `%s`\n", vis))
+
+	aud := b.cfg.OllamaModelAudio
+	if aud == "" {
+		aud = "disabled 🚫"
+	}
+	sb.WriteString(fmt.Sprintf("• 🎙️ *Audio:* `%s`\n", aud))
+
+	emb := b.cfg.OllamaModelEmbed
+	if emb == "" {
+		emb = "disabled 🚫"
+	}
+	sb.WriteString(fmt.Sprintf("• 💾 *Memory (Embed):* `%s`\n", emb))
+
+	lrn := b.cfg.OllamaModelLearning
+	if lrn == "" {
+		lrn = "disabled 🚫"
+	}
+	sb.WriteString(fmt.Sprintf("• 🧠 *Learning:* `%s`\n", lrn))
+
+	sb.WriteString("\nSelect a role below to configure its active model:")
+	return sb.String()
+}
+
+func (b *Bot) handleSettingsRoleCallback(cb *CallbackQuery) {
+	chatID := cb.Message.Chat.ID
+	msgID := cb.Message.MessageID
+	role := strings.TrimPrefix(cb.Data, "settings_role:")
+
+	if role == "close" {
+		_ = b.editMessageText(chatID, msgID, "⚙️ *Settings Closed*", "Markdown", nil)
+		_ = b.answerCallbackQuery(cb.ID, "Settings closed", false)
+		return
+	}
+
+	if role == "menu" {
+		text := b.buildSettingsText()
+		markup := b.buildSettingsMarkup()
+		_ = b.editMessageText(chatID, msgID, text, "Markdown", markup)
+		_ = b.answerCallbackQuery(cb.ID, "", false)
+		return
+	}
+
+	// Fetch models
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	tags, err := b.client.Tags(ctx)
+	if err != nil {
+		_ = b.answerCallbackQuery(cb.ID, "❌ Ollama offline or error", true)
+		return
+	}
+
+	var currentModel string
+	switch role {
+	case "main":
+		currentModel = b.cfg.OllamaDefaultModel
+	case "vision":
+		currentModel = b.cfg.OllamaModelVision
+	case "audio":
+		currentModel = b.cfg.OllamaModelAudio
+	case "embed":
+		currentModel = b.cfg.OllamaModelEmbed
+	case "learn":
+		currentModel = b.cfg.OllamaModelLearning
+	}
+	if currentModel == "" {
+		currentModel = "none"
+	}
+
+	var rows [][]InlineKeyboardButton
+	for _, m := range tags.Models {
+		displayName := m.Name
+		// Mark current model
+		if m.Name == currentModel {
+			displayName = "🟢 " + displayName
+		}
+		callbackData := fmt.Sprintf("settings_model:%s:%s", role, m.Name)
+		if len(callbackData) > 64 {
+			// fallback: try using m.Model
+			callbackData = fmt.Sprintf("settings_model:%s:%s", role, m.Model)
+			if len(callbackData) > 64 {
+				// skip or truncate
+				continue
+			}
+		}
+		rows = append(rows, []InlineKeyboardButton{
+			{Text: displayName, CallbackData: callbackData},
+		})
+	}
+
+	// Add "Disable model 🚫" button if not main role
+	if role != "main" {
+		rows = append(rows, []InlineKeyboardButton{
+			{Text: "Disable model 🚫", CallbackData: fmt.Sprintf("settings_model:%s:none", role)},
+		})
+	}
+
+	// Add Back button
+	rows = append(rows, []InlineKeyboardButton{
+		{Text: "⬅️ Back", CallbackData: "settings_role:menu"},
+	})
+
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+
+	var roleName string
+	switch role {
+	case "main":
+		roleName = "Main"
+	case "vision":
+		roleName = "Vision"
+	case "audio":
+		roleName = "Audio"
+	case "embed":
+		roleName = "Memory (Embeddings)"
+	case "learn":
+		roleName = "Learning"
+	}
+
+	text := fmt.Sprintf("⚙️ *Configure Role:* %s\n\nSelect a model below for this capability:", roleName)
+	_ = b.editMessageText(chatID, msgID, text, "Markdown", markup)
+	_ = b.answerCallbackQuery(cb.ID, "", false)
+}
+
+func (b *Bot) handleSettingsModelCallback(cb *CallbackQuery) {
+	chatID := cb.Message.Chat.ID
+	msgID := cb.Message.MessageID
+	data := strings.TrimPrefix(cb.Data, "settings_model:")
+	
+	parts := strings.SplitN(data, ":", 2)
+	if len(parts) < 2 {
+		_ = b.answerCallbackQuery(cb.ID, "⚠️ Invalid callback data", true)
+		return
+	}
+	role := parts[0]
+	modelVal := parts[1]
+	if modelVal == "none" {
+		modelVal = ""
+	}
+
+	b.cfg.OllamaBaseURL = strings.TrimSpace(b.cfg.OllamaBaseURL)
+	
+	switch role {
+	case "main":
+		b.cfg.OllamaDefaultModel = modelVal
+	case "vision":
+		b.cfg.OllamaModelVision = modelVal
+	case "audio":
+		b.cfg.OllamaModelAudio = modelVal
+	case "embed":
+		b.cfg.OllamaModelEmbed = modelVal
+	case "learn":
+		b.cfg.OllamaModelLearning = modelVal
+	}
+
+	envPath := b.envPath
+	if envPath == "" {
+		envPath = ".env"
+	}
+
+	if err := config.SaveBasic(envPath, b.cfg); err != nil {
+		log.Printf("[Telegram] Failed to save basic config: %v", err)
+		_ = b.answerCallbackQuery(cb.ID, "❌ Failed to save config", true)
+		return
+	}
+
+	_ = b.answerCallbackQuery(cb.ID, "✅ Configuration updated!", false)
+
+	// Go back to main settings menu
+	text := b.buildSettingsText()
+	markup := b.buildSettingsMarkup()
+	_ = b.editMessageText(chatID, msgID, text, "Markdown", markup)
+}
+
+func formatBytes(bytes int64) string {
+	const unit = 1024
+	if bytes < unit {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	div, exp := int64(unit), 0
+	for n := bytes / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.2f %cB", float64(bytes)/float64(div), "KMGTPE"[exp])
+}
+
+func (b *Bot) registerCommands() {
+	type BotCommand struct {
+		Command     string `json:"command"`
+		Description string `json:"description"`
+	}
+	type SetMyCommandsRequest struct {
+		Commands []BotCommand `json:"commands"`
+	}
+
+	reqBody := SetMyCommandsRequest{
+		Commands: []BotCommand{
+			{Command: "start", Description: "Display welcome message"},
+			{Command: "new", Description: "Start a new clean session"},
+			{Command: "status", Description: "Monitor VRAM and Ollama status"},
+			{Command: "settings", Description: "Change active models configuration"},
+			{Command: "projects", Description: "List autonomous workspace projects"},
+			{Command: "memory", Description: "Query long-term semantic memory"},
+			{Command: "reloadmodels", Description: "Force reload models inventory"},
+		},
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		log.Printf("[Telegram] Failed to marshal commands: %v", err)
+		return
+	}
+
+	url := b.apiBase + "/setMyCommands"
+	resp, err := b.httpClient.Post(url, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		log.Printf("[Telegram] Failed to register commands with Telegram: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err == nil {
+		if apiResp.OK {
+			log.Println("[Telegram] Commands successfully registered with Menu button")
+		} else {
+			log.Printf("[Telegram] Warning: Failed to register commands: %s", apiResp.Description)
+		}
+	}
 }

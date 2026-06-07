@@ -99,7 +99,7 @@ func run(args []string) error {
 				sleepMgr = learning.NewSleepManager(cfg, client)
 				sleepMgr.Start(ctx)
 			}
-			startTelegramBot(cfg, client, sleepMgr)
+			startTelegramBot(cfg, client, sleepMgr, *envPath)
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
 			if sleepMgr != nil {
@@ -263,7 +263,7 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		sleepMgr.Start(context.Background())
 	}
 
-	startTelegramBot(cfg, client, sleepMgr)
+	startTelegramBot(cfg, client, sleepMgr, envPath)
 	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
 	if sleepMgr != nil {
 		srv.SetSleepManager(sleepMgr)
@@ -271,13 +271,13 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 	return srv.ListenAndServe()
 }
 
-func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager) {
+func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string) {
 	if cfg.TelegramBotToken == "" {
 		return
 	}
 	go func() {
 		log.Println("[Telegram] Starting background Telegram bot service...")
-		bot := telegram.NewBot(cfg, client)
+		bot := telegram.NewBotWithEnv(cfg, client, envPath)
 		if sleepMgr != nil {
 			bot.SetSleepManager(sleepMgr)
 		}

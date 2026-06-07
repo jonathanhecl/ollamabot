@@ -73,7 +73,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Telegram solo cuenta con `/start` y `/new`, sin acceso a configuraciones, memoria ni proyectos.
 - **Feedback del Usuario:** *"si, faltan comandos pero se iran agregando poco a poco"*
 - **Acción:**
-  - [ ] Diseñar y añadir progresivamente comandos:
+  - [x] Diseñar y añadir progresivamente comandos:
     - `/status` para monitorizar VRAM y estado de Ollama.
     - `/settings` para cambiar el modelo activo.
     - `/projects` para consultar las tareas en curso.
