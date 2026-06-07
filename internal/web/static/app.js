@@ -639,6 +639,30 @@ els.sessionList.addEventListener("dblclick", (e) => {
   }
 });
 
+let isCurrentlyConnected = true;
+
+function startHealthCheck() {
+  setInterval(async () => {
+    try {
+      const response = await fetch("/api/health");
+      if (response.ok) {
+        const data = await response.json();
+        updateOllamaStatus(true, data.ollama_version);
+        if (!isCurrentlyConnected) {
+          isCurrentlyConnected = true;
+          loadModels();
+        }
+      } else {
+        updateOllamaStatus(false);
+        isCurrentlyConnected = false;
+      }
+    } catch (err) {
+      updateOllamaStatus(false);
+      isCurrentlyConnected = false;
+    }
+  }, 5000);
+}
+
 bootstrap();
 
 async function bootstrap() {
@@ -652,6 +676,7 @@ async function bootstrap() {
   } else {
     await createSession();
   }
+  startHealthCheck();
 }
 
 function applySidebarState() {

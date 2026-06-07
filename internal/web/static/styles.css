@@ -2902,5 +2902,49 @@ textarea {
   border-color: var(--bad);
 }
 
+/* Premium Settings Input Styles */
+.settings-form-tabbed input[type="text"],
+.settings-form-tabbed input[type="url"],
+.settings-form-tabbed input[type="password"] {
+  width: 100%;
+  min-height: 38px;
+  background: #11140f;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13.5px;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.settings-form-tabbed input[type="text"]:focus,
+.settings-form-tabbed input[type="url"]:focus,
+.settings-form-tabbed input[type="password"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(214, 255, 95, 0.15);
+  background: #141812;
+}
+
+.settings-form-tabbed select {
+  width: 100%;
+  min-height: 38px;
+  background: #11140f;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 8px 12px;
+  font-size: 13.5px;
+  outline: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.settings-form-tabbed select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(214, 255, 95, 0.15);
+  background: #141812;
+}
+
 
 
