@@ -356,9 +356,15 @@ func (b *Bot) handleMessage(msg *Message) {
 		sess, err := b.sessions.Get(sessionID)
 		if err != nil {
 			sessionID = b.startNewSession(chatIDStr)
-		} else if time.Since(sess.UpdatedAt) > 30*time.Minute {
-			sessionID = b.startNewSession(chatIDStr)
-			b.sendMessage(chatID, "⏰ *Session expired due to 30 minutes of inactivity.* Started a new session!", msg.MessageID, "Markdown")
+		} else {
+			expiryMin := b.cfg.TelegramSessionExpiryMin
+			if expiryMin <= 0 {
+				expiryMin = 30
+			}
+			if time.Since(sess.UpdatedAt) > time.Duration(expiryMin)*time.Minute {
+				sessionID = b.startNewSession(chatIDStr)
+				b.sendMessage(chatID, fmt.Sprintf("⏰ *Session expired due to %d minutes of inactivity.* Started a new session!", expiryMin), msg.MessageID, "Markdown")
+			}
 		}
 	}
 
@@ -395,8 +401,12 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 
 func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assistantContent string) {
 	log.Printf("[Telegram Auto-Name] Triggered for session ID: %s, Content length: %d", sessID, len(assistantContent))
+	modelToUse := b.cfg.OllamaModelSubagent
+	if strings.TrimSpace(modelToUse) == "" {
+		modelToUse = b.cfg.OllamaDefaultModel
+	}
 	resp, err := b.client.Chat(ctx, ollama.ChatRequest{
-		Model: b.cfg.OllamaDefaultModel,
+		Model: modelToUse,
 		Messages: []ollama.Message{
 			{
 				Role:    "system",

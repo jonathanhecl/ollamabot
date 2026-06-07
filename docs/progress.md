@@ -65,6 +65,7 @@ Hecho:
 - Botones de Copiar Mensajes y Código: Integración de botones interactivos de copia. Al pasar el mouse por encima de un mensaje, aparece un botón `📋` en la esquina superior derecha para copiar el texto completo en markdown original. Si la respuesta contiene bloques de código, se genera una cabecera premium que muestra el lenguaje de programación y un botón de copia dedicado.
 - Sincronización en Tiempo Real de Telegram y Web UI: Expiración automática de sesiones de Telegram tras 30 minutos de inactividad, auto-generación de títulos tras el primer intercambio y sondeo (polling) en segundo plano en la Web UI cada 2 segundos para sincronizar la lista de sesiones y actualizar los mensajes en tiempo real.
 - Comandos de Sesión en Telegram: Incorporación de los comandos `/sessions` (para listar las últimas 10 sesiones con títulos e IDs) y `/session <ID>` (para cambiar de sesión activa y recuperar el contexto de conversación previo).
+- Panel de Configuración de Sesiones: Nueva pestaña "Sessions" en el diálogo de configuración web, que agrupa el checkbox de Auto-rename session y un campo numérico para personalizar la expiración de la sesión de Telegram en minutos (por defecto 30). Las tareas de generación de título para auto-rename ahora se delegan al modelo de subagent (o al principal si no está configurado), tanto en web como en Telegram.
 
 Comandos disponibles:
 

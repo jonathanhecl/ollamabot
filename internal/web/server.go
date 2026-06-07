@@ -101,6 +101,7 @@ type SettingsResponse struct {
 	SleepModeSubagentsEnabled    bool   `json:"sleep_mode_subagents_enabled"`
 	ModelSubagent                string `json:"model_subagent"`
 	WebPassword                  string `json:"web_password"`
+	TelegramSessionExpiryMin     int    `json:"telegram_session_expiry_min"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -323,6 +324,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
 	s.cfg.SessionAutoName = input.SessionAutoName
+	s.cfg.TelegramSessionExpiryMin = input.TelegramSessionExpiryMin
+	if s.cfg.TelegramSessionExpiryMin <= 0 {
+		s.cfg.TelegramSessionExpiryMin = 30
+	}
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
 	s.cfg.MemoryPath = memoryPath
@@ -1183,6 +1188,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		WebSearchEnabled:             cfg.WebSearchEnabled,
 		ServerExposeNetwork:          cfg.ServerExposeNetwork,
 		SessionAutoName:              cfg.SessionAutoName,
+		TelegramSessionExpiryMin:     cfg.TelegramSessionExpiryMin,
 		ModelDefault:                 cfg.OllamaDefaultModel,
 		ModelVision:                  cfg.OllamaModelVision,
 		ModelAudio:                   cfg.OllamaModelAudio,

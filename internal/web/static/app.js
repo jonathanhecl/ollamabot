@@ -160,6 +160,7 @@ const els = {
   searchProvidersList: document.querySelector("#searchProvidersList"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
+  telegramSessionExpiry: document.querySelector("#telegramSessionExpiry"),
   sleepModeToggle: document.querySelector("#sleepModeToggle"),
   sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
@@ -305,6 +306,7 @@ els.openSettings.addEventListener("click", async () => {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
+  els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
   els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
@@ -1089,6 +1091,7 @@ async function loadSettings() {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
+  els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
 
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
@@ -1184,6 +1187,7 @@ async function saveSettings(event) {
       tavily_search_api_key: tavilyKey,
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
+      telegram_session_expiry_min: parseInt(els.telegramSessionExpiry.value.trim(), 10) || 30,
       server_port: els.webPort.value.trim() || "8080",
       sleep_mode_enabled: els.sleepModeToggle.checked,
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
@@ -2911,11 +2915,12 @@ async function autoGenerateSessionTitle(assistantContent) {
   const id = state.activeSessionId;
   console.log("[Auto-Name] Triggered for session ID:", id, "Content length:", assistantContent?.length);
   try {
+    const modelToUse = state.settings.model_subagent || state.activeModel;
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: state.activeModel,
+        model: modelToUse,
         messages: [
           {
             role: "system",

@@ -327,6 +327,7 @@
           <button type="button" class="tab-btn" data-tab="paths">📁 Paths</button>
           <button type="button" class="tab-btn" data-tab="server">🌐 Server</button>
           <button type="button" class="tab-btn" data-tab="features">🚀 Features</button>
+          <button type="button" class="tab-btn" data-tab="sessions">💬 Sessions</button>
         </aside>
         
         <form id="settingsForm" class="settings-form-tabbed">
@@ -342,12 +343,6 @@
                 <option value="">Default system microphone</option>
               </select>
             </label>
-            <div class="checkbox-row" style="margin-top: 14px;">
-              <label class="think-toggle">
-                <input id="webAutoNameToggle" type="checkbox" />
-                <span>Auto-rename session (first message)</span>
-              </label>
-            </div>
           </div>
           
           <!-- Paths Tab -->
@@ -425,6 +420,20 @@
                 </label>
               </div>
             </div>
+          </div>
+          
+          <!-- Sessions Tab -->
+          <div class="tab-content" id="tab-sessions">
+            <div class="checkbox-row" style="margin-bottom: 14px;">
+              <label class="think-toggle">
+                <input id="webAutoNameToggle" type="checkbox" />
+                <span>Auto-rename session (first message)</span>
+              </label>
+            </div>
+            <label style="margin-top: 14px; display: block;">
+              Telegram Session Expiration (minutes)
+              <input id="telegramSessionExpiry" type="number" min="1" placeholder="30" />
+            </label>
           </div>
           
           <div class="settings-actions">

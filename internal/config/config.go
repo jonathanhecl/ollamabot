@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -19,6 +20,7 @@ type Config struct {
 	OllamaModelEmbed    string
 	TelegramBotToken      string
 	TelegramAuthorizedIDs []string
+	TelegramSessionExpiryMin int
 	ServerPort            string
 	ServerEnabled         bool
 	WebSearchEnabled      bool
@@ -79,6 +81,7 @@ func Load(path string) (Config, error) {
 		SleepModeSubagentsEnabled:    false,
 		OllamaModelSubagent:          "",
 		WebPassword:                  "",
+		TelegramSessionExpiryMin:     30,
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -96,6 +99,11 @@ func Load(path string) (Config, error) {
 	cfg.OllamaModelEmbed = apply("OLLAMA_MODEL_EMBED")
 	cfg.TelegramBotToken = apply("TELEGRAM_BOT_TOKEN")
 	cfg.TelegramAuthorizedIDs = splitCSV(apply("TELEGRAM_AUTHORIZED_IDS"))
+	if value := apply("TELEGRAM_SESSION_EXPIRY_MIN"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil {
+			cfg.TelegramSessionExpiryMin = val
+		}
+	}
 	if value := apply("SERVER_ENABLED"); value != "" {
 		cfg.ServerEnabled = parseBool(value)
 	} else if value := apply("WEB_ENABLED"); value != "" {
@@ -200,13 +208,13 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	if webPort == "" {
 		webPort = "8080"
 	}
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_AUTHORIZED_IDS=\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\nSKILLS_PATH=skills\n", baseURL, serverEnabled, webPort)
+	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_AUTHORIZED_IDS=\nTELEGRAM_SESSION_EXPIRY_MIN=30\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\nSKILLS_PATH=skills\n", baseURL, serverEnabled, webPort)
 	return os.WriteFile(path, []byte(content), 0o600)
 }
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nWEB_PASSWORD=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nWEB_PASSWORD=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -220,6 +228,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.OllamaModelEmbed,
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
+		cfg.TelegramSessionExpiryMin,
 		cfg.Workspace,
 		cfg.SessionsPath,
 		cfg.MemoryPath,
