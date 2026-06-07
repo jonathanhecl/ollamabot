@@ -1978,10 +1978,13 @@ textarea {
 .projects-modal {
   width: min(1080px, calc(100vw - 28px)) !important;
   max-height: min(720px, calc(100vh - 28px)) !important;
-  display: flex;
-  flex-direction: column;
   border-color: rgba(99, 210, 255, 0.25);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(99, 210, 255, 0.05);
+}
+
+.projects-modal[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 .projects-modal-body {
@@ -2705,10 +2708,13 @@ textarea {
 .memory-modal {
   width: min(850px, calc(100vw - 28px)) !important;
   max-height: min(650px, calc(100vh - 28px)) !important;
-  display: flex;
-  flex-direction: column;
   border-color: rgba(214, 255, 95, 0.25);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(214, 255, 95, 0.05);
+}
+
+.memory-modal[open] {
+  display: flex;
+  flex-direction: column;
 }
 
 .memory-modal-body {
