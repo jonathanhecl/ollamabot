@@ -64,6 +64,7 @@ Hecho:
 - Preservación de Claves API al Desactivar: Tanto en el frontend como en el servidor, se evita que las claves de Tavily o Brave Search se borren al desactivar el proveedor o desmarcar la búsqueda web. La clave permanece guardada de forma segura para cuando se reactive.
 - Botones de Copiar Mensajes y Código: Integración de botones interactivos de copia. Al pasar el mouse por encima de un mensaje, aparece un botón `📋` en la esquina superior derecha para copiar el texto completo en markdown original. Si la respuesta contiene bloques de código, se genera una cabecera premium que muestra el lenguaje de programación y un botón de copia dedicado.
 - Sincronización en Tiempo Real de Telegram y Web UI: Expiración automática de sesiones de Telegram tras 30 minutos de inactividad, auto-generación de títulos tras el primer intercambio y sondeo (polling) en segundo plano en la Web UI cada 2 segundos para sincronizar la lista de sesiones y actualizar los mensajes en tiempo real.
+- Comandos de Sesión en Telegram: Incorporación de los comandos `/sessions` (para listar las últimas 10 sesiones con títulos e IDs) y `/session <ID>` (para cambiar de sesión activa y recuperar el contexto de conversación previo).
 
 Comandos disponibles:
 

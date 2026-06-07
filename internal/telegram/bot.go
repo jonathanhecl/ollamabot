@@ -438,7 +438,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
@@ -609,8 +609,54 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 
 		responseMsg := fmt.Sprintf("✅ *Models reloaded successfully!*\n\n*Detected Models (%d):*\n%s", len(reports), strings.Join(modelNames, "\n"))
 		b.sendMessage(chatID, responseMsg, 0, "Markdown")
+	case "/sessions":
+		list, err := b.sessions.List()
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error listing sessions:* %v", err), 0, "Markdown")
+			return
+		}
+		if len(list) == 0 {
+			b.sendMessage(chatID, "📂 *Sessions:* No sessions found.", 0, "Markdown")
+			return
+		}
+		
+		limit := 10
+		if len(list) < limit {
+			limit = len(list)
+		}
+		
+		var sb strings.Builder
+		sb.WriteString("📂 *Recent Sessions (Up to 10):*\n\n")
+		for i := 0; i < limit; i++ {
+			sess := list[i]
+			title := sess.Title
+			if title == "" {
+				title = "Untitled"
+			}
+			timeStr := sess.UpdatedAt.Format("2006-01-02 15:04")
+			sb.WriteString(fmt.Sprintf("%d. *%s*\n   • *ID:* `%s`\n   • *Updated:* %s\n\n", i+1, title, sess.ID, timeStr))
+		}
+		sb.WriteString("To switch to a specific session, type:\n`/session <session_id>`")
+		b.sendMessage(chatID, sb.String(), 0, "Markdown")
+	case "/session":
+		sessionID := strings.TrimSpace(args)
+		if sessionID == "" {
+			b.sendMessage(chatID, "ℹ️ *Usage:* `/session <session_id>` to switch to a specific session.", 0, "Markdown")
+			return
+		}
+		sess, err := b.sessions.Get(sessionID)
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Session not found:* `%s` does not exist.", sessionID), 0, "Markdown")
+			return
+		}
+		title := sess.Title
+		if title == "" {
+			title = "Untitled"
+		}
+		b.sessManager.Set(chatIDStr, sessionID)
+		b.sendMessage(chatID, fmt.Sprintf("🔄 *Switched to session:* \"%s\"\n• *ID:* `%s`", title, sessionID), 0, "Markdown")
 	default:
-		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/start`", 0, "Markdown")
+		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/sessions`, `/session`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/start`", 0, "Markdown")
 	}
 }
 
