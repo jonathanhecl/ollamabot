@@ -990,7 +990,8 @@ async function saveRoleModels() {
       sleep_mode_resume_delay: state.settings.sleep_mode_resume_delay || "10m",
       sleep_mode_subagents_enabled: state.settings.sleep_mode_subagents_enabled || false,
       model_subagent: state.settings.model_subagent || "",
-      model_learning: state.settings.model_learning || "",
+      model_learning: state.learningModel,
+      web_password: state.settings.web_password || "",
     }),
   });
 
