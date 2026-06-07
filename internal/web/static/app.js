@@ -2562,7 +2562,7 @@ async function loadProjects() {
   try {
     const res = await fetch("/api/autonomous/projects");
     if (!res.ok) throw new Error("Failed to load projects");
-    state.projects = await res.json();
+    state.projects = await res.json() || [];
     renderProjectsList();
   } catch (err) {
     els.projectsList.innerHTML = `<div class="empty error">Error: ${err.message}</div>`;
@@ -2571,7 +2571,7 @@ async function loadProjects() {
 
 function renderProjectsList() {
   els.projectsList.innerHTML = "";
-  if (state.projects.length === 0) {
+  if (!state.projects || state.projects.length === 0) {
     els.projectsList.innerHTML = `<div class="empty">No projects active</div>`;
     return;
   }
