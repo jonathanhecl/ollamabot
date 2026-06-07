@@ -2686,4 +2686,20 @@ textarea {
   line-height: 1.4;
 }
 
+/* --- Learning Model Role Style --- */
+.active-role-pill.learning {
+  background: #ff7e40;
+  color: #150800;
+  box-shadow: 0 0 8px rgba(255, 126, 64, 0.4);
+}
+
+.role-btn.active[data-role="learning"] {
+  background: #ff7e40;
+  color: #150800;
+  border-color: #ff7e40;
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(255, 126, 64, 0.35);
+}
+
+
 

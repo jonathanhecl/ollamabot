@@ -4,6 +4,7 @@ const state = {
   visionModel: localStorage.getItem("ollamabot.visionModel") || "",
   audioModel: localStorage.getItem("ollamabot.audioModel") || "",
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
+  learningModel: localStorage.getItem("ollamabot.learningModel") || "",
   messages: [],
   attachments: [],
   settings: {},
@@ -73,7 +74,7 @@ const els = {
   sleepModeToggle: document.querySelector("#sleepModeToggle"),
   sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
-  sleepModeModel: document.querySelector("#sleepModeModel"),
+  sleepModeContainer: document.querySelector("#sleepModeContainer"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
@@ -228,6 +229,13 @@ if (els.webSearchToggle) {
   els.webSearchToggle.addEventListener("change", (e) => {
     if (els.searchProvidersContainer) {
       els.searchProvidersContainer.style.display = e.target.checked ? "block" : "none";
+    }
+  });
+}
+if (els.sleepModeToggle) {
+  els.sleepModeToggle.addEventListener("change", (e) => {
+    if (els.sleepModeContainer) {
+      els.sleepModeContainer.style.display = e.target.checked ? "block" : "none";
     }
   });
 }
@@ -750,9 +758,13 @@ async function loadSettings() {
 
   els.webPort.value = state.settings.server_port || "8080";
   els.sleepModeToggle.checked = !!state.settings.sleep_mode_enabled;
+  els.sleepModeContainer.style.display = state.settings.sleep_mode_enabled ? "block" : "none";
   els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
   els.sleepModeResumeDelay.value = state.settings.sleep_mode_resume_delay || "10m";
-  els.sleepModeModel.value = state.settings.model_learning || "";
+  
+  state.learningModel = state.settings.model_learning || "";
+  localStorage.setItem("ollamabot.learningModel", state.learningModel);
+
   if (state.settings.model_default) {
     state.activeModel = state.settings.model_default;
     localStorage.setItem("ollamabot.mainModel", state.activeModel);
@@ -802,7 +814,7 @@ async function saveSettings(event) {
       sleep_mode_enabled: els.sleepModeToggle.checked,
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
       sleep_mode_resume_delay: els.sleepModeResumeDelay.value.trim(),
-      model_learning: els.sleepModeModel.value.trim(),
+      model_learning: state.learningModel,
     }),
   });
   const data = await response.json();
@@ -881,6 +893,7 @@ function renderActive() {
     { key: "visionModel", label: "vision" },
     { key: "audioModel", label: "audio" },
     { key: "embeddingsModel", label: "embed" },
+    { key: "learningModel", label: "learn" },
   ];
   for (const { key, label } of roleLabels) {
     const name = state[key];
@@ -1000,10 +1013,11 @@ function renderModels() {
     const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
 
     const isMain = model.name === state.activeModel;
+    const isLearning = model.name === state.learningModel;
     const isVision = model.name === state.visionModel || (isMain && !state.visionModel && canVision);
     const isAudio = model.name === state.audioModel || (isMain && !state.audioModel && canAudio);
     const isEmbed = model.name === state.embeddingsModel;
-    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed;
+    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !isLearning;
 
     const card = document.createElement("article");
     card.className = `model-card ${isMain ? "selected" : ""} ${isUseless ? "useless" : ""}`;
@@ -1027,6 +1041,7 @@ function renderModels() {
 
     let activeRolesHtml = "";
     if (isMain) activeRolesHtml += `<span class="active-role-pill main" title="This model is assigned to the MAIN role">Main</span>`;
+    if (isLearning) activeRolesHtml += `<span class="active-role-pill learning" title="This model is assigned to the LEARNING role">Learn</span>`;
     if (isVision) activeRolesHtml += `<span class="active-role-pill vision" title="This model is assigned to the VISION role">Vision</span>`;
     if (isAudio) activeRolesHtml += `<span class="active-role-pill audio" title="This model is assigned to the AUDIO role">Audio</span>`;
     if (isEmbed) activeRolesHtml += `<span class="active-role-pill embed" title="This model is assigned to the EMBEDDINGS role">Embed</span>`;
@@ -1039,6 +1054,7 @@ function renderModels() {
     let roleButtonsHtml = "";
     if (isMainCapable) {
       roleButtonsHtml += `<button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">⚡ Main</button>`;
+      roleButtonsHtml += `<button class="choose role-btn ${isLearning ? "active" : ""}" data-role="learning" data-model="${escapeAttr(model.name)}">🎓 Learn</button>`;
     }
     if (canVision) {
       roleButtonsHtml += `<button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">👁️ Vision</button>`;
@@ -1095,8 +1111,8 @@ function renderModels() {
         renderActive();
         renderModels();
       } else {
-        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : "embeddingsModel";
-        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : "ollamabot.embeddingsModel";
+        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : "embeddingsModel";
+        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : "ollamabot.embeddingsModel";
         if (state[stateKey] === model) {
           state[stateKey] = "";
           localStorage.setItem(lsKey, "");

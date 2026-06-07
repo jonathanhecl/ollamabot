@@ -207,6 +207,33 @@
             Reload Models
           </button>
         </div>
+        
+        <!-- Role Requirements Guide -->
+        <details class="roles-guide" style="width: 100%; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,0.2); margin-top: 10px;">
+          <summary style="cursor: pointer; padding: 8px 12px; font-size: 12px; font-weight: 800; color: var(--accent-2); user-select: none; display: flex; align-items: center; gap: 6px;">📖 Role Requirements Guide</summary>
+          <div style="padding: 12px; font-size: 11.5px; line-height: 1.5; color: var(--muted); border-top: 1px solid var(--line); display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px;">
+            <div>
+              <strong style="color: var(--accent); display: block; margin-bottom: 2px;">⚡ Main</strong>
+              <span>Requires <strong>TEXT</strong> + <strong>TOOLS</strong>. Handles chat, session name generation, and tool execution.</span>
+            </div>
+            <div>
+              <strong style="color: #ff7e40; display: block; margin-bottom: 2px;">🎓 Learn</strong>
+              <span>Requires <strong>TEXT</strong> + <strong>TOOLS</strong>. Reflects on chat history to refine skills during sleep mode. Fallback: Main.</span>
+            </div>
+            <div>
+              <strong style="color: #b18eff; display: block; margin-bottom: 2px;">👁️ Vision</strong>
+              <span>Requires <strong>VISION</strong>. Processes image attachments. Fallback: Main (if capable).</span>
+            </div>
+            <div>
+              <strong style="color: #ffd000; display: block; margin-bottom: 2px;">🔊 Audio</strong>
+              <span>Requires <strong>AUDIO</strong>. Processes voice recordings and audio files. Fallback: Main (if capable).</span>
+            </div>
+            <div>
+              <strong style="color: var(--accent-2); display: block; margin-bottom: 2px;">🔗 Embed</strong>
+              <span>Requires <strong>EMBED</strong>. Used for semantic search, memory vectorization, and indexing.</span>
+            </div>
+          </div>
+        </details>
       </div>
       <div id="modelsBody" class="model-list"></div>
     </dialog>
@@ -302,18 +329,18 @@
                 <span>Enable Sleep Mode (Continuous Learning)</span>
               </label>
             </div>
-            <label style="margin-top: 14px;">
-              Inactivity Threshold
-              <input id="sleepModeInactivity" type="text" placeholder="30m" />
-            </label>
-            <label style="margin-top: 14px;">
-              Resume Delay
-              <input id="sleepModeResumeDelay" type="text" placeholder="10m" />
-            </label>
-            <label style="margin-top: 14px;">
-              Reflector Learning Model
-              <input id="sleepModeModel" type="text" placeholder="e.g. qwen3:8b" />
-            </label>
+
+            <!-- Sleep Mode Options Container -->
+            <div id="sleepModeContainer" style="display: none; margin-top: 10px; border-left: 2px solid var(--line); padding-left: 14px;">
+              <label style="margin-top: 10px; display: grid; gap: 6px;">
+                Inactivity Threshold
+                <input id="sleepModeInactivity" type="text" placeholder="30m" />
+              </label>
+              <label style="margin-top: 10px; display: grid; gap: 6px;">
+                Resume Delay
+                <input id="sleepModeResumeDelay" type="text" placeholder="10m" />
+              </label>
+            </div>
           </div>
           
           <div class="settings-actions">
