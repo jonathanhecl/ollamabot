@@ -994,6 +994,12 @@ async function saveSettings(event) {
     ? (activeProvidersList.length > 0 ? activeProvidersList.join(",") : "ddg")
     : "none";
 
+  const braveActive = providersActive["brave"] && webSearchEnabled;
+  const tavilyActive = providersActive["tavily"] && webSearchEnabled;
+
+  const braveKey = braveActive ? (keys.brave ? keys.brave.trim() : "") : (state.settings.brave_search_api_key || "");
+  const tavilyKey = tavilyActive ? (keys.tavily ? keys.tavily.trim() : "") : (state.settings.tavily_search_api_key || "");
+
   const response = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1008,8 +1014,8 @@ async function saveSettings(event) {
       model_embeddings: state.embeddingsModel,
       web_search_enabled: webSearchEnabled,
       search_providers: searchProvidersCsv,
-      brave_search_api_key: keys.brave ? keys.brave.trim() : "",
-      tavily_search_api_key: keys.tavily ? keys.tavily.trim() : "",
+      brave_search_api_key: braveKey,
+      tavily_search_api_key: tavilyKey,
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
       server_port: els.webPort.value.trim() || "8080",

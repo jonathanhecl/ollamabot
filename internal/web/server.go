@@ -353,18 +353,34 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	} else if rawProviders == "none" || rawProviders == "" {
 		s.cfg.SearchProviders = []string{"none"}
 	}
-	// Brave API key: only update if not masked sentinel
+	// Helper to check if a provider is active in the updated configuration
+	isProviderActive := func(provider string) bool {
+		if !input.WebSearchEnabled {
+			return false
+		}
+		for _, p := range s.cfg.SearchProviders {
+			if p == provider {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Brave API key: only update if not masked sentinel.
+	// Only clear if the provider is active; if inactive, keep the existing key.
 	newKey := strings.TrimSpace(input.BraveSearchAPIKey)
 	if newKey != "" && newKey != "***" {
 		s.cfg.BraveSearchAPIKey = newKey
-	} else if newKey == "" {
+	} else if newKey == "" && isProviderActive("brave") {
 		s.cfg.BraveSearchAPIKey = ""
 	}
-	// Tavily API key: only update if not masked sentinel
+
+	// Tavily API key: only update if not masked sentinel.
+	// Only clear if the provider is active; if inactive, keep the existing key.
 	newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
 	if newTavilyKey != "" && newTavilyKey != "***" {
 		s.cfg.TavilyAPIKey = newTavilyKey
-	} else if newTavilyKey == "" {
+	} else if newTavilyKey == "" && isProviderActive("tavily") {
 		s.cfg.TavilyAPIKey = ""
 	}
 	// Update WebSearchEnabled based on providers
