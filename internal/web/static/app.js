@@ -111,6 +111,7 @@ const state = {
   selectedMicId: localStorage.getItem("ollamabot.selectedMicId") || "",
   audioStream: null,
   modelSearchQuery: "",
+  sessionSearchQuery: "",
   modelActiveFilter: "all",
   sessionIdToDelete: null,
   messageQueue: [],
@@ -168,6 +169,7 @@ const els = {
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
   sessionList: document.querySelector("#sessionList"),
+  sessionSearch: document.querySelector("#sessionSearch"),
   newSessionBtn: document.querySelector("#newSessionBtn"),
   toggleSidebar: document.querySelector("#toggleSidebar"),
   contextFill: document.querySelector("#contextFill"),
@@ -367,6 +369,14 @@ if (searchInput) {
   searchInput.addEventListener("input", (e) => {
     state.modelSearchQuery = e.target.value;
     renderModels();
+  });
+}
+
+// Session filtering wiring
+if (els.sessionSearch) {
+  els.sessionSearch.addEventListener("input", (e) => {
+    state.sessionSearchQuery = e.target.value;
+    renderSessions();
   });
 }
 
@@ -2404,6 +2414,34 @@ async function saveSession() {
   }
 }
 
+function formatRelativeTime(dateString) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  const now = new Date();
+  const diffMs = now - date;
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffMs < 0) {
+    return "just now";
+  }
+  if (diffSecs < 60) {
+    return "just now";
+  } else if (diffMins < 60) {
+    return `${diffMins}m ago`;
+  } else if (diffHours < 24) {
+    return `${diffHours}h ago`;
+  } else if (diffDays === 1) {
+    return "yesterday";
+  } else if (diffDays < 30) {
+    return `${diffDays}d ago`;
+  } else {
+    return date.toLocaleDateString();
+  }
+}
+
 function renderSessions() {
   if (!els.sessionList) return;
   els.sessionList.innerHTML = "";
@@ -2411,12 +2449,27 @@ function renderSessions() {
     els.sessionList.innerHTML = `<div class="empty">No sessions yet</div>`;
     return;
   }
-  for (const sess of state.sessions) {
+
+  const query = (state.sessionSearchQuery || "").toLowerCase().trim();
+  let filtered = state.sessions;
+  if (query) {
+    filtered = filtered.filter(sess =>
+      (sess.title || "Untitled").toLowerCase().includes(query)
+    );
+  }
+
+  if (filtered.length === 0) {
+    els.sessionList.innerHTML = `<div class="empty">No matching sessions</div>`;
+    return;
+  }
+
+  for (const sess of filtered) {
     const btn = document.createElement("button");
     btn.className = `session-item ${sess.id === state.activeSessionId ? "active" : ""}`;
     btn.dataset.id = sess.id;
-    const date = sess.updated_at ? new Date(sess.updated_at).toLocaleDateString() : "";
-    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><button class="session-rename-btn" type="button" title="Rename session">✏️</button></div><span class="session-meta">${escapeHtml(sess.model || "")} · ${escapeHtml(date)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
+    const fullDate = sess.updated_at ? new Date(sess.updated_at).toLocaleString() : "";
+    const relativeDate = sess.updated_at ? formatRelativeTime(sess.updated_at) : "";
+    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><button class="session-rename-btn" type="button" title="Rename session">✏️</button></div><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
     els.sessionList.appendChild(btn);
   }
 }
