@@ -324,11 +324,13 @@ els.openSettings.addEventListener("click", async () => {
   els.webPort.value = state.settings.server_port || "8080";
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
-  try {
-    const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    tempStream.getTracks().forEach(track => track.stop());
-  } catch (e) {
-    console.warn("Could not prompt mic permission on settings open:", e);
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    try {
+      const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      tempStream.getTracks().forEach(track => track.stop());
+    } catch (e) {
+      console.warn("Could not prompt mic permission on settings open:", e);
+    }
   }
   await populateMicrophones();
 });
@@ -1974,7 +1976,7 @@ async function populateMicrophones() {
   }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
-    const audioMics = devices.filter((d) => d.kind === "audioinput");
+    const audioMics = devices.filter((d) => d.kind === "audioinput" && d.deviceId);
     els.micSelect.innerHTML = `<option value="">Default system microphone</option>`;
     for (const mic of audioMics) {
       const option = document.createElement("option");
