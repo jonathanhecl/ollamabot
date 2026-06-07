@@ -24,6 +24,11 @@ type LearningState struct {
 	StateVersion     int       `json:"state_version"`
 }
 
+type Subtask struct {
+	Type     string `json:"type"`      // "analyze_session"
+	TargetID string `json:"target_id"` // Session ID
+}
+
 type SleepManager struct {
 	mu           sync.RWMutex
 	cfg          config.Config
@@ -35,6 +40,7 @@ type SleepManager struct {
 	learnCancel  context.CancelFunc
 	state        LearningState
 	statePath    string
+	taskQueue    []Subtask
 }
 
 func NewSleepManager(cfg config.Config, client *ollama.Client) *SleepManager {
@@ -102,9 +108,45 @@ func (sm *SleepManager) Start(ctx context.Context) {
 					if !isSleeping && !isLearning {
 						sm.mu.Lock()
 						sm.isSleeping = true
+						subagentsEnabled := sm.cfg.SleepModeSubagentsEnabled
+						var queue []Subtask
+						if subagentsEnabled {
+							sessList, err := sm.sessionStore.List()
+							if err == nil {
+								analyzed := make(map[string]bool)
+								for _, id := range sm.state.AnalyzedSessions {
+									analyzed[id] = true
+								}
+								for _, s := range sessList {
+									if !analyzed[s.ID] {
+										queue = append(queue, Subtask{
+											Type:     "analyze_session",
+											TargetID: s.ID,
+										})
+									}
+								}
+							}
+						}
+						sm.taskQueue = queue
 						sm.mu.Unlock()
-						log.Printf("[sleep] System has been idle for %v. Activating sleep mode learning...", now.Sub(lastAct))
-						go sm.runLearningCycle(ctx)
+						
+						log.Printf("[sleep] System has been idle for %v. Activating sleep mode learning (queued subtasks: %d)...", now.Sub(lastAct), len(queue))
+						
+						if subagentsEnabled {
+							sm.processNextQueuedTask(ctx)
+						} else {
+							go sm.runLearningCycle(ctx)
+						}
+					} else if isSleeping && !isLearning {
+						sm.mu.Lock()
+						subagentsEnabled := sm.cfg.SleepModeSubagentsEnabled
+						queueLen := len(sm.taskQueue)
+						sm.mu.Unlock()
+
+						if subagentsEnabled && queueLen > 0 {
+							log.Printf("[sleep] Processing next subagent task sequentially (remaining in queue: %d)...", queueLen)
+							sm.processNextQueuedTask(ctx)
+						}
 					}
 				}
 			}
@@ -122,6 +164,107 @@ func (sm *SleepManager) Pause() {
 	}
 	sm.isLearning = false
 	sm.isSleeping = false
+	sm.taskQueue = nil
+}
+
+func normalizeModelName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if lastSlash := strings.LastIndex(name, "/"); lastSlash != -1 {
+		name = name[lastSlash+1:]
+	}
+	name = strings.TrimSuffix(name, ":latest")
+	return name
+}
+
+func (sm *SleepManager) checkHardwareAndSelectModel(ctx context.Context) (string, error) {
+	sm.mu.RLock()
+	subagentModel := sm.cfg.OllamaModelSubagent
+	learningModel := sm.cfg.OllamaModelLearning
+	defaultModel := sm.cfg.OllamaDefaultModel
+	sm.mu.RUnlock()
+
+	var primaryModel string
+	if subagentModel != "" {
+		primaryModel = subagentModel
+	} else if learningModel != "" {
+		primaryModel = learningModel
+	} else {
+		primaryModel = defaultModel
+	}
+
+	if primaryModel == "" {
+		return "", fmt.Errorf("no default, learning or subagent model configured in ollamabot config")
+	}
+
+	if sm.client == nil {
+		return primaryModel, nil
+	}
+
+	ps, err := sm.client.Ps(ctx)
+	if err != nil {
+		return "", fmt.Errorf("failed to query Ollama loaded models: %w", err)
+	}
+
+	if len(ps.Models) == 0 {
+		return primaryModel, nil
+	}
+
+	modelIsLoaded := func(candidate string) bool {
+		if candidate == "" {
+			return false
+		}
+		candNorm := normalizeModelName(candidate)
+		for _, m := range ps.Models {
+			if normalizeModelName(m.Name) == candNorm {
+				return true
+			}
+		}
+		return false
+	}
+
+	if modelIsLoaded(subagentModel) {
+		return subagentModel, nil
+	}
+	if modelIsLoaded(learningModel) {
+		return learningModel, nil
+	}
+	if modelIsLoaded(defaultModel) {
+		return defaultModel, nil
+	}
+
+	var runningModelNames []string
+	for _, m := range ps.Models {
+		runningModelNames = append(runningModelNames, m.Name)
+	}
+	return "", fmt.Errorf("Ollama has other model(s) loaded (%s) and our models are not in memory; deferring to prevent VRAM swapping", strings.Join(runningModelNames, ", "))
+}
+
+func (sm *SleepManager) processNextQueuedTask(ctx context.Context) {
+	sm.mu.Lock()
+	if len(sm.taskQueue) == 0 {
+		sm.mu.Unlock()
+		return
+	}
+	sm.mu.Unlock()
+
+	modelToUse, err := sm.checkHardwareAndSelectModel(ctx)
+	if err != nil {
+		log.Printf("[sleep] Hardware check / model selection deferred: %v. Retrying in next ticker loop...", err)
+		return
+	}
+
+	sm.mu.Lock()
+	if len(sm.taskQueue) == 0 {
+		sm.mu.Unlock()
+		return
+	}
+	task := sm.taskQueue[0]
+	sm.taskQueue = sm.taskQueue[1:]
+	sm.mu.Unlock()
+
+	if task.Type == "analyze_session" {
+		go sm.runLearningCycleForSessionWithModel(ctx, task.TargetID, modelToUse)
+	}
 }
 
 func (sm *SleepManager) LoadState() {
@@ -168,26 +311,11 @@ func (d *sleepStreamHandler) OnToolResult(name string, result string) {}
 func (d *sleepStreamHandler) OnMediaPreProcessing(content string)    {}
 
 func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
-	sm.mu.Lock()
-	if sm.isLearning {
-		sm.mu.Unlock()
+	modelToUse, err := sm.checkHardwareAndSelectModel(parentCtx)
+	if err != nil {
+		log.Printf("[sleep] Hardware check / model selection deferred for learning cycle: %v. Retrying in next ticker loop...", err)
 		return
 	}
-	sm.isLearning = true
-	ctx, cancel := context.WithCancel(parentCtx)
-	sm.learnCancel = cancel
-	sm.mu.Unlock()
-
-	defer func() {
-		sm.mu.Lock()
-		sm.isLearning = false
-		if sm.learnCancel != nil {
-			sm.learnCancel = nil
-		}
-		sm.mu.Unlock()
-	}()
-
-	log.Println("[sleep] Continuous learning cycle started.")
 
 	sessList, err := sm.sessionStore.List()
 	if err != nil {
@@ -214,6 +342,31 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 		log.Println("[sleep] No new sessions to analyze.")
 		return
 	}
+
+	sm.runLearningCycleForSessionWithModel(parentCtx, sessionToAnalyze, modelToUse)
+}
+
+func (sm *SleepManager) runLearningCycleForSessionWithModel(parentCtx context.Context, sessionToAnalyze string, modelToUse string) {
+	sm.mu.Lock()
+	if sm.isLearning {
+		sm.mu.Unlock()
+		return
+	}
+	sm.isLearning = true
+	ctx, cancel := context.WithCancel(parentCtx)
+	sm.learnCancel = cancel
+	sm.mu.Unlock()
+
+	defer func() {
+		sm.mu.Lock()
+		sm.isLearning = false
+		if sm.learnCancel != nil {
+			sm.learnCancel = nil
+		}
+		sm.mu.Unlock()
+	}()
+
+	log.Printf("[sleep] Continuous learning cycle started for session %s.", sessionToAnalyze)
 
 	sess, err := sm.sessionStore.Get(sessionToAnalyze)
 	if err != nil {
@@ -242,12 +395,18 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 		}
 	}
 
-	learningModel := sm.cfg.OllamaModelLearning
+	learningModel := modelToUse
 	if learningModel == "" {
-		learningModel = sm.cfg.OllamaDefaultModel
+		learningModel = sm.cfg.OllamaModelSubagent
+		if learningModel == "" {
+			learningModel = sm.cfg.OllamaModelLearning
+		}
+		if learningModel == "" {
+			learningModel = sm.cfg.OllamaDefaultModel
+		}
 	}
 	if learningModel == "" {
-		log.Println("[sleep] No default or learning model configured. Aborting cycle.")
+		log.Println("[sleep] No default, learning or subagent model configured. Aborting cycle.")
 		return
 	}
 

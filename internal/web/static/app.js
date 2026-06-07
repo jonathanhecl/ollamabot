@@ -75,6 +75,8 @@ const els = {
   sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
   sleepModeContainer: document.querySelector("#sleepModeContainer"),
+  sleepModeSubagentsToggle: document.querySelector("#sleepModeSubagentsToggle"),
+  sleepModeSubagentModel: document.querySelector("#sleepModeSubagentModel"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
@@ -780,6 +782,8 @@ async function loadSettings() {
   els.sleepModeContainer.style.display = state.settings.sleep_mode_enabled ? "block" : "none";
   els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
   els.sleepModeResumeDelay.value = state.settings.sleep_mode_resume_delay || "10m";
+  els.sleepModeSubagentsToggle.checked = !!state.settings.sleep_mode_subagents_enabled;
+  els.sleepModeSubagentModel.value = state.settings.model_subagent || "";
   
   state.learningModel = state.settings.model_learning || "";
   localStorage.setItem("ollamabot.learningModel", state.learningModel);
@@ -833,6 +837,8 @@ async function saveSettings(event) {
       sleep_mode_enabled: els.sleepModeToggle.checked,
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
       sleep_mode_resume_delay: els.sleepModeResumeDelay.value.trim(),
+      sleep_mode_subagents_enabled: els.sleepModeSubagentsToggle.checked,
+      model_subagent: els.sleepModeSubagentModel.value.trim(),
       model_learning: state.learningModel,
     }),
   });
@@ -874,6 +880,8 @@ async function saveRoleModels() {
       sleep_mode_enabled: state.settings.sleep_mode_enabled || false,
       sleep_mode_inactivity_threshold: state.settings.sleep_mode_inactivity_threshold || "30m",
       sleep_mode_resume_delay: state.settings.sleep_mode_resume_delay || "10m",
+      sleep_mode_subagents_enabled: state.settings.sleep_mode_subagents_enabled || false,
+      model_subagent: state.settings.model_subagent || "",
       model_learning: state.settings.model_learning || "",
     }),
   });

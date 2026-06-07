@@ -89,7 +89,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** El refinamiento en segundo plano de Sleep Mode puede ralentizar el equipo de forma imprevista si el usuario está usando otra app pesada.
 - **Feedback del Usuario:** *"si, la idea de subagentes es tentadora"*
 - **Acción:**
-  - [ ] Diseñar la infraestructura del Reflector de Sleep Mode para que actúe como un subagente de baja prioridad o con límites de CPU/GPU, comprobando la carga de hardware antes de iniciar la iteración.
+  - [x] Diseñar la infraestructura del Reflector de Sleep Mode para que actúe como un subagente de baja prioridad o con límites de CPU/GPU, comprobando la carga de hardware antes de iniciar la iteración.
 
 ### 14. Seguridad en la Consola Web
 - **Punto del Relevamiento:** La consola expuesta en LAN no tiene autenticación, permitiendo manipulación de archivos del workspace a terceros.

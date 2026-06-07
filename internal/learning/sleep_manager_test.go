@@ -2,6 +2,9 @@ package learning
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 func TestNewSleepManager(t *testing.T) {
@@ -145,3 +149,92 @@ func TestAppendToAuditLog(t *testing.T) {
 		t.Errorf("Audit log did not contain expected content. Got:\n%s", content)
 	}
 }
+
+func TestCheckHardwareAndSelectModel(t *testing.T) {
+	var psModels []ollama.RunningModel
+	var psErr error
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/ps" {
+			if psErr != nil {
+				http.Error(w, psErr.Error(), http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ollama.PsResponse{Models: psModels})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+
+	cfg := config.Config{
+		OllamaDefaultModel:   "default-model:latest",
+		OllamaModelLearning:  "learning-model",
+		OllamaModelSubagent:  "subagent-model:1b",
+	}
+
+	sm := NewSleepManager(cfg, client)
+
+	// Case 1: No models loaded. Should return primary preferred model (subagent-model:1b).
+	psModels = nil
+	psErr = nil
+	model, err := sm.checkHardwareAndSelectModel(context.Background())
+	if err != nil {
+		t.Fatalf("Case 1 failed: %v", err)
+	}
+	if model != "subagent-model:1b" {
+		t.Errorf("Case 1: expected subagent-model:1b, got %q", model)
+	}
+
+	// Case 2: Subagent model is loaded (with tag normalization). Should return subagent-model:1b.
+	psModels = []ollama.RunningModel{
+		{Name: "registry.ollama.ai/library/subagent-model:1b"},
+	}
+	model, err = sm.checkHardwareAndSelectModel(context.Background())
+	if err != nil {
+		t.Fatalf("Case 2 failed: %v", err)
+	}
+	if model != "subagent-model:1b" {
+		t.Errorf("Case 2: expected subagent-model:1b, got %q", model)
+	}
+
+	// Case 3: Only learning model is loaded. Should return learning-model.
+	psModels = []ollama.RunningModel{
+		{Name: "learning-model:latest"},
+	}
+	model, err = sm.checkHardwareAndSelectModel(context.Background())
+	if err != nil {
+		t.Fatalf("Case 3 failed: %v", err)
+	}
+	if model != "learning-model" {
+		t.Errorf("Case 3: expected learning-model, got %q", model)
+	}
+
+	// Case 4: Only default model is loaded. Should return default-model:latest.
+	psModels = []ollama.RunningModel{
+		{Name: "default-model"},
+	}
+	model, err = sm.checkHardwareAndSelectModel(context.Background())
+	if err != nil {
+		t.Fatalf("Case 4 failed: %v", err)
+	}
+	if model != "default-model:latest" {
+		t.Errorf("Case 4: expected default-model:latest, got %q", model)
+	}
+
+	// Case 5: A completely different model is loaded. Should return error (defer).
+	psModels = []ollama.RunningModel{
+		{Name: "some-other-model:7b"},
+	}
+	model, err = sm.checkHardwareAndSelectModel(context.Background())
+	if err == nil {
+		t.Error("Case 5: expected error (defer), got nil")
+	}
+	if model != "" {
+		t.Errorf("Case 5: expected empty model name, got %q", model)
+	}
+}
+

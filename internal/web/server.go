@@ -98,6 +98,8 @@ type SettingsResponse struct {
 	SearchProviders              string `json:"search_providers"`    // comma-separated: "brave,ddg"
 	BraveSearchAPIKey            string `json:"brave_search_api_key"` // masked ("***") on GET if set
 	TavilySearchAPIKey           string `json:"tavily_search_api_key"` // masked ("***") on GET if set
+	SleepModeSubagentsEnabled    bool   `json:"sleep_mode_subagents_enabled"`
+	ModelSubagent                string `json:"model_subagent"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -301,6 +303,8 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
 	s.cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
 	s.cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
+	s.cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
+	s.cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
 	// Search providers: parse CSV from UI
 	rawProviders := strings.TrimSpace(input.SearchProviders)
 	if rawProviders != "" && rawProviders != "none" {
@@ -1140,6 +1144,8 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		SearchProviders:              strings.Join(cfg.SearchProviders, ","),
 		BraveSearchAPIKey:            maskedKey,
 		TavilySearchAPIKey:           maskedTavily,
+		SleepModeSubagentsEnabled:    cfg.SleepModeSubagentsEnabled,
+		ModelSubagent:                cfg.OllamaModelSubagent,
 	}
 }
 
