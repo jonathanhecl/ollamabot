@@ -581,8 +581,15 @@ h2 {
 /* --- Tool exec step (execution + result) --- */
 .step-tool-exec {
   border: 1px solid var(--line);
-  padding: 8px;
+  padding: 0;
   background: #12150f;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.step-tool-exec[open] {
+  border-color: rgba(214, 255, 95, 0.18);
 }
 
 .step-tool-exec summary {
@@ -592,6 +599,30 @@ h2 {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 8px 10px;
+  transition: background 0.2s ease;
+  list-style: none;
+  user-select: none;
+}
+
+.step-tool-exec summary::-webkit-details-marker { display: none; }
+.step-tool-exec summary::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.step-tool-exec[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.step-tool-exec summary:hover {
+  background: rgba(214, 255, 95, 0.04);
+}
+
+.step-tool-exec > .step-tool-args,
+.step-tool-exec > .step-tool-result-details {
+  margin: 0 10px 8px;
 }
 
 .step-tool-status {

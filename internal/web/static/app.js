@@ -761,15 +761,19 @@ function startSessionPolling() {
         const activeSessResp = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`);
         if (activeSessResp.ok) {
           const activeSess = await activeSessResp.json();
-          const fetchedMsgs = activeSess.messages || [];
+          const rawMsgs = activeSess.messages || [];
+          const normalized = normalizeRawMessages(rawMsgs);
           
           // Compare with state.messages length or content
-          let msgsChanged = fetchedMsgs.length !== state.messages.length;
+          let msgsChanged = normalized.length !== state.messages.length;
           if (!msgsChanged) {
-            for (let i = 0; i < fetchedMsgs.length; i++) {
-              const msg = typeof fetchedMsgs[i] === "string" ? JSON.parse(fetchedMsgs[i]) : fetchedMsgs[i];
+            for (let i = 0; i < normalized.length; i++) {
+              const msg = normalized[i];
               const stateMsg = state.messages[i];
-              if (!stateMsg || msg.role !== stateMsg.role || msg.content !== stateMsg.content) {
+              if (!stateMsg || 
+                  msg.role !== stateMsg.role || 
+                  msg.content !== stateMsg.content || 
+                  JSON.stringify(msg.steps) !== JSON.stringify(stateMsg.steps)) {
                 msgsChanged = true;
                 break;
               }
@@ -777,48 +781,7 @@ function startSessionPolling() {
           }
           
           if (msgsChanged) {
-            state.messages = fetchedMsgs.map((m) => {
-              const msg = typeof m === "string" ? JSON.parse(m) : m;
-              let steps = msg.steps || [];
-              if (!steps.length) {
-                if (msg.thinking) {
-                  steps.push({ type: "thinking", content: msg.thinking });
-                }
-                const tc = msg.toolCalls || msg.tool_calls || [];
-                const tr = msg.toolResults || msg.tool_results || [];
-                for (const call of tc) {
-                  steps.push({ type: "tool_call", call });
-                }
-                for (const res of tr) {
-                  steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
-                }
-              }
-              return {
-                role: msg.role || "user",
-                content: msg.content || "",
-                steps,
-                images: msg.images || undefined,
-                attachments: (msg.attachments || []).map((att) => {
-                  let url = att.url;
-                  if (!url || url === "undefined") {
-                    if (att.data) {
-                      const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
-                      url = `data:${mime};base64,${att.data}`;
-                    }
-                  }
-                  return {
-                    name: att.name || "",
-                    mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
-                    kind: att.kind || "",
-                    data: att.data || "",
-                    url: url || ""
-                  };
-                }),
-                streaming: false,
-                waiting: false,
-                timestamp: msg.timestamp || "",
-              };
-            });
+            state.messages = normalized;
             renderMessages();
             renderAttachments();
             updateContextBar();
@@ -2131,7 +2094,8 @@ function renderPreProcessingContent(content) {
 
 function renderMessages() {
   els.messages.innerHTML = "";
-  for (const message of state.messages) {
+  const grouped = groupMessagesAndTools(state.messages);
+  for (const message of grouped) {
     if (message.role === "system") continue;
     const div = document.createElement("article");
     const isQueued = message.role === "user" && message.processed === false;
@@ -2235,7 +2199,7 @@ function renderStep(step) {
           <pre class="step-tool-result-text">${resultText}</pre>
         </details>
       ` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
-      return `<details class="step step-tool-exec ${statusClass}" open><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
+      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
     }
     default:
       return "";
@@ -2251,7 +2215,13 @@ function renderLegacyToolResult(tr) {
   const status = tr.status === "running" ? "running..." : "done";
   const statusClass = tr.status === "running" ? "running" : "done";
   const result = tr.result !== null ? escapeHtml(String(tr.result)) : "";
-  return `<details class="step step-tool-exec ${statusClass}" open><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(tr.name || "unknown")} <span class="step-tool-status ${statusClass}">${status}</span></summary><pre class="step-tool-result-text">${result}</pre></details>`;
+  const resultHtml = result ? `
+    <details class="step-tool-result-details">
+      <summary>📄 Show tool response (${formatBytes(result.length)})</summary>
+      <pre class="step-tool-result-text">${result}</pre>
+    </details>
+  ` : "";
+  return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(tr.name || "unknown")} <span class="step-tool-status ${statusClass}">${status}</span></summary>${resultHtml}</details>`;
 }
 
 function addSystemMessage(content) {
@@ -2658,6 +2628,105 @@ async function respondToClarification(id, option) {
   }
 }
 
+function normalizeRawMessages(rawMessages) {
+  return (rawMessages || []).map((m) => {
+    const msg = typeof m === "string" ? JSON.parse(m) : m;
+    let steps = msg.steps || [];
+    if (!steps.length) {
+      if (msg.thinking) {
+        steps.push({ type: "thinking", content: msg.thinking });
+      }
+      const tc = msg.toolCalls || msg.tool_calls || [];
+      const tr = msg.toolResults || msg.tool_results || [];
+      for (const call of tc) {
+        steps.push({ type: "tool_call", call });
+      }
+      for (const res of tr) {
+        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
+      }
+    }
+    return {
+      role: msg.role || "user",
+      name: msg.name || undefined,
+      content: msg.content || "",
+      steps,
+      images: msg.images || undefined,
+      attachments: (msg.attachments || []).map((att) => {
+        let url = att.url;
+        if (!url || url === "undefined") {
+          if (att.data) {
+            const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
+            url = `data:${mime};base64,${att.data}`;
+          }
+        }
+        return {
+          name: att.name || "",
+          mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
+          kind: att.kind || "",
+          data: att.data || "",
+          url: url || ""
+        };
+      }),
+      streaming: false,
+      waiting: false,
+      timestamp: msg.timestamp || "",
+      metrics: msg.metrics || null
+    };
+  });
+}
+
+function groupMessagesAndTools(messages) {
+  const processed = [];
+  for (const msg of messages) {
+    if (msg.role === "tool" || msg.role === "tool_result") {
+      let lastAssistant = null;
+      for (let j = processed.length - 1; j >= 0; j--) {
+        if (processed[j].role === "assistant") {
+          lastAssistant = processed[j];
+          break;
+        }
+      }
+      
+      if (lastAssistant) {
+        let step = lastAssistant.steps.find(s => s.type === "tool_exec" && s.name === msg.name);
+        if (!step) {
+          let tcIdx = lastAssistant.steps.findIndex(s => s.type === "tool_call" && s.call?.function?.name === msg.name);
+          if (tcIdx !== -1) {
+            const tc = lastAssistant.steps[tcIdx];
+            step = {
+              type: "tool_exec",
+              name: msg.name,
+              arguments: tc.call?.function?.arguments,
+              result: msg.content,
+              status: "done"
+            };
+            lastAssistant.steps[tcIdx] = step;
+          } else {
+            step = {
+              type: "tool_exec",
+              name: msg.name,
+              arguments: null,
+              result: msg.content,
+              status: "done"
+            };
+            lastAssistant.steps.push(step);
+          }
+        } else {
+          step.result = msg.content;
+          step.status = "done";
+        }
+      }
+      continue;
+    }
+    
+    processed.push({
+      ...msg,
+      steps: [...(msg.steps || [])]
+    });
+  }
+  return processed;
+}
+
 // ----- Sessions -----
 
 async function loadSessions() {
@@ -2701,50 +2770,7 @@ async function loadSession(id) {
     const sess = await response.json();
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
-    state.messages = (sess.messages || []).map((m) => {
-      // Normalize raw messages back to frontend shape
-      const msg = typeof m === "string" ? JSON.parse(m) : m;
-      // Migrate legacy thinking/toolCalls/toolResults to steps format.
-      let steps = msg.steps || [];
-      if (!steps.length) {
-        if (msg.thinking) {
-          steps.push({ type: "thinking", content: msg.thinking });
-        }
-        const tc = msg.toolCalls || msg.tool_calls || [];
-        const tr = msg.toolResults || msg.tool_results || [];
-        for (const call of tc) {
-          steps.push({ type: "tool_call", call });
-        }
-        for (const res of tr) {
-          steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
-        }
-      }
-      return {
-        role: msg.role || "user",
-        content: msg.content || "",
-        steps,
-        images: msg.images || undefined,
-        attachments: (msg.attachments || []).map((att) => {
-          let url = att.url;
-          if (!url || url === "undefined") {
-            if (att.data) {
-              const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
-              url = `data:${mime};base64,${att.data}`;
-            }
-          }
-          return {
-            name: att.name || "",
-            mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
-            kind: att.kind || "",
-            data: att.data || "",
-            url: url || ""
-          };
-        }),
-        streaming: false,
-        waiting: false,
-        timestamp: msg.timestamp || "",
-      };
-    });
+    state.messages = normalizeRawMessages(sess.messages || []);
     if (sess.model) state.activeModel = sess.model;
     renderMessages();
     renderAttachments();
