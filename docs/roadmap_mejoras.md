@@ -66,8 +66,8 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Tendencia del agente a duplicar recuerdos o no borrar información obsoleta.
 - **Feedback del Usuario:** *"esto seria muy bueno tambien"* (sobre prompts de sistema restrictivos y criterios de consolidación).
 - **Acción:**
-  - [ ] Refinar las instrucciones de sistema de memoria para forzar al agente a buscar primero y consolidar información (borrar registro antiguo antes de añadir el nuevo).
-  - [ ] Implementar lógica interna de desduplicación por similitud umbral en el backend de memoria.
+  - [x] Refinar las instrucciones de sistema de memoria para forzar al agente a buscar primero y consolidar información (borrar registro antiguo antes de añadir el nuevo).
+  - [x] Implementar lógica interna de desduplicación por similitud umbral en el backend de memoria (umbral de similitud coseno de 0.85 y coincidencia de texto exacta y normalizada).
 
 ### 11. Integración en Telegram Bot (Comandos)
 - **Punto del Relevamiento:** Telegram solo cuenta con `/start` y `/new`, sin acceso a configuraciones, memoria ni proyectos.

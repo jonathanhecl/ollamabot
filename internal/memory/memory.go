@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -39,10 +40,43 @@ func NewStore(dir string) *Store {
 	return s
 }
 
-// Add inserts a new entry and persists the store.
+// Add inserts a new entry and persists the store. It automatically removes any existing entries
+// that are highly similar (cosine similarity >= 0.85 or exact text match) to prevent duplication.
 func (s *Store) Add(e Entry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Automatic threshold-based deduplication
+	const similarityThreshold = 0.85
+	var filtered []Entry
+	var removedCount int
+
+	for _, existing := range s.entries {
+		isDuplicate := false
+		normExisting := strings.TrimSpace(strings.ToLower(existing.Text))
+		normNew := strings.TrimSpace(strings.ToLower(e.Text))
+		
+		if normExisting == normNew {
+			isDuplicate = true
+		} else if len(e.Embedding) > 0 && len(existing.Embedding) > 0 {
+			score := cosineSimilarity(e.Embedding, existing.Embedding)
+			if score >= similarityThreshold {
+				isDuplicate = true
+			}
+		}
+
+		if isDuplicate {
+			removedCount++
+		} else {
+			filtered = append(filtered, existing)
+		}
+	}
+
+	if removedCount > 0 {
+		s.entries = filtered
+		s.dirty = true
+	}
+
 	if e.ID == "" {
 		e.ID = fmt.Sprintf("%d", time.Now().UnixNano())
 	}

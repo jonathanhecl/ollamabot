@@ -12,9 +12,9 @@ func TestAddAndSearch(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	// Add entries with known embeddings
+	// Add entries with known embeddings (using similarity < 0.85 to avoid deduplication)
 	e1 := Entry{Text: "Go programming language", Embedding: []float64{1, 0, 0}}
-	e2 := Entry{Text: "Rust programming language", Embedding: []float64{0.9, 0.1, 0}}
+	e2 := Entry{Text: "Rust programming language", Embedding: []float64{0.5, 0.866, 0}}
 	e3 := Entry{Text: "French cuisine recipes", Embedding: []float64{0, 0, 1}}
 
 	if err := store.Add(e1); err != nil {
@@ -90,8 +90,8 @@ func TestListOrder(t *testing.T) {
 	store := NewStore(dir)
 
 	now := time.Now()
-	e1 := Entry{Text: "first", Embedding: []float64{1}, CreatedAt: now.Add(-time.Second)}
-	e2 := Entry{Text: "second", Embedding: []float64{2}, CreatedAt: now}
+	e1 := Entry{Text: "first", Embedding: []float64{1, 0}, CreatedAt: now.Add(-time.Second)}
+	e2 := Entry{Text: "second", Embedding: []float64{0, 1}, CreatedAt: now}
 
 	_ = store.Add(e1)
 	_ = store.Add(e2)
@@ -217,5 +217,51 @@ func TestUpdateEmbeddings(t *testing.T) {
 				t.Fatalf("expected [30, 40], got %v", entry.Embedding)
 			}
 		}
+	}
+}
+
+func TestDeduplication(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	// 1. Test exact text duplicate
+	e1 := Entry{Text: "  User likes apples  ", Embedding: []float64{1.0, 0.0}}
+	e2 := Entry{Text: "user likes apples", Embedding: []float64{1.0, 0.0}}
+
+	_ = store.Add(e1)
+	if store.Count() != 1 {
+		t.Fatalf("expected 1 entry, got %d", store.Count())
+	}
+
+	_ = store.Add(e2)
+	if store.Count() != 1 {
+		t.Fatalf("expected 1 entry after adding exact text duplicate, got %d", store.Count())
+	}
+
+	// Verify that the entry has the new values
+	list := store.List()
+	if list[0].Text != "user likes apples" {
+		t.Fatalf("expected text to be 'user likes apples', got %q", list[0].Text)
+	}
+
+	// 2. Test near-duplicate by vector similarity (threshold >= 0.85)
+	// cosine similarity of [1.0, 0.0] and [0.90, 0.435889894] is 0.90
+	e3 := Entry{Text: "user enjoys apples", Embedding: []float64{0.90, 0.435889894}}
+	_ = store.Add(e3)
+	if store.Count() != 1 {
+		t.Fatalf("expected 1 entry after near-duplicate addition, got %d", store.Count())
+	}
+
+	list = store.List()
+	if list[0].Text != "user enjoys apples" {
+		t.Fatalf("expected 'user enjoys apples' to overwrite previous entry, got %q", list[0].Text)
+	}
+
+	// 3. Test non-duplicate (below threshold)
+	// cosine similarity of [0.90, 0.435889894] and [0.50, 0.8660254] is 0.45 + 0.377 = 0.827, which is < 0.85
+	e4 := Entry{Text: "user eats oranges", Embedding: []float64{0.50, 0.8660254}}
+	_ = store.Add(e4)
+	if store.Count() != 2 {
+		t.Fatalf("expected 2 entries after non-duplicate addition, got %d", store.Count())
 	}
 }
