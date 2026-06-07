@@ -61,6 +61,8 @@ Hecho:
 - Fechas y Horas en Mensajes: Registro automático de marcas de tiempo en mensajes de chat y visualización de burbujas horarias en la esquina inferior derecha de cada mensaje, similar a Telegram.
 - Alineación y Agrupación de Acciones de Sesión: Ubicación del botón de renombrar (lápiz) y eliminar (x) en un contenedor `.session-actions` a la derecha de cada elemento de la barra lateral, alineados horizontalmente con un diseño unificado de 22x22px y efectos hover optimizados.
 - Monitoreo de Estado y Conexión: Comprobación continua (cada 5 segundos) contra el servidor Go y Ollama, actualizando el estado visual a rojo/offline cuando no hay respuesta o el servidor se detiene.
+- Preservación de Claves API al Desactivar: Tanto en el frontend como en el servidor, se evita que las claves de Tavily o Brave Search se borren al desactivar el proveedor o desmarcar la búsqueda web. La clave permanece guardada de forma segura para cuando se reactive.
+- Botones de Copiar Mensajes y Código: Integración de botones interactivos de copia. Al pasar el mouse por encima de un mensaje, aparece un botón `📋` en la esquina superior derecha para copiar el texto completo en markdown original. Si la respuesta contiene bloques de código, se genera una cabecera premium que muestra el lenguaje de programación y un botón de copia dedicado.
 
 Comandos disponibles:
 

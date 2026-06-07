@@ -538,6 +538,55 @@ dropZone.addEventListener("drop", (e) => {
 });
 
 els.newSessionBtn.addEventListener("click", () => createSession());
+
+if (els.messages) {
+  els.messages.addEventListener("click", async (e) => {
+    const copyMsgBtn = e.target.closest(".message-copy-btn");
+    if (copyMsgBtn) {
+      const article = copyMsgBtn.closest(".message");
+      if (!article) return;
+      const idx = Array.from(els.messages.children).indexOf(article);
+      if (idx === -1) return;
+      const displayedMessages = state.messages.filter(m => m.role !== "system");
+      const msg = displayedMessages[idx];
+      if (msg && msg.content) {
+        try {
+          await navigator.clipboard.writeText(msg.content);
+          const originalText = copyMsgBtn.textContent;
+          copyMsgBtn.textContent = "✅";
+          copyMsgBtn.title = "Copied!";
+          setTimeout(() => {
+            copyMsgBtn.textContent = originalText;
+            copyMsgBtn.title = "Copy raw markdown";
+          }, 1500);
+        } catch (err) {
+          console.error("Failed to copy message:", err);
+        }
+      }
+      return;
+    }
+
+    const copyCodeBtn = e.target.closest(".code-block-copy-btn");
+    if (copyCodeBtn) {
+      const wrapper = copyCodeBtn.closest(".code-block-wrapper");
+      if (!wrapper) return;
+      const codeEl = wrapper.querySelector("pre code");
+      if (codeEl) {
+        try {
+          await navigator.clipboard.writeText(codeEl.textContent);
+          const originalText = copyCodeBtn.textContent;
+          copyCodeBtn.textContent = "Copied! ✅";
+          setTimeout(() => {
+            copyCodeBtn.textContent = originalText;
+          }, 1500);
+        } catch (err) {
+          console.error("Failed to copy code block:", err);
+        }
+      }
+      return;
+    }
+  });
+}
 els.toggleSidebar.addEventListener("click", () => {
   state.sidebarCollapsed = !state.sidebarCollapsed;
   localStorage.setItem("ollamabot.sidebarCollapsed", state.sidebarCollapsed ? "true" : "false");
@@ -2016,7 +2065,8 @@ function renderMessages() {
       contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
     }
     const timeHtml = message.timestamp ? `<span class="message-time">${escapeHtml(formatMessageTime(message.timestamp))}</span>` : "";
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${timeHtml}`;
+    const copyHtml = `<button class="message-copy-btn" type="button" title="Copy raw markdown">📋</button>`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${timeHtml}${copyHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -2114,7 +2164,12 @@ function renderMarkdown(text) {
   const html = [];
   for (const line of lines) {
     if (line.startsWith("```")) {
-      html.push(inCode ? "</code></pre>" : "<pre><code>");
+      if (inCode) {
+        html.push("</code></pre></div>");
+      } else {
+        const lang = line.slice(3).trim() || "code";
+        html.push(`<div class="code-block-wrapper"><div class="code-block-header"><span class="code-block-lang">${lang}</span><button class="code-block-copy-btn" type="button" title="Copy code">Copy</button></div><pre><code>`);
+      }
       inCode = !inCode;
       continue;
     }
@@ -2129,7 +2184,7 @@ function renderMarkdown(text) {
     else if (line.trim() === "") html.push("<br>");
     else html.push(`<p>${inlineMd(line)}</p>`);
   }
-  if (inCode) html.push("</code></pre>");
+  if (inCode) html.push("</code></pre></div>");
   return html.join("");
 }
 
