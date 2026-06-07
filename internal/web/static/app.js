@@ -452,19 +452,29 @@ els.imageDialog.addEventListener("keydown", (e) => {
   }
 });
 
-// Close image lightbox on backdrop click (click outside dialog content)
-els.imageDialog.addEventListener("click", (e) => {
-  const rect = els.imageDialog.getBoundingClientRect();
-  const isInDialog = (
-    rect.top <= e.clientY &&
-    e.clientY <= rect.top + rect.height &&
-    rect.left <= e.clientX &&
-    e.clientX <= rect.left + rect.width
-  );
-  if (!isInDialog) {
-    els.imageDialog.close();
-  }
-});
+// Close dialogs on backdrop click (click outside dialog content)
+function setupBackdropClose(dialog) {
+  if (!dialog) return;
+  dialog.addEventListener("click", (e) => {
+    const rect = dialog.getBoundingClientRect();
+    const isInDialog = (
+      rect.top <= e.clientY &&
+      e.clientY <= rect.top + rect.height &&
+      rect.left <= e.clientX &&
+      e.clientX <= rect.left + rect.width
+    );
+    if (!isInDialog) {
+      dialog.close();
+    }
+  });
+}
+
+setupBackdropClose(els.imageDialog);
+setupBackdropClose(els.modelsDialog);
+setupBackdropClose(els.settingsDialog);
+setupBackdropClose(els.memoryDialog);
+setupBackdropClose(els.projectsDialog);
+
 
 const dropZone = document.querySelector(".app");
 dropZone.addEventListener("dragover", (e) => {
