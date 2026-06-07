@@ -1757,6 +1757,7 @@ textarea {
 }
 
 .settings-form-tabbed label input[type="text"],
+.settings-form-tabbed label input[type="number"],
 .settings-form-tabbed label input[type="url"],
 .settings-form-tabbed label select {
   min-height: 40px;
@@ -2906,6 +2907,7 @@ textarea {
 
 /* Premium Settings Input Styles */
 .settings-form-tabbed input[type="text"],
+.settings-form-tabbed input[type="number"],
 .settings-form-tabbed input[type="url"],
 .settings-form-tabbed input[type="password"] {
   width: 100%;
@@ -2920,6 +2922,7 @@ textarea {
 }
 
 .settings-form-tabbed input[type="text"]:focus,
+.settings-form-tabbed input[type="number"]:focus,
 .settings-form-tabbed input[type="url"]:focus,
 .settings-form-tabbed input[type="password"]:focus {
   outline: none;
