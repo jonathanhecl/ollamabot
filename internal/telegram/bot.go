@@ -1242,8 +1242,9 @@ func (b *Bot) sendMessage(chatID int64, text string, replyToID int64, parseMode 
 	}
 
 	if !apiResp.OK {
-		if parseMode != "" && (strings.Contains(apiResp.Description, "parse") || strings.Contains(apiResp.Description, "markdown")) {
-			log.Printf("[Telegram] Warning: markdown parsing failed (%s). Retrying as plain text.", apiResp.Description)
+		log.Printf("[Telegram] sendMessage error: parseMode=%q desc=%q textPreview=%q", parseMode, apiResp.Description, truncate(text, 80))
+		if parseMode != "" && (strings.Contains(apiResp.Description, "parse") || strings.Contains(apiResp.Description, "markdown") || strings.Contains(apiResp.Description, "entity")) {
+			log.Printf("[Telegram] Warning: %s parsing failed (%s). Retrying as plain text.", parseMode, apiResp.Description)
 			return b.sendMessage(chatID, text, replyToID, "")
 		}
 		return 0, fmt.Errorf("telegram api error: %s", apiResp.Description)
@@ -1397,8 +1398,16 @@ func splitMessage(text string, maxLen int) []string {
 	return chunks
 }
 
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // toTelegramHTML converts standard Markdown constructs to Telegram HTML format.
 func toTelegramHTML(text string) string {
+	log.Printf("[Telegram] toTelegramHTML input preview: %s", truncate(text, 120))
 	// 1. Protect code blocks
 	var codeBlocks []string
 	reCodeBlock := regexp.MustCompile("(?s)```(?:\\w*)?\\n?(.*?)```")
@@ -1473,6 +1482,7 @@ func toTelegramHTML(text string) string {
 		text = strings.ReplaceAll(text, fmt.Sprintf("\x00INLINECODE%d\x00", i), fmt.Sprintf("<code>%s</code>", escaped))
 	}
 
+	log.Printf("[Telegram] toTelegramHTML output preview: %s", truncate(text, 120))
 	return text
 }
 
