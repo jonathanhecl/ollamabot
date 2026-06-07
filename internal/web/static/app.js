@@ -196,8 +196,6 @@ const els = {
   reindexMemoryBtn: document.querySelector("#reindexMemoryBtn"),
   reindexStatusArea: document.querySelector("#reindexStatusArea"),
   reindexSpinner: document.querySelector("#reindexSpinner"),
-  newMemoryText: document.querySelector("#newMemoryText"),
-  addMemoryBtn: document.querySelector("#addMemoryBtn"),
   memoryCount: document.querySelector("#memoryCount"),
   currentEmbeddingModel: document.querySelector("#currentEmbeddingModel"),
   memoryListBody: document.querySelector("#memoryListBody"),
@@ -3069,27 +3067,5 @@ els.reindexMemoryBtn.addEventListener("click", async () => {
   }
 });
 
-// Bind manual add memory
-els.addMemoryBtn.addEventListener("click", async () => {
-  const text = els.newMemoryText.value.trim();
-  if (!text) return;
-  try {
-    els.addMemoryBtn.disabled = true;
-    const res = await fetch("/api/memory", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: text, source: "web_explorer" })
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || "Failed to add memory");
-    }
-    els.newMemoryText.value = "";
-    await loadAndRenderMemories();
-  } catch (err) {
-    alert(`Add Memory Error: ${err.message}`);
-  } finally {
-    els.addMemoryBtn.disabled = false;
-  }
-});
+
 
