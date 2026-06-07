@@ -90,6 +90,7 @@ const state = {
   audioModel: localStorage.getItem("ollamabot.audioModel") || "",
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
   learningModel: localStorage.getItem("ollamabot.learningModel") || "",
+  subagentModel: localStorage.getItem("ollamabot.subagentModel") || "",
   messages: [],
   attachments: [],
   settings: {},
@@ -164,7 +165,6 @@ const els = {
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
   sleepModeContainer: document.querySelector("#sleepModeContainer"),
   sleepModeSubagentsToggle: document.querySelector("#sleepModeSubagentsToggle"),
-  sleepModeSubagentModel: document.querySelector("#sleepModeSubagentModel"),
   recordControl: document.querySelector("#recordControl"),
   micSelect: document.querySelector("#micSelect"),
   sidebar: document.querySelector("#sidebar"),
@@ -251,6 +251,19 @@ els.openModels.addEventListener("click", () => {
     if (btn.dataset.filter === "all") btn.classList.add("active");
     else btn.classList.remove("active");
   });
+  // Reset tabs on dialog open
+  const tabListBtn = document.getElementById("modelsTabListBtn");
+  const tabRolesBtn = document.getElementById("modelsTabRolesBtn");
+  const tabListContent = document.getElementById("modelsTabListContent");
+  const tabRolesContent = document.getElementById("modelsTabRolesContent");
+  if (tabListBtn && tabRolesBtn && tabListContent && tabRolesContent) {
+    tabListBtn.style.borderBottom = "2px solid var(--accent)";
+    tabListBtn.style.color = "var(--accent)";
+    tabRolesBtn.style.borderBottom = "2px solid transparent";
+    tabRolesBtn.style.color = "var(--muted)";
+    tabListContent.style.display = "block";
+    tabRolesContent.style.display = "none";
+  }
   renderModels();
   els.modelsDialog.showModal();
 });
@@ -377,6 +390,31 @@ if (els.sessionSearch) {
   els.sessionSearch.addEventListener("input", (e) => {
     state.sessionSearchQuery = e.target.value;
     renderSessions();
+  });
+}
+
+// Models dialog tabs switching wiring
+const tabListBtn = document.getElementById("modelsTabListBtn");
+const tabRolesBtn = document.getElementById("modelsTabRolesBtn");
+const tabListContent = document.getElementById("modelsTabListContent");
+const tabRolesContent = document.getElementById("modelsTabRolesContent");
+if (tabListBtn && tabRolesBtn && tabListContent && tabRolesContent) {
+  tabListBtn.addEventListener("click", () => {
+    tabListBtn.style.borderBottom = "2px solid var(--accent)";
+    tabListBtn.style.color = "var(--accent)";
+    tabRolesBtn.style.borderBottom = "2px solid transparent";
+    tabRolesBtn.style.color = "var(--muted)";
+    tabListContent.style.display = "block";
+    tabRolesContent.style.display = "none";
+  });
+  tabRolesBtn.addEventListener("click", () => {
+    tabRolesBtn.style.borderBottom = "2px solid var(--accent)";
+    tabRolesBtn.style.color = "var(--accent)";
+    tabListBtn.style.borderBottom = "2px solid transparent";
+    tabListBtn.style.color = "var(--muted)";
+    tabListContent.style.display = "none";
+    tabRolesContent.style.display = "block";
+    renderRoleAssignments();
   });
 }
 
@@ -897,7 +935,9 @@ async function loadSettings() {
   els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
   els.sleepModeResumeDelay.value = state.settings.sleep_mode_resume_delay || "10m";
   els.sleepModeSubagentsToggle.checked = !!state.settings.sleep_mode_subagents_enabled;
-  els.sleepModeSubagentModel.value = state.settings.model_subagent || "";
+  
+  state.subagentModel = state.settings.model_subagent || "";
+  localStorage.setItem("ollamabot.subagentModel", state.subagentModel);
   
   state.learningModel = state.settings.model_learning || "";
   localStorage.setItem("ollamabot.learningModel", state.learningModel);
@@ -952,7 +992,7 @@ async function saveSettings(event) {
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
       sleep_mode_resume_delay: els.sleepModeResumeDelay.value.trim(),
       sleep_mode_subagents_enabled: els.sleepModeSubagentsToggle.checked,
-      model_subagent: els.sleepModeSubagentModel.value.trim(),
+      model_subagent: state.subagentModel,
       model_learning: state.learningModel,
       web_password: els.webPassword.value.trim(),
     }),
@@ -1002,7 +1042,7 @@ async function saveRoleModels() {
       sleep_mode_inactivity_threshold: state.settings.sleep_mode_inactivity_threshold || "30m",
       sleep_mode_resume_delay: state.settings.sleep_mode_resume_delay || "10m",
       sleep_mode_subagents_enabled: state.settings.sleep_mode_subagents_enabled || false,
-      model_subagent: state.settings.model_subagent || "",
+      model_subagent: state.subagentModel,
       model_learning: state.learningModel,
       web_password: state.settings.web_password || "",
     }),
@@ -1087,6 +1127,7 @@ function renderActive() {
     { key: "audioModel", label: "audio" },
     { key: "embeddingsModel", label: "embed" },
     { key: "learningModel", label: "learn" },
+    { key: "subagentModel", label: "subagent" },
   ];
   for (const { key, label } of roleLabels) {
     const name = state[key];
@@ -1167,6 +1208,8 @@ function renderModels() {
       const cap = m.capabilities?.embedding;
       return cap === "comprobado" || cap === "inferido";
     });
+  } else if (filter === "subagent") {
+    filteredModels = filteredModels.filter((m) => canBeMain(m));
   }
 
   // Sort models: active first, then useful ones, and useless ones at the very bottom
@@ -1207,10 +1250,11 @@ function renderModels() {
 
     const isMain = model.name === state.activeModel;
     const isLearning = model.name === state.learningModel;
+    const isSubagent = model.name === state.subagentModel;
     const isVision = model.name === state.visionModel || (isMain && !state.visionModel && canVision);
     const isAudio = model.name === state.audioModel || (isMain && !state.audioModel && canAudio);
     const isEmbed = model.name === state.embeddingsModel;
-    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !isLearning;
+    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !isLearning && !isSubagent;
 
     const card = document.createElement("article");
     card.className = `model-card ${isMain ? "selected" : ""} ${isUseless ? "useless" : ""}`;
@@ -1235,6 +1279,7 @@ function renderModels() {
     let activeRolesHtml = "";
     if (isMain) activeRolesHtml += `<span class="active-role-pill main" title="This model is assigned to the MAIN role">Main</span>`;
     if (isLearning) activeRolesHtml += `<span class="active-role-pill learning" title="This model is assigned to the LEARNING role">Learn</span>`;
+    if (isSubagent) activeRolesHtml += `<span class="active-role-pill subagent" title="This model is assigned to the SUBAGENT role" style="background:#ff6ebd;color:#180a13;box-shadow:0 0 8px rgba(255,110,189,0.4);">Subagent</span>`;
     if (isVision) activeRolesHtml += `<span class="active-role-pill vision" title="This model is assigned to the VISION role">Vision</span>`;
     if (isAudio) activeRolesHtml += `<span class="active-role-pill audio" title="This model is assigned to the AUDIO role">Audio</span>`;
     if (isEmbed) activeRolesHtml += `<span class="active-role-pill embed" title="This model is assigned to the EMBEDDINGS role">Embed</span>`;
@@ -1248,6 +1293,7 @@ function renderModels() {
     if (isMainCapable) {
       roleButtonsHtml += `<button class="choose role-btn ${isMain ? "active" : ""}" data-role="main" data-model="${escapeAttr(model.name)}">⚡ Main</button>`;
       roleButtonsHtml += `<button class="choose role-btn ${isLearning ? "active" : ""}" data-role="learning" data-model="${escapeAttr(model.name)}">🎓 Learn</button>`;
+      roleButtonsHtml += `<button class="choose role-btn ${isSubagent ? "active" : ""}" data-role="subagent" data-model="${escapeAttr(model.name)}">🤖 Subagent</button>`;
     }
     if (canVision) {
       roleButtonsHtml += `<button class="choose role-btn ${isVision ? "active" : ""}" data-role="vision" data-model="${escapeAttr(model.name)}">👁️ Vision</button>`;
@@ -1304,8 +1350,8 @@ function renderModels() {
         renderActive();
         renderModels();
       } else {
-        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : "embeddingsModel";
-        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : "ollamabot.embeddingsModel";
+        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : "embeddingsModel";
+        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : "ollamabot.embeddingsModel";
         if (state[stateKey] === model) {
           state[stateKey] = "";
           localStorage.setItem(lsKey, "");
@@ -1317,6 +1363,108 @@ function renderModels() {
         renderActive();
         renderModels();
       }
+    });
+  });
+}
+
+function renderRoleAssignments() {
+  const container = document.getElementById("rolesListBody");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const roles = [
+    {
+      id: "main",
+      name: "⚡ Main",
+      desc: "Handles chat, session name generation, and tool execution. Requires TEXT + TOOLS capability.",
+      value: state.activeModel,
+      required: true,
+      fallback: ""
+    },
+    {
+      id: "learning",
+      name: "🎓 Learn",
+      desc: "Reflects on chat history to refine skills during sleep mode. Requires TEXT + TOOLS. Fallback: Main.",
+      value: state.learningModel,
+      required: false,
+      fallback: "Main model"
+    },
+    {
+      id: "subagent",
+      name: "🤖 Subagent",
+      desc: "Dedicated model used for background tasks and automated execution. Requires TEXT + TOOLS. Fallback: Main.",
+      value: state.subagentModel,
+      required: false,
+      fallback: "Main model"
+    },
+    {
+      id: "vision",
+      name: "👁️ Vision",
+      desc: "Processes image attachments. Requires VISION capability. Fallback: Main (if capable).",
+      value: state.visionModel,
+      required: false,
+      fallback: "Main model (if capable)"
+    },
+    {
+      id: "audio",
+      name: "🔊 Audio",
+      desc: "Processes voice recordings and audio files. Requires AUDIO capability. Fallback: Main (if capable).",
+      value: state.audioModel,
+      required: false,
+      fallback: "Main model (if capable)"
+    },
+    {
+      id: "embeddings",
+      name: "🔗 Embed",
+      desc: "Used for semantic search, memory vectorization, and indexing. Requires EMBED capability.",
+      value: state.embeddingsModel,
+      required: false,
+      fallback: "disabled"
+    }
+  ];
+
+  for (const r of roles) {
+    const card = document.createElement("div");
+    card.className = "role-assignment-card";
+
+    let badgeHtml = "";
+    if (r.value) {
+      badgeHtml = `<span class="role-assignment-badge assigned">${escapeHtml(r.value)}</span>`;
+    } else {
+      badgeHtml = `<span class="role-assignment-badge fallback">${escapeHtml(r.required ? "None selected ⚠️" : "fallback: " + r.fallback)}</span>`;
+    }
+
+    let actionHtml = "";
+    if (!r.required && r.value) {
+      actionHtml = `<button type="button" class="role-unassign-btn" data-role="${escapeAttr(r.id)}">Unassign</button>`;
+    }
+
+    card.innerHTML = `
+      <div class="role-assignment-left">
+        <span class="role-assignment-title">${escapeHtml(r.name)}</span>
+        <span class="role-assignment-desc">${escapeHtml(r.desc)}</span>
+      </div>
+      <div class="role-assignment-right">
+        ${badgeHtml}
+        ${actionHtml}
+      </div>
+    `;
+    container.appendChild(card);
+  }
+
+  container.querySelectorAll(".role-unassign-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const role = btn.dataset.role;
+      const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : "embeddingsModel";
+      const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : "ollamabot.embeddingsModel";
+
+      state[stateKey] = "";
+      localStorage.setItem(lsKey, "");
+
+      saveRoleModels();
+      renderActive();
+      renderModels();
+      renderRoleAssignments();
     });
   });
 }

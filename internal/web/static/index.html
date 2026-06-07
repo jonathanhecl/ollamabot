@@ -264,6 +264,7 @@
               <button type="button" class="filter-btn" data-filter="vision">Vision</button>
               <button type="button" class="filter-btn" data-filter="audio">Audio</button>
               <button type="button" class="filter-btn" data-filter="embeddings">Embed</button>
+              <button type="button" class="filter-btn" data-filter="subagent">Subagent</button>
             </div>
             <button id="reloadModelsBtn" class="primary-button" type="button" style="min-height: 28px; padding: 2px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
               <span class="btn-spinner" id="reloadSpinner" style="display: none;">🌀</span>
@@ -294,6 +295,10 @@
               <div>
                 <strong style="color: var(--accent-2); display: block; margin-bottom: 2px;">🔗 Embed</strong>
                 <span>Requires <strong>EMBED</strong>. Used for semantic search, memory vectorization, and indexing.</span>
+              </div>
+              <div>
+                <strong style="color: #ff6ebd; display: block; margin-bottom: 2px;">🤖 Subagent</strong>
+                <span>Requires <strong>TEXT</strong> + <strong>TOOLS</strong>. Dedicated model used for background tasks and automated execution. Fallback: Main.</span>
               </div>
             </div>
           </details>
@@ -419,10 +424,6 @@
                   <span>Enable Subagents (Sequential Task Queue)</span>
                 </label>
               </div>
-              <label id="sleepModeSubagentModelLabel" style="margin-top: 10px; display: grid; gap: 6px;">
-                Subagent Model
-                <input id="sleepModeSubagentModel" type="text" placeholder="Leave blank to use main/learning model" />
-              </label>
             </div>
           </div>
           
