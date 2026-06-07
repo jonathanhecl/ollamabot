@@ -35,19 +35,19 @@
 
       <section class="status-strip">
         <span id="baseUrl">Ollama</span>
-        <span id="version">version</span>
+        <span id="version" style="display: none;">version</span>
         <span id="memoryState">memory</span>
-        <span id="cacheState">live</span>
-      </section>
-
-      <section id="capabilityBar" class="capability-bar">
-        <div id="capabilityBadges" class="capability-badges"></div>
-        <section id="contextBar" class="context-bar" title="Estimated context usage">
+        <span id="cacheState" style="border-color: var(--accent); color: var(--accent);">ready</span>
+        <section id="contextBar" class="context-bar" title="Estimated context usage" style="margin-left: auto;">
           <div class="context-track">
             <div class="context-fill" id="contextFill"></div>
           </div>
           <span id="contextLabel">0%</span>
         </section>
+      </section>
+
+      <section id="capabilityBar" class="capability-bar" style="display: none;">
+        <div id="capabilityBadges" class="capability-badges"></div>
       </section>
 
       <section id="messages" class="messages"></section>
