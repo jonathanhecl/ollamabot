@@ -395,6 +395,19 @@ func (sm *SleepManager) runLearningCycleForSessionWithModel(parentCtx context.Co
 		}
 	}
 
+	// Build user feedback section from session reactions
+	var feedbackText strings.Builder
+	if len(sess.Feedback) > 0 {
+		feedbackText.WriteString("\n---\nUSER FEEDBACK (emoji reactions on messages):\n")
+		for _, fb := range sess.Feedback {
+			emoji := "👍"
+			if fb.Reaction == "negative" {
+				emoji = "👎"
+			}
+			feedbackText.WriteString(fmt.Sprintf("- Message #%d: %s %s\n", fb.MessageIndex+1, emoji, fb.Reaction))
+		}
+	}
+
 	learningModel := modelToUse
 	if learningModel == "" {
 		learningModel = sm.cfg.OllamaModelSubagent
@@ -418,17 +431,20 @@ Analyze the following conversation history for:
 ---
 CONVERSATION HISTORY:
 %s
----
+%s---
 
 Your goal:
-1. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
-2. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
-3. Call the appropriate tools to make these improvements. You have access to:
+1. Pay special attention to messages marked with user feedback reactions:
+   - A 👎 (negative) indicates the user was unhappy with that response — investigate what went wrong and create/modify skills to prevent the issue.
+   - A 👍 (positive) confirms the approach was good — reinforce those patterns in skills if applicable.
+2. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
+3. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
+4. Call the appropriate tools to make these improvements. You have access to:
    - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management.
    - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
 
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
-Provide a clear final summary of what you did.`, historyText.String())
+Provide a clear final summary of what you did.`, historyText.String(), feedbackText.String())
 
 	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    sm.cfg.SearchProviders,

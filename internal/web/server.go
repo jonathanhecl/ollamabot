@@ -159,6 +159,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
+	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("GET /api/memory", s.handleListMemory)
 	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
@@ -1014,6 +1015,33 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleSessionFeedback(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var input struct {
+		MessageIndex int    `json:"message_index"`
+		Reaction     string `json:"reaction"` // "positive" or "negative"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if input.Reaction != "positive" && input.Reaction != "negative" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("reaction must be 'positive' or 'negative'"))
+		return
+	}
+
+	fb := sessions.Feedback{
+		MessageIndex: input.MessageIndex,
+		Reaction:     input.Reaction,
+		Timestamp:    time.Now(),
+	}
+	if err := s.sessionStore.SaveFeedback(id, fb); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 type addMemoryRequest struct {

@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+// Feedback records a user reaction (thumbs up/down) on a specific message.
+type Feedback struct {
+	MessageIndex int       `json:"message_index"` // Index into the Messages array
+	Reaction     string    `json:"reaction"`      // "positive" or "negative"
+	Timestamp    time.Time `json:"timestamp"`
+}
+
 // Session holds a persisted conversation.
 // Messages are stored in a separate file within the session folder.
 type Session struct {
@@ -18,6 +25,7 @@ type Session struct {
 	Title     string            `json:"title"`
 	Model     string            `json:"model"`
 	Messages  []json.RawMessage `json:"messages,omitempty"`
+	Feedback  []Feedback        `json:"feedback,omitempty"`
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 }
@@ -169,6 +177,22 @@ func (s *Store) Save(sess Session) error {
 // Delete removes a session folder and all its contents.
 func (s *Store) Delete(id string) error {
 	return os.RemoveAll(s.sessionDir(id))
+}
+
+// SaveFeedback appends a feedback entry to an existing session's metadata.
+func (s *Store) SaveFeedback(id string, fb Feedback) error {
+	sess, err := s.readMeta(id)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+	sess.Feedback = append(sess.Feedback, fb)
+	sess.UpdatedAt = time.Now()
+
+	metaData, err := json.MarshalIndent(sess, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(s.sessionMetaPath(id), metaData, 0o644)
 }
 
 func (s *Store) readMeta(id string) (Session, error) {

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -33,9 +34,10 @@ import (
 
 // Telegram API structures
 type Update struct {
-	UpdateID      int64          `json:"update_id"`
-	Message       *Message       `json:"message,omitempty"`
-	CallbackQuery *CallbackQuery `json:"callback_query,omitempty"`
+	UpdateID        int64                  `json:"update_id"`
+	Message         *Message               `json:"message,omitempty"`
+	CallbackQuery   *CallbackQuery         `json:"callback_query,omitempty"`
+	MessageReaction *MessageReactionUpdate `json:"message_reaction,omitempty"`
 }
 
 type CallbackQuery struct {
@@ -52,6 +54,20 @@ type InlineKeyboardMarkup struct {
 type InlineKeyboardButton struct {
 	Text         string `json:"text"`
 	CallbackData string `json:"callback_data,omitempty"`
+}
+
+type MessageReactionUpdate struct {
+	MessageID   int64          `json:"message_id"`
+	Chat        Chat           `json:"chat"`
+	User        *User          `json:"user,omitempty"`
+	Date        int64          `json:"date"`
+	NewReaction []ReactionType `json:"new_reaction"`
+	OldReaction []ReactionType `json:"old_reaction"`
+}
+
+type ReactionType struct {
+	Type  string `json:"type"`  // "emoji" or "custom_emoji"
+	Emoji string `json:"emoji"` // e.g. "👍", "👎"
 }
 
 type User struct {
@@ -201,6 +217,8 @@ type Bot struct {
 	clarifications   map[string]pendingClarification
 	sleepMgr         *learning.SleepManager
 	envPath          string
+	msgIDMu          sync.RWMutex
+	msgIDMap         map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
@@ -217,6 +235,7 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		httpClient:     &http.Client{Timeout: 40 * time.Second},
 		approvals:      make(map[string]chan bool),
 		clarifications: make(map[string]pendingClarification),
+		msgIDMap:       make(map[string]map[int64]int),
 		envPath:        ".env",
 	}
 }
@@ -286,7 +305,7 @@ func (b *Bot) Start(ctx context.Context) error {
 }
 
 func (b *Bot) getUpdates(offset int64) ([]Update, error) {
-	url := fmt.Sprintf("%s/getUpdates?offset=%d&timeout=30", b.apiBase, offset)
+	url := fmt.Sprintf("%s/getUpdates?offset=%d&timeout=30&allowed_updates=%s", b.apiBase, offset, `["message","callback_query","message_reaction"]`)
 	resp, err := b.httpClient.Get(url)
 	if err != nil {
 		return nil, err
@@ -314,6 +333,9 @@ func (b *Bot) handleUpdate(update Update) {
 	}
 	if update.CallbackQuery != nil {
 		b.handleCallbackQuery(update.CallbackQuery)
+	}
+	if update.MessageReaction != nil {
+		b.handleReaction(update.MessageReaction)
 	}
 }
 
@@ -464,7 +486,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			b.sendMessage(chatID, fmt.Sprintf("🟢 *Ollama Status:* Connected (%s)\n⚠️ *Error querying loaded models:* %v", version.Version, err), 0, "Markdown")
 			return
 		}
-		
+
 		var totalVRAM int64
 		var lines []string
 		for _, m := range ps.Models {
@@ -629,12 +651,12 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			b.sendMessage(chatID, "📂 *Sessions:* No sessions found.", 0, "Markdown")
 			return
 		}
-		
+
 		limit := 10
 		if len(list) < limit {
 			limit = len(list)
 		}
-		
+
 		var sb strings.Builder
 		sb.WriteString("📂 *Recent Sessions (Up to 10):*\n\n")
 		for i := 0; i < limit; i++ {
@@ -962,12 +984,92 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	chunks := splitMessage(finalAnswer, 4000)
 	for _, chunk := range chunks {
-		_, _ = b.sendMessage(chatID, chunk, msg.MessageID, "Markdown")
+		sentMsgID, _ := b.sendMessage(chatID, toTelegramMarkdown(chunk), msg.MessageID, "Markdown")
+		if sentMsgID > 0 {
+			// Find the index of the last assistant message in the session
+			lastAssistantIdx := -1
+			for i := len(newRawMessages) - 1; i >= 0; i-- {
+				var m rawMsg
+				if err := json.Unmarshal(newRawMessages[i], &m); err == nil && m.Role == "assistant" {
+					lastAssistantIdx = i
+					break
+				}
+			}
+			if lastAssistantIdx >= 0 {
+				b.msgIDMu.Lock()
+				if b.msgIDMap[chatIDStr] == nil {
+					b.msgIDMap[chatIDStr] = make(map[int64]int)
+				}
+				b.msgIDMap[chatIDStr][sentMsgID] = lastAssistantIdx
+				b.msgIDMu.Unlock()
+			}
+		}
 	}
 
 	if b.cfg.SessionAutoName && userMsgsCount == 1 && assistantMsgsCount == 1 {
 		b.autoGenerateSessionTitle(ctx, sessionID, finalAnswer)
 	}
+}
+
+func (b *Bot) handleReaction(reaction *MessageReactionUpdate) {
+	chatID := reaction.Chat.ID
+	chatIDStr := fmt.Sprintf("%d", chatID)
+
+	// Determine reaction type from new_reaction list
+	var reactionStr string
+	for _, r := range reaction.NewReaction {
+		if r.Type == "emoji" {
+			switch r.Emoji {
+			case "\U0001F44D": // 👍
+				reactionStr = "positive"
+			case "\U0001F44E": // 👎
+				reactionStr = "negative"
+			}
+			if reactionStr != "" {
+				break
+			}
+		}
+	}
+
+	if reactionStr == "" {
+		return // Not a thumbs up/down reaction, ignore
+	}
+
+	// Look up which session this chat belongs to
+	sessionID := b.sessManager.Get(chatIDStr)
+	if sessionID == "" {
+		log.Printf("[Telegram] Reaction on chat %s but no active session found", chatIDStr)
+		return
+	}
+
+	// Look up the message index from our mapping
+	b.msgIDMu.RLock()
+	chatMap, ok := b.msgIDMap[chatIDStr]
+	b.msgIDMu.RUnlock()
+	if !ok {
+		log.Printf("[Telegram] Reaction on chat %s but no message ID map found", chatIDStr)
+		return
+	}
+
+	msgIdx, ok := chatMap[reaction.MessageID]
+	if !ok {
+		log.Printf("[Telegram] Reaction on message %d in chat %s but message not tracked", reaction.MessageID, chatIDStr)
+		return
+	}
+
+	// Save feedback to the session
+	fb := sessions.Feedback{
+		MessageIndex: msgIdx,
+		Reaction:     reactionStr,
+		Timestamp:    time.Now(),
+	}
+
+	if err := b.sessions.SaveFeedback(sessionID, fb); err != nil {
+		log.Printf("[Telegram] Failed to save feedback: %v", err)
+		return
+	}
+
+	log.Printf("[Telegram] Saved %s feedback for message #%d in session %s", reactionStr, msgIdx, sessionID)
 }
 
 func (b *Bot) resolveTelegramMedia(ctx context.Context, mr *router.Router, messages []MediaMessage) ([]ollama.Message, error) {
@@ -1293,6 +1395,27 @@ func splitMessage(text string, maxLen int) []string {
 		chunks = append(chunks, text)
 	}
 	return chunks
+}
+
+// toTelegramMarkdown converts standard Markdown constructs to Telegram's legacy Markdown format.
+func toTelegramMarkdown(text string) string {
+	// Replace **bold** with *bold* (Telegram legacy Markdown only supports single asterisks for bold).
+	reBold := regexp.MustCompile(`\*\*(.+?)\*\*`)
+	text = reBold.ReplaceAllString(text, `*$1*`)
+
+	// Replace bullet points "* " at the start of a line with "• "
+	// to prevent Telegram from interpreting them as bold formatting.
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		leading := line[:len(line)-len(trimmed)]
+		if strings.HasPrefix(trimmed, "* ") {
+			lines[i] = leading + "• " + trimmed[2:]
+		}
+	}
+	text = strings.Join(lines, "\n")
+
+	return text
 }
 
 func (b *Bot) sendStartupNotification() {
@@ -1735,7 +1858,7 @@ func (b *Bot) buildSettingsText() string {
 	sb.WriteString("⚙️ *OllamaBot Settings*\n\n")
 	sb.WriteString("*Current Model Configuration:*\n")
 	sb.WriteString(fmt.Sprintf("• 🤖 *Main (Default):* `%s`\n", b.cfg.OllamaDefaultModel))
-	
+
 	vis := b.cfg.OllamaModelVision
 	if vis == "" {
 		vis = "disabled 🚫"
@@ -1870,7 +1993,7 @@ func (b *Bot) handleSettingsModelCallback(cb *CallbackQuery) {
 	chatID := cb.Message.Chat.ID
 	msgID := cb.Message.MessageID
 	data := strings.TrimPrefix(cb.Data, "settings_model:")
-	
+
 	parts := strings.SplitN(data, ":", 2)
 	if len(parts) < 2 {
 		_ = b.answerCallbackQuery(cb.ID, "⚠️ Invalid callback data", true)
@@ -1883,7 +2006,7 @@ func (b *Bot) handleSettingsModelCallback(cb *CallbackQuery) {
 	}
 
 	b.cfg.OllamaBaseURL = strings.TrimSpace(b.cfg.OllamaBaseURL)
-	
+
 	switch role {
 	case "main":
 		b.cfg.OllamaDefaultModel = modelVal
