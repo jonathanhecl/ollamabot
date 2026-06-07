@@ -118,6 +118,19 @@ func (s *Store) Delete(id string) error {
 	return s.flush()
 }
 
+// UpdateEmbeddings updates the embedding vectors of all matching entries and flushes the store.
+func (s *Store) UpdateEmbeddings(embeddings map[string][]float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, e := range s.entries {
+		if vec, ok := embeddings[e.ID]; ok {
+			s.entries[i].Embedding = vec
+		}
+	}
+	s.dirty = true
+	return s.flush()
+}
+
 // Count returns the number of stored entries.
 func (s *Store) Count() int {
 	s.mu.RLock()

@@ -174,3 +174,48 @@ func TestSearchEmptyQuery(t *testing.T) {
 		t.Fatalf("expected nil results for empty query, got %v", results)
 	}
 }
+
+func TestUpdateEmbeddings(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	e1 := Entry{Text: "first entry", Embedding: []float64{1, 2}}
+	e2 := Entry{Text: "second entry", Embedding: []float64{3, 4}}
+
+	_ = store.Add(e1)
+	_ = store.Add(e2)
+
+	entries := store.List()
+	var id1, id2 string
+	for _, entry := range entries {
+		if entry.Text == "first entry" {
+			id1 = entry.ID
+		} else if entry.Text == "second entry" {
+			id2 = entry.ID
+		}
+	}
+
+	newEmbeddings := map[string][]float64{
+		id1: {10, 20},
+		id2: {30, 40},
+	}
+
+	if err := store.UpdateEmbeddings(newEmbeddings); err != nil {
+		t.Fatalf("UpdateEmbeddings: %v", err)
+	}
+
+	// Load a new store to verify persistence
+	store2 := NewStore(dir)
+	entries2 := store2.List()
+	for _, entry := range entries2 {
+		if entry.Text == "first entry" {
+			if entry.Embedding[0] != 10 || entry.Embedding[1] != 20 {
+				t.Fatalf("expected [10, 20], got %v", entry.Embedding)
+			}
+		} else if entry.Text == "second entry" {
+			if entry.Embedding[0] != 30 || entry.Embedding[1] != 40 {
+				t.Fatalf("expected [30, 40], got %v", entry.Embedding)
+			}
+		}
+	}
+}

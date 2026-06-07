@@ -103,4 +103,4 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Acción:**
   - [ ] Añadir paneles dedicados en la Consola Web para:
     - **Skills:** Ver, editar y crear archivos `SKILL.md` directamente desde la consola.
-    - **Memoria Semántica:** Explorador visual del RAG, con capacidad de buscar y borrar entradas de memoria persistentes.
+    - [x] **Memoria Semántica:** Explorador visual del RAG, con capacidad de buscar y borrar entradas de memoria persistentes, así como re-indexar vectores manualmente tras cambiar de modelo de embeddings.

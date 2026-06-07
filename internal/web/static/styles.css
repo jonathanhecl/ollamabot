@@ -2701,5 +2701,51 @@ textarea {
   box-shadow: 0 0 8px rgba(255, 126, 64, 0.35);
 }
 
+/* --- Semantic Memory Modal / RAG Explorer Styles --- */
+.memory-modal {
+  width: min(850px, calc(100vw - 28px)) !important;
+  max-height: min(650px, calc(100vh - 28px)) !important;
+  display: flex;
+  flex-direction: column;
+  border-color: rgba(214, 255, 95, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(214, 255, 95, 0.05);
+}
+
+.memory-modal-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.memory-table th, 
+.memory-table td {
+  border-bottom: 1px solid var(--line);
+  padding: 10px;
+}
+
+.memory-table tbody tr {
+  transition: background-color 0.15s ease;
+}
+
+.memory-table tbody tr:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+/* Score Badge Styling */
+.score-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+/* warning-border button */
+.warning-border:hover {
+  background: rgba(245, 158, 11, 0.1) !important;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.25);
+}
+
 
 

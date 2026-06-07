@@ -158,6 +158,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/memory", s.handleListMemory)
 	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
+	mux.HandleFunc("POST /api/memory/reindex", s.handleReindexMemory)
 	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
@@ -1044,6 +1045,51 @@ func (s *Server) handleDeleteMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+func (s *Server) handleReindexMemory(w http.ResponseWriter, r *http.Request) {
+	cfg := s.config()
+	embedModel := cfg.OllamaModelEmbed
+	if embedModel == "" {
+		writeError(w, http.StatusServiceUnavailable, errors.New("no embedding model configured"))
+		return
+	}
+
+	entries := s.memoryStore.List()
+	if len(entries) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status": "success",
+			"count":  0,
+			"model":  embedModel,
+		})
+		return
+	}
+
+	// Fetch embeddings sequentially to avoid overloading local Ollama/GPU
+	newEmbeddings := make(map[string][]float64)
+	for _, entry := range entries {
+		resp, err := s.client.Embed(r.Context(), ollama.EmbedRequest{Model: embedModel, Input: entry.Text})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("failed embedding entry '%s': %w", entry.ID, err))
+			return
+		}
+		if len(resp.Embeddings) == 0 {
+			writeError(w, http.StatusInternalServerError, fmt.Errorf("empty embedding response for entry '%s'", entry.ID))
+			return
+		}
+		newEmbeddings[entry.ID] = resp.Embeddings[0]
+	}
+
+	if err := s.memoryStore.UpdateEmbeddings(newEmbeddings); err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("failed updating embeddings: %w", err))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "success",
+		"count":  len(newEmbeddings),
+		"model":  embedModel,
+	})
 }
 
 func writeSSE(w http.ResponseWriter, event string, value any) {

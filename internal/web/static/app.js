@@ -99,6 +99,20 @@ const els = {
   clarificationQuestion: document.querySelector("#clarificationQuestion"),
   clarificationOptionsContainer: document.querySelector("#clarificationOptionsContainer"),
   
+  // Memory DOM Elements
+  openMemory: document.querySelector("#openMemory"),
+  memoryDialog: document.querySelector("#memoryDialog"),
+  memorySearch: document.querySelector("#memorySearch"),
+  testSearchBtn: document.querySelector("#testSearchBtn"),
+  reindexMemoryBtn: document.querySelector("#reindexMemoryBtn"),
+  reindexStatusArea: document.querySelector("#reindexStatusArea"),
+  reindexSpinner: document.querySelector("#reindexSpinner"),
+  newMemoryText: document.querySelector("#newMemoryText"),
+  addMemoryBtn: document.querySelector("#addMemoryBtn"),
+  memoryCount: document.querySelector("#memoryCount"),
+  currentEmbeddingModel: document.querySelector("#currentEmbeddingModel"),
+  memoryListBody: document.querySelector("#memoryListBody"),
+
   // Projects DOM Elements
   openProjects: document.querySelector("#openProjects"),
   projectsDialog: document.querySelector("#projectsDialog"),
@@ -128,6 +142,11 @@ const els = {
   logReaderTitle: document.querySelector("#logReaderTitle"),
   logReaderContent: document.querySelector("#logReaderContent"),
 };
+
+// Bind Memory click handler
+els.openMemory.addEventListener("click", () => {
+  openMemoryExplorer();
+});
 
 // Bind Projects click handler
 els.openProjects.addEventListener("click", () => {
@@ -828,7 +847,11 @@ async function saveSettings(event) {
 }
 
 async function saveRoleModels() {
-  await fetch("/api/settings", {
+  const oldModel = state.settings.model_embeddings || "";
+  const newModel = state.embeddingsModel || "";
+  const changed = oldModel !== newModel;
+
+  const response = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -854,6 +877,19 @@ async function saveRoleModels() {
       model_learning: state.settings.model_learning || "",
     }),
   });
+
+  if (response.ok) {
+    state.settings = await response.json();
+    if (changed && newModel) {
+      setTimeout(() => {
+        if (confirm("The embedding model has changed. This can make existing memory entries unsearchable or inaccurate. It is highly recommended to re-index all memory entries now. Would you like to open the Memory Explorer to do so?")) {
+          // Close models dialog first if open
+          els.modelsDialog.close();
+          openMemoryExplorer();
+        }
+      }, 300);
+    }
+  }
 }
 
 async function loadModels() {
@@ -2743,6 +2779,179 @@ els.backToDetailBtn.addEventListener("click", () => {
     selectProject(state.activeProjectId);
   } else {
     switchProjectsState("welcome");
+  }
+});
+
+
+// --- SEMANTIC MEMORY / RAG EXPLORER ---
+
+async function openMemoryExplorer() {
+  els.memoryDialog.showModal();
+  els.memorySearch.value = "";
+  els.newMemoryText.value = "";
+  els.reindexStatusArea.style.display = "none";
+  await loadAndRenderMemories();
+}
+
+async function loadAndRenderMemories(searchResults = null) {
+  try {
+    els.currentEmbeddingModel.textContent = `Embedding Model: ${state.settings.model_embeddings || "None"}`;
+
+    let entries = [];
+    if (searchResults) {
+      entries = searchResults;
+    } else {
+      const res = await fetch("/api/memory");
+      if (!res.ok) throw new Error("Failed to fetch memories");
+      const data = await res.json();
+      entries = data.entries || [];
+      els.memoryCount.textContent = `Total Entries: ${data.count || 0}`;
+    }
+
+    els.memoryListBody.innerHTML = "";
+    if (entries.length === 0) {
+      els.memoryListBody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 20px; color: var(--muted);">
+            No memory entries found.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    entries.forEach(e => {
+      const hasScore = typeof e.score === "number";
+      const scoreVal = hasScore ? e.score : null;
+      const entryData = e;
+      const id = entryData.id;
+      const text = entryData.text || "";
+      const source = entryData.source || "user";
+      const createdAt = entryData.created_at ? new Date(entryData.created_at).toLocaleString() : "";
+      
+      const scoreBadge = hasScore
+        ? `<span class="score-badge" style="background: ${getScoreBg(scoreVal)}; color: #1e1e1e; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">${scoreVal.toFixed(4)}</span>`
+        : `<span style="color: var(--muted);">-</span>`;
+
+      const tr = document.createElement("tr");
+      tr.style.borderBottom = "1px solid var(--line)";
+      tr.style.height = "36px";
+      tr.innerHTML = `
+        <td style="padding: 8px 10px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(text)}">${escapeHtml(text)}</td>
+        <td style="padding: 8px 10px; color: var(--muted);">${escapeHtml(source)}</td>
+        <td style="padding: 8px 10px; color: var(--muted); font-size: 11.5px;">${createdAt}</td>
+        <td style="padding: 8px 10px; text-align: center;">${scoreBadge}</td>
+        <td style="padding: 8px 10px; text-align: right;">
+          <button class="ghost-button delete-memory-btn" data-id="${id}" style="color: #ff6b6b; border-color: rgba(255,107,107,0.3); font-size: 11px; padding: 2px 8px;" type="button">Delete</button>
+        </td>
+      `;
+      els.memoryListBody.appendChild(tr);
+    });
+
+    // Bind delete handlers
+    els.memoryListBody.querySelectorAll(".delete-memory-btn").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const id = btn.dataset.id;
+        if (!confirm("Are you sure you want to delete this memory entry?")) return;
+        try {
+          const res = await fetch(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
+          if (!res.ok) throw new Error("Could not delete memory entry");
+          await loadAndRenderMemories();
+        } catch (err) {
+          alert(`Error: ${err.message}`);
+        }
+      });
+    });
+
+  } catch (err) {
+    console.error(err);
+    els.memoryListBody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 20px; color: #ff6b6b;">
+          Error loading memories: ${err.message}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+function getScoreBg(score) {
+  if (score >= 0.8) return "#4ade80"; // green
+  if (score >= 0.5) return "#facc15"; // yellow
+  return "#f87171"; // red
+}
+
+// Bind search and test RAG query
+els.testSearchBtn.addEventListener("click", async () => {
+  const query = els.memorySearch.value.trim();
+  if (!query) {
+    // Reset list
+    await loadAndRenderMemories();
+    return;
+  }
+
+  try {
+    els.testSearchBtn.disabled = true;
+    els.testSearchBtn.textContent = "Searching...";
+    const res = await fetch("/api/memory/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: query, top_k: 10 })
+    });
+    if (!res.ok) throw new Error("Similarity search failed");
+    const data = await res.json();
+    await loadAndRenderMemories(data.results || []);
+  } catch (err) {
+    alert(`RAG Search Error: ${err.message}`);
+  } finally {
+    els.testSearchBtn.disabled = false;
+    els.testSearchBtn.textContent = "Test RAG Search";
+  }
+});
+
+// Bind re-indexing manual action
+els.reindexMemoryBtn.addEventListener("click", async () => {
+  if (!confirm("This will re-index all memory entries using the current embedding model. Continue?")) return;
+  try {
+    els.reindexMemoryBtn.disabled = true;
+    els.reindexStatusArea.style.display = "block";
+    els.reindexStatusArea.querySelector(".status-text").textContent = "Re-indexing memories sequentially on Ollama...";
+
+    const res = await fetch("/api/memory/reindex", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Reindexing failed");
+
+    alert(`Successfully re-indexed ${data.count} memory entries using model: ${data.model}`);
+    await loadAndRenderMemories();
+  } catch (err) {
+    alert(`Reindexing Error: ${err.message}`);
+  } finally {
+    els.reindexStatusArea.style.display = "none";
+    els.reindexMemoryBtn.disabled = false;
+  }
+});
+
+// Bind manual add memory
+els.addMemoryBtn.addEventListener("click", async () => {
+  const text = els.newMemoryText.value.trim();
+  if (!text) return;
+  try {
+    els.addMemoryBtn.disabled = true;
+    const res = await fetch("/api/memory", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: text, source: "web_explorer" })
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to add memory");
+    }
+    els.newMemoryText.value = "";
+    await loadAndRenderMemories();
+  } catch (err) {
+    alert(`Add Memory Error: ${err.message}`);
+  } finally {
+    els.addMemoryBtn.disabled = false;
   }
 });
 
