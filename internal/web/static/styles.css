@@ -780,6 +780,20 @@ pre {
   padding: 1px 4px;
 }
 
+.markdown a {
+  color: var(--accent-2);
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 1px dashed rgba(99, 210, 255, 0.4);
+  transition: all 0.2s ease;
+}
+
+.markdown a:hover {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  text-decoration: none;
+}
+
 .li {
   padding-left: 8px;
 }
