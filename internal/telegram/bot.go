@@ -634,7 +634,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 
 	// 8. Instantiate agent registry and loop
-	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed)
+	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed, tools.SearchConfig{
+		Providers:    b.cfg.SearchProviders,
+		BraveAPIKey:  b.cfg.BraveSearchAPIKey,
+		TavilyAPIKey: b.cfg.TavilyAPIKey,
+	})
 	registry.SetApprovalHandler(&telegramApprovalHandler{
 		bot:    b,
 		chatID: chatID,

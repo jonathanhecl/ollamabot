@@ -23,7 +23,7 @@ func (m *mockClarificationHandler) RequestClarification(ctx context.Context, que
 }
 
 func TestClarificationHandler(t *testing.T) {
-	registry := NewRegistry(false, ".", nil, nil, "")
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
 	handler := &mockClarificationHandler{response: "Option B"}
 	registry.SetClarificationHandler(handler)
 

@@ -65,7 +65,9 @@ const els = {
   sessionsPath: document.querySelector("#sessionsPath"),
   memoryPath: document.querySelector("#memoryPath"),
   webPort: document.querySelector("#webPort"),
-  webSearchSelect: document.querySelector("#webSearchSelect"),
+  webSearchToggle: document.querySelector("#webSearchToggle"),
+  searchProvidersContainer: document.querySelector("#searchProvidersContainer"),
+  searchProvidersList: document.querySelector("#searchProvidersList"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
   sleepModeToggle: document.querySelector("#sleepModeToggle"),
@@ -186,7 +188,30 @@ els.openSettings.addEventListener("click", async () => {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
-  els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
+  const searchEnabled = !!state.settings.web_search_enabled;
+  els.webSearchToggle.checked = searchEnabled;
+  els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
+
+  const providersCsv = state.settings.search_providers || "";
+  const parts = providersCsv.split(",").map(p => p.trim()).filter(Boolean);
+  const activeMap = { brave: false, tavily: false, ddg: true };
+  parts.forEach(p => {
+    if (p === "brave" || p === "tavily" || p === "ddg") {
+      activeMap[p] = true;
+    }
+  });
+
+  const keysMap = {
+    brave: state.settings.brave_search_api_key || "",
+    tavily: state.settings.tavily_search_api_key || ""
+  };
+
+  let order = parts.filter(p => p === "brave" || p === "tavily");
+  if (!order.includes("brave")) order.push("brave");
+  if (!order.includes("tavily")) order.push("tavily");
+
+  renderSearchProviders(order, activeMap, keysMap);
+
   els.webPort.value = state.settings.server_port || "8080";
   els.settingsDialog.showModal();
   // Request temporary microphone access to prompt permission dialog, so enumerateDevices gets actual labels
@@ -199,6 +224,13 @@ els.openSettings.addEventListener("click", async () => {
   await populateMicrophones();
 });
 els.settingsForm.addEventListener("submit", saveSettings);
+if (els.webSearchToggle) {
+  els.webSearchToggle.addEventListener("change", (e) => {
+    if (els.searchProvidersContainer) {
+      els.searchProvidersContainer.style.display = e.target.checked ? "block" : "none";
+    }
+  });
+}
 els.form.addEventListener("submit", sendMessage);
 els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.files], "image"));
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
@@ -458,6 +490,229 @@ function applySidebarState() {
   }
 }
 
+// Dynamic render function for search providers list in priority order
+function renderSearchProviders(providersOrder, activeMap, keysMap) {
+  const list = els.searchProvidersList;
+  if (!list) return;
+  list.innerHTML = "";
+
+  // Normalize order: ensure only brave, tavily and ddg. Brave and Tavily are reorderable.
+  let order = providersOrder.filter(id => id === "brave" || id === "tavily");
+  if (!order.includes("brave")) order.push("brave");
+  if (!order.includes("tavily")) order.push("tavily");
+  order.push("ddg"); // ddg is always last and always active
+
+  order.forEach((id, index) => {
+    const isActive = id === "ddg" ? true : (activeMap[id] !== false);
+    const isDDG = id === "ddg";
+    const keyVal = keysMap[id] || "";
+    
+    let statusClass = "disabled";
+    let statusText = "Disabled";
+    if (isDDG) {
+      statusClass = "always-active";
+      statusText = "Always Active";
+    } else if (isActive) {
+      if (keyVal && keyVal !== "") {
+        statusClass = "configured";
+        statusText = "Configured";
+      } else {
+        statusClass = "missing";
+        statusText = "No API Key";
+      }
+    }
+
+    const card = document.createElement("div");
+    card.className = `provider-card ${(!isActive && !isDDG) ? "card-disabled" : ""}`;
+    card.dataset.id = id;
+
+    let headerHtml = `
+      <div class="provider-header">
+        <div class="provider-title-container">
+          ${isDDG ? "" : `<input type="checkbox" id="provider_active_${id}" ${isActive ? "checked" : ""} />`}
+          <span class="provider-title">${id === "brave" ? "Brave Search" : id === "tavily" ? "Tavily Search" : "DuckDuckGo"}</span>
+          <span class="provider-status-badge ${statusClass}">${statusText}</span>
+        </div>
+    `;
+
+    if (!isDDG) {
+      const isFirst = index === 0;
+      const isLast = index === 1; // brave & tavily are at indices 0 and 1
+      headerHtml += `
+        <div class="provider-drag-priority">
+          <button type="button" class="priority-btn move-up" ${isFirst ? "disabled" : ""} title="Move Up">▲</button>
+          <button type="button" class="priority-btn move-down" ${isLast ? "disabled" : ""} title="Move Down">▼</button>
+        </div>
+      `;
+    }
+    headerHtml += `</div>`;
+
+    let bodyHtml = "";
+    if (id === "brave") {
+      bodyHtml = `
+        <div class="provider-body" style="${isActive ? "" : "display:none;"}">
+          <label class="provider-api-key-label">
+            Brave Search API Key
+            <input type="password" class="provider-api-key-input" id="brave_api_key_input" value="${escapeHtml(keyVal)}" placeholder="${keyVal === "***" ? "Key saved — enter a new value to change it" : "Enter your Brave Search API key..."}" autocomplete="off" />
+          </label>
+          <details class="provider-howto">
+            <summary>📖 How to get a Brave Search API key</summary>
+            <div class="provider-howto-body">
+              <p>Brave Search API costs <strong>$5.00 / 1,000 requests</strong>, but automatically includes <strong>$5 in free credits every month</strong> — roughly <strong>~1,000 free searches/month</strong>. A credit card is required to activate the account.</p>
+              <ol>
+                <li>Go to <a href="https://api.search.brave.com/" target="_blank" rel="noopener">api.search.brave.com</a> and click <strong>"Get started"</strong>.</li>
+                <li>Create an account and add a payment method (needed even for the free credits).</li>
+                <li>Go to <strong>Subscriptions → Available plans → Search</strong> and subscribe.</li>
+                <li>Go to <strong>API keys</strong>, create a new key, copy it, and paste it above.</li>
+              </ol>
+              <p class="provider-note">💡 The key is stored in your <code>.env</code> file.</p>
+            </div>
+          </details>
+        </div>
+      `;
+    } else if (id === "tavily") {
+      bodyHtml = `
+        <div class="provider-body" style="${isActive ? "" : "display:none;"}">
+          <label class="provider-api-key-label">
+            Tavily Search API Key
+            <input type="password" class="provider-api-key-input" id="tavily_api_key_input" value="${escapeHtml(keyVal)}" placeholder="${keyVal === "***" ? "Key saved — enter a new value to change it" : "Enter your Tavily API key..."}" autocomplete="off" />
+          </label>
+          <details class="provider-howto">
+            <summary>📖 How to get a Tavily API key</summary>
+            <div class="provider-howto-body">
+              <p>Tavily Search API offers a <strong>100% Free Plan</strong> (no credit card required) that includes <strong>1,000 free searches per month</strong>. It is designed specifically for LLM agents.</p>
+              <ol>
+                <li>Go to <a href="https://tavily.com/" target="_blank" rel="noopener">tavily.com</a> and click <strong>"Sign up"</strong>.</li>
+                <li>Create your account.</li>
+                <li>From your dashboard, copy your API key and paste it above.</li>
+              </ol>
+              <p class="provider-note">💡 Tavily is highly recommended for search accuracy in agents. The key is stored in your <code>.env</code> file.</p>
+            </div>
+          </details>
+        </div>
+      `;
+    } else if (id === "ddg") {
+      bodyHtml = `
+        <div class="provider-body">
+          <p class="provider-note" style="margin: 0;">DuckDuckGo handles free web scraping as a fallback option when active. No API keys or external accounts are required.</p>
+        </div>
+      `;
+    }
+
+    card.innerHTML = headerHtml + bodyHtml;
+    list.appendChild(card);
+
+    if (!isDDG) {
+      const checkbox = card.querySelector(`#provider_active_${id}`);
+      checkbox.addEventListener("change", (e) => {
+        const checked = e.target.checked;
+        const body = card.querySelector(".provider-body");
+        if (body) body.style.display = checked ? "" : "none";
+        if (checked) {
+          card.classList.remove("card-disabled");
+        } else {
+          card.classList.add("card-disabled");
+        }
+        updateBadgeStatus(id, card);
+      });
+
+      const keyInput = card.querySelector(`.provider-api-key-input`);
+      if (keyInput) {
+        keyInput.addEventListener("input", () => {
+          updateBadgeStatus(id, card);
+        });
+      }
+
+      const upBtn = card.querySelector(".move-up");
+      const downBtn = card.querySelector(".move-down");
+      if (upBtn) {
+        upBtn.addEventListener("click", () => {
+          const currentKeys = getKeysFromDOM();
+          const currentActives = getActivesFromDOM();
+          const currentOrder = getOrderFromDOM();
+          const itemIdx = currentOrder.indexOf(id);
+          if (itemIdx > 0) {
+            const temp = currentOrder[itemIdx - 1];
+            currentOrder[itemIdx - 1] = currentOrder[itemIdx];
+            currentOrder[itemIdx] = temp;
+            renderSearchProviders(currentOrder, currentActives, currentKeys);
+          }
+        });
+      }
+      if (downBtn) {
+        downBtn.addEventListener("click", () => {
+          const currentKeys = getKeysFromDOM();
+          const currentActives = getActivesFromDOM();
+          const currentOrder = getOrderFromDOM();
+          const itemIdx = currentOrder.indexOf(id);
+          if (itemIdx < currentOrder.length - 2) {
+            const temp = currentOrder[itemIdx + 1];
+            currentOrder[itemIdx + 1] = currentOrder[itemIdx];
+            currentOrder[itemIdx] = temp;
+            renderSearchProviders(currentOrder, currentActives, currentKeys);
+          }
+        });
+      }
+    }
+  });
+}
+
+function updateBadgeStatus(id, card) {
+  const checkbox = card.querySelector(`#provider_active_${id}`);
+  const keyInput = card.querySelector(`.provider-api-key-input`);
+  const badge = card.querySelector(`.provider-status-badge`);
+  if (!badge) return;
+
+  const isActive = checkbox ? checkbox.checked : false;
+  const keyVal = keyInput ? keyInput.value.trim() : "";
+
+  badge.className = "provider-status-badge";
+  if (!isActive) {
+    badge.classList.add("disabled");
+    badge.textContent = "Disabled";
+  } else if (keyVal && keyVal !== "") {
+    badge.classList.add("configured");
+    badge.textContent = "Configured";
+  } else {
+    badge.classList.add("missing");
+    badge.textContent = "No API Key";
+  }
+}
+
+function getOrderFromDOM() {
+  if (!els.searchProvidersList) return ["brave", "tavily", "ddg"];
+  const cards = els.searchProvidersList.querySelectorAll(".provider-card");
+  return Array.from(cards).map(card => card.dataset.id);
+}
+
+function getActivesFromDOM() {
+  const actives = {};
+  if (!els.searchProvidersList) return { brave: false, tavily: false, ddg: true };
+  const cards = els.searchProvidersList.querySelectorAll(".provider-card");
+  cards.forEach(card => {
+    const id = card.dataset.id;
+    if (id === "ddg") {
+      actives[id] = true;
+    } else {
+      const checkbox = card.querySelector(`#provider_active_${id}`);
+      actives[id] = checkbox ? checkbox.checked : false;
+    }
+  });
+  return actives;
+}
+
+function getKeysFromDOM() {
+  const keys = {};
+  if (!els.searchProvidersList) return { brave: "", tavily: "" };
+  const cards = els.searchProvidersList.querySelectorAll(".provider-card");
+  cards.forEach(card => {
+    const id = card.dataset.id;
+    const input = card.querySelector(`.provider-api-key-input`);
+    keys[id] = input ? input.value : "";
+  });
+  return keys;
+}
+
 async function loadSettings() {
   const response = await fetch("/api/settings");
   if (!response.ok) return;
@@ -468,7 +723,31 @@ async function loadSettings() {
   els.memoryPath.value = state.settings.memory_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
-  els.webSearchSelect.value = state.settings.web_search_enabled ? "ddg" : "none";
+
+  const searchEnabled = !!state.settings.web_search_enabled;
+  els.webSearchToggle.checked = searchEnabled;
+  els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
+
+  const providersCsv = state.settings.search_providers || "";
+  const parts = providersCsv.split(",").map(p => p.trim()).filter(Boolean);
+  const activeMap = { brave: false, tavily: false, ddg: true };
+  parts.forEach(p => {
+    if (p === "brave" || p === "tavily" || p === "ddg") {
+      activeMap[p] = true;
+    }
+  });
+
+  const keysMap = {
+    brave: state.settings.brave_search_api_key || "",
+    tavily: state.settings.tavily_search_api_key || ""
+  };
+
+  let order = parts.filter(p => p === "brave" || p === "tavily");
+  if (!order.includes("brave")) order.push("brave");
+  if (!order.includes("tavily")) order.push("tavily");
+
+  renderSearchProviders(order, activeMap, keysMap);
+
   els.webPort.value = state.settings.server_port || "8080";
   els.sleepModeToggle.checked = !!state.settings.sleep_mode_enabled;
   els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
@@ -490,6 +769,17 @@ async function saveSettings(event) {
   event.preventDefault();
   state.selectedMicId = els.micSelect.value;
   localStorage.setItem("ollamabot.selectedMicId", state.selectedMicId);
+
+  const webSearchEnabled = els.webSearchToggle.checked;
+  const providersOrder = getOrderFromDOM();
+  const providersActive = getActivesFromDOM();
+  const keys = getKeysFromDOM();
+
+  const activeProvidersList = providersOrder.filter(id => providersActive[id]);
+  const searchProvidersCsv = webSearchEnabled
+    ? (activeProvidersList.length > 0 ? activeProvidersList.join(",") : "ddg")
+    : "none";
+
   const response = await fetch("/api/settings", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -502,7 +792,10 @@ async function saveSettings(event) {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
-      web_search_enabled: els.webSearchSelect.value === "ddg",
+      web_search_enabled: webSearchEnabled,
+      search_providers: searchProvidersCsv,
+      brave_search_api_key: keys.brave ? keys.brave.trim() : "",
+      tavily_search_api_key: keys.tavily ? keys.tavily.trim() : "",
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
       server_port: els.webPort.value.trim() || "8080",
@@ -537,6 +830,9 @@ async function saveRoleModels() {
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       web_search_enabled: state.settings.web_search_enabled || false,
+      search_providers: state.settings.search_providers || "ddg",
+      brave_search_api_key: state.settings.brave_search_api_key || "",
+      tavily_search_api_key: state.settings.tavily_search_api_key || "",
       server_expose_network: state.settings.server_expose_network || false,
       session_auto_name: state.settings.session_auto_name !== false,
       server_port: state.settings.server_port || "8080",

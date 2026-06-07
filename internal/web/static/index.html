@@ -281,13 +281,21 @@
           
           <!-- Features Tab -->
           <div class="tab-content" id="tab-features">
-            <label>
-              Web search
-              <select id="webSearchSelect">
-                <option value="none">None</option>
-                <option value="ddg">DuckDuckGo</option>
-              </select>
-            </label>
+            <div class="checkbox-row" style="margin-bottom: 14px;">
+              <label class="think-toggle">
+                <input id="webSearchToggle" type="checkbox" />
+                <span>Enable Web Search</span>
+              </label>
+            </div>
+
+            <!-- Search Providers Container -->
+            <div id="searchProvidersContainer" class="search-providers-container" style="display: none;">
+              <label class="eyebrow" style="display: block; margin-top: 10px; margin-bottom: 8px;">Providers & Priority Order</label>
+              <div id="searchProvidersList" class="search-providers-list">
+                <!-- Dynamic provider cards will be rendered here -->
+              </div>
+            </div>
+
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
                 <input id="sleepModeToggle" type="checkbox" />

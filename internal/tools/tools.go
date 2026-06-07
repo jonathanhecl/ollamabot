@@ -35,6 +35,7 @@ type Registry struct {
 	approvalHandler      ApprovalHandler
 	clarificationHandler ClarificationHandler
 	skillsPath           string
+	searchCfg            SearchConfig
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -54,7 +55,7 @@ func (r *Registry) SetSkillsPath(p string) {
 
 
 // NewRegistry creates a registry with the given feature toggles.
-func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string) *Registry {
+func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string, searchCfg SearchConfig) *Registry {
 	r := &Registry{
 		enabled:     map[string]bool{},
 		workspace:   workspace,
@@ -63,6 +64,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		embedModel:  embedModel,
 		todoStore:   NewTodoStore(),
 		skillsPath:  "skills",
+		searchCfg:   searchCfg,
 	}
 
 	if webSearch {
@@ -532,7 +534,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				maxResults = int(n)
 			}
 		}
-		return Search(ctx, query, maxResults)
+		return SearchWithConfig(ctx, r.searchCfg, query, maxResults)
 	case "fetch_webpage":
 		urlVal, _ := args["url"].(string)
 		if urlVal == "" {

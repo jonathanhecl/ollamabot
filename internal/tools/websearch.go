@@ -22,6 +22,19 @@ const maxFetchBody = 2 << 20 // 2 MiB
 
 var reSpace = regexp.MustCompile(`\s+`)
 
+// SearchConfig holds search provider configuration for the multi-provider router.
+type SearchConfig struct {
+	// Providers is the ordered list of providers to try. Supported: "brave", "tavily", "ddg".
+	// The first provider that returns results wins. Subsequent providers are used as fallback.
+	Providers []string
+	// BraveAPIKey is the Brave Search API subscription token.
+	// Required when "brave" is listed in Providers.
+	BraveAPIKey string
+	// TavilyAPIKey is the Tavily Search API key.
+	// Required when "tavily" is listed in Providers.
+	TavilyAPIKey string
+}
+
 func isBlockedIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -559,6 +572,246 @@ func ddgLiteScrape(ctx context.Context, query string, max int) (string, error) {
 		return "", fmt.Errorf("no HTML results (layout may have changed)")
 	}
 	return strings.TrimSpace(sb.String()), nil
+}
+
+// braveSearch queries the Brave Search API and returns formatted results.
+func braveSearch(ctx context.Context, apiKey string, query string, maxResults int) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("brave: no API key configured")
+	}
+	if maxResults <= 0 {
+		maxResults = 5
+	}
+	if maxResults > 10 {
+		maxResults = 10
+	}
+
+	u := "https://api.search.brave.com/res/v1/web/search?q=" +
+		url.QueryEscape(query) +
+		fmt.Sprintf("&count=%d&safesearch=moderate", maxResults)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", fmt.Errorf("brave: %w", err)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("X-Subscription-Token", apiKey)
+
+	client := newWebHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("brave: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return "", fmt.Errorf("brave: invalid or expired API key (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode == 429 {
+		return "", fmt.Errorf("brave: rate limit exceeded")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return "", fmt.Errorf("brave: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+	if err != nil {
+		return "", fmt.Errorf("brave: read body: %w", err)
+	}
+
+	var result struct {
+		Web struct {
+			Results []struct {
+				Title       string `json:"title"`
+				URL         string `json:"url"`
+				Description string `json:"description"`
+			} `json:"results"`
+		} `json:"web"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("brave: parse response: %w", err)
+	}
+
+	if len(result.Web.Results) == 0 {
+		return "", fmt.Errorf("brave: no results")
+	}
+
+	var sb strings.Builder
+	seen := make(map[string]struct{})
+	n := 0
+	for _, r := range result.Web.Results {
+		if n >= maxResults {
+			break
+		}
+		if _, ok := seen[r.URL]; ok {
+			continue
+		}
+		seen[r.URL] = struct{}{}
+		n++
+		title := strings.TrimSpace(r.Title)
+		desc := strings.TrimSpace(r.Description)
+		fmt.Fprintf(&sb, "%d. %s\n   URL: %s\n", n, title, r.URL)
+		if desc != "" {
+			fmt.Fprintf(&sb, "   Summary: %s\n", desc)
+		}
+		sb.WriteString("\n")
+	}
+	result2 := strings.TrimSpace(sb.String())
+	if result2 == "" {
+		return "", fmt.Errorf("brave: empty formatted output")
+	}
+	return "--- Search results (Brave) ---\n" + result2, nil
+}
+
+// tavilySearch queries the Tavily Search API and returns formatted results.
+func tavilySearch(ctx context.Context, apiKey string, query string, maxResults int) (string, error) {
+	if apiKey == "" {
+		return "", fmt.Errorf("tavily: no API key configured")
+	}
+	if maxResults <= 0 {
+		maxResults = 5
+	}
+	if maxResults > 10 {
+		maxResults = 10
+	}
+
+	reqBody := map[string]any{
+		"query":       query,
+		"max_results": maxResults,
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", fmt.Errorf("tavily: marshal request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.tavily.com/search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("tavily: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+apiKey)
+
+	client := newWebHTTPClient()
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("tavily: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 || resp.StatusCode == 403 {
+		return "", fmt.Errorf("tavily: invalid or expired API key (HTTP %d)", resp.StatusCode)
+	}
+	if resp.StatusCode == 429 {
+		return "", fmt.Errorf("tavily: rate limit exceeded")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 400 {
+		return "", fmt.Errorf("tavily: HTTP %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 512<<10))
+	if err != nil {
+		return "", fmt.Errorf("tavily: read body: %w", err)
+	}
+
+	var result struct {
+		Results []struct {
+			Title   string `json:"title"`
+			URL     string `json:"url"`
+			Content string `json:"content"`
+		} `json:"results"`
+		Answer string `json:"answer"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("tavily: parse response: %w", err)
+	}
+
+	if len(result.Results) == 0 {
+		return "", fmt.Errorf("tavily: no results")
+	}
+
+	var sb strings.Builder
+	seen := make(map[string]struct{})
+	n := 0
+	for _, r := range result.Results {
+		if n >= maxResults {
+			break
+		}
+		if _, ok := seen[r.URL]; ok {
+			continue
+		}
+		seen[r.URL] = struct{}{}
+		n++
+		title := strings.TrimSpace(r.Title)
+		desc := strings.TrimSpace(r.Content)
+		if len(desc) > 300 {
+			desc = desc[:297] + "..."
+		}
+		fmt.Fprintf(&sb, "%d. %s\n   URL: %s\n", n, title, r.URL)
+		if desc != "" {
+			fmt.Fprintf(&sb, "   Summary: %s\n", desc)
+		}
+		sb.WriteString("\n")
+	}
+	formatted := strings.TrimSpace(sb.String())
+	if formatted == "" {
+		return "", fmt.Errorf("tavily: empty formatted output")
+	}
+	return "--- Search results (Tavily) ---\n" + formatted, nil
+}
+
+// SearchWithConfig searches the web using the configured providers in priority order.
+// The first provider that returns results wins. Others are used as silent fallback.
+func SearchWithConfig(ctx context.Context, cfg SearchConfig, query string, maxResults int) (string, error) {
+	if maxResults <= 0 {
+		maxResults = 5
+	}
+	if maxResults > 10 {
+		maxResults = 10
+	}
+	providers := cfg.Providers
+	if len(providers) == 0 {
+		providers = []string{"ddg"}
+	}
+
+	var lastErr error
+	for _, p := range providers {
+		switch strings.ToLower(strings.TrimSpace(p)) {
+		case "brave":
+			if cfg.BraveAPIKey == "" {
+				continue // skip silently if no key
+			}
+			res, err := braveSearch(ctx, cfg.BraveAPIKey, query, maxResults)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return res, nil
+		case "tavily":
+			if cfg.TavilyAPIKey == "" {
+				continue // skip silently if no key
+			}
+			res, err := tavilySearch(ctx, cfg.TavilyAPIKey, query, maxResults)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return res, nil
+		case "ddg":
+			res, err := Search(ctx, query, maxResults)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			return res, nil
+		case "none", "":
+			continue
+		}
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("web search: all providers failed (last: %w)", lastErr)
+	}
+	return "", fmt.Errorf("web search: no usable providers configured")
 }
 
 // Search uses DuckDuckGo JSON instant answers plus Lite HTML. No API key.

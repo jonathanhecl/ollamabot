@@ -399,7 +399,10 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 	_ = os.MkdirAll(projectWorkspaceDir, 0755)
 
 	// Create registry scoped inside this project directory
-	registry := tools.NewRegistry(am.cfg.WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.cfg.OllamaModelEmbed)
+	registry := tools.NewRegistry(am.cfg.WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.cfg.OllamaModelEmbed, tools.SearchConfig{
+		Providers:   am.cfg.SearchProviders,
+		BraveAPIKey: am.cfg.BraveSearchAPIKey,
+	})
 
 	// Instantiate iterative agent
 	a := NewAgent(am.cfg, am.client, registry)

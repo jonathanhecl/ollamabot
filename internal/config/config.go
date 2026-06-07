@@ -32,6 +32,9 @@ type Config struct {
 	SleepModeInactivityThreshold string
 	SleepModeResumeDelay         string
 	OllamaModelLearning          string
+	SearchProviders              []string // ordered list: "brave", "tavily", "ddg"
+	BraveSearchAPIKey            string
+	TavilyAPIKey                 string
 }
 
 func Load(path string) (Config, error) {
@@ -67,6 +70,9 @@ func Load(path string) (Config, error) {
 		SleepModeInactivityThreshold: "30m",
 		SleepModeResumeDelay:         "10m",
 		OllamaModelLearning:          "",
+		SearchProviders:              []string{"ddg"},
+		BraveSearchAPIKey:            "",
+		TavilyAPIKey:                 "",
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -133,6 +139,19 @@ func Load(path string) (Config, error) {
 	if value := apply("OLLAMA_MODEL_LEARNING"); value != "" {
 		cfg.OllamaModelLearning = value
 	}
+	if value := apply("SEARCH_PROVIDERS"); value != "" {
+		cfg.SearchProviders = splitCSV(value)
+	}
+	if value := apply("BRAVE_SEARCH_API_KEY"); value != "" {
+		cfg.BraveSearchAPIKey = value
+	}
+	if value := apply("TAVILY_API_KEY"); value != "" {
+		cfg.TavilyAPIKey = value
+	}
+	// Infer WebSearchEnabled from providers list
+	if len(cfg.SearchProviders) > 0 && !(len(cfg.SearchProviders) == 1 && cfg.SearchProviders[0] == "none") {
+		// keep WebSearchEnabled as-is; it is used as the main gate
+	}
 
 	normalized, err := NormalizeBaseURL(cfg.OllamaBaseURL)
 	if err != nil {
@@ -172,7 +191,7 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -194,6 +213,9 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.SleepModeInactivityThreshold,
 		cfg.SleepModeResumeDelay,
 		cfg.OllamaModelLearning,
+		strings.Join(cfg.SearchProviders, ","),
+		cfg.BraveSearchAPIKey,
+		cfg.TavilyAPIKey,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)
 }

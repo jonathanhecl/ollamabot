@@ -38,7 +38,7 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 		t.Fatalf("failed to create workspace dir: %v", err)
 	}
 
-	registry := NewRegistry(false, tmpDir, nil, nil, "")
+	registry := NewRegistry(false, tmpDir, nil, nil, "", SearchConfig{})
 	handler := &mockApprovalHandler{response: true}
 	registry.SetApprovalHandler(handler)
 

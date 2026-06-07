@@ -271,7 +271,11 @@ Your goal:
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, historyText.String())
 
-	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed)
+	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
+		Providers:    sm.cfg.SearchProviders,
+		BraveAPIKey:  sm.cfg.BraveSearchAPIKey,
+		TavilyAPIKey: sm.cfg.TavilyAPIKey,
+	})
 	registry.SetSkillsPath(sm.cfg.SkillsPath)
 
 	reflectorAgent := agent.NewAgent(sm.cfg, sm.client, registry)

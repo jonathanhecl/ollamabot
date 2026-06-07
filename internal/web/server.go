@@ -95,6 +95,9 @@ type SettingsResponse struct {
 	SleepModeInactivityThreshold string `json:"sleep_mode_inactivity_threshold"`
 	SleepModeResumeDelay         string `json:"sleep_mode_resume_delay"`
 	ModelLearning                string `json:"model_learning"`
+	SearchProviders              string `json:"search_providers"`    // comma-separated: "brave,ddg"
+	BraveSearchAPIKey            string `json:"brave_search_api_key"` // masked ("***") on GET if set
+	TavilySearchAPIKey           string `json:"tavily_search_api_key"` // masked ("***") on GET if set
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -297,6 +300,37 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
 	s.cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
 	s.cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
+	// Search providers: parse CSV from UI
+	rawProviders := strings.TrimSpace(input.SearchProviders)
+	if rawProviders != "" && rawProviders != "none" {
+		var ps []string
+		for _, p := range strings.Split(rawProviders, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				ps = append(ps, p)
+			}
+		}
+		s.cfg.SearchProviders = ps
+	} else if rawProviders == "none" || rawProviders == "" {
+		s.cfg.SearchProviders = []string{"none"}
+	}
+	// Brave API key: only update if not masked sentinel
+	newKey := strings.TrimSpace(input.BraveSearchAPIKey)
+	if newKey != "" && newKey != "***" {
+		s.cfg.BraveSearchAPIKey = newKey
+	} else if newKey == "" {
+		s.cfg.BraveSearchAPIKey = ""
+	}
+	// Tavily API key: only update if not masked sentinel
+	newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
+	if newTavilyKey != "" && newTavilyKey != "***" {
+		s.cfg.TavilyAPIKey = newTavilyKey
+	} else if newTavilyKey == "" {
+		s.cfg.TavilyAPIKey = ""
+	}
+	// Update WebSearchEnabled based on providers
+	s.cfg.WebSearchEnabled = len(s.cfg.SearchProviders) > 0 &&
+		!(len(s.cfg.SearchProviders) == 1 && s.cfg.SearchProviders[0] == "none")
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(s.cfg))
@@ -480,7 +514,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}}, ollamaMessages...)
 	}
 
-	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed)
+	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed, tools.SearchConfig{
+		Providers:    cfg.SearchProviders,
+		BraveAPIKey:  cfg.BraveSearchAPIKey,
+		TavilyAPIKey: cfg.TavilyAPIKey,
+	})
 	registry.SetApprovalHandler(&webApprovalHandler{
 		server:  s,
 		w:       w,
@@ -1025,6 +1063,15 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 func settingsResponse(cfg config.Config) SettingsResponse {
+	// Mask the Brave API key to avoid leaking it through the API.
+	maskedKey := ""
+	if cfg.BraveSearchAPIKey != "" {
+		maskedKey = "***"
+	}
+	maskedTavily := ""
+	if cfg.TavilyAPIKey != "" {
+		maskedTavily = "***"
+	}
 	return SettingsResponse{
 		OllamaBaseURL:                cfg.OllamaBaseURL,
 		ServerPort:                   cfg.ServerPort,
@@ -1044,6 +1091,9 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		SleepModeInactivityThreshold: cfg.SleepModeInactivityThreshold,
 		SleepModeResumeDelay:         cfg.SleepModeResumeDelay,
 		ModelLearning:                cfg.OllamaModelLearning,
+		SearchProviders:              strings.Join(cfg.SearchProviders, ","),
+		BraveSearchAPIKey:            maskedKey,
+		TavilySearchAPIKey:           maskedTavily,
 	}
 }
 
