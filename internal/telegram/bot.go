@@ -1942,6 +1942,8 @@ func (b *Bot) registerCommands() {
 		Commands: []BotCommand{
 			{Command: "start", Description: "Display welcome message"},
 			{Command: "new", Description: "Start a new clean session"},
+			{Command: "sessions", Description: "List recent sessions"},
+			{Command: "session", Description: "Switch to a session by ID"},
 			{Command: "status", Description: "Monitor VRAM and Ollama status"},
 			{Command: "settings", Description: "Change active models configuration"},
 			{Command: "projects", Description: "List autonomous workspace projects"},
