@@ -2948,34 +2948,37 @@ textarea {
   background: #141812;
 }
 
-.message-time {
+.message-meta-container {
   position: absolute;
   bottom: 8px;
   right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+  user-select: none;
+}
+
+.message-time {
   font-size: 10px;
   color: var(--muted);
-  user-select: none;
   font-weight: 500;
   opacity: 0.85;
 }
 
 .message-copy-btn {
-  position: absolute;
-  top: 8px;
-  right: 12px;
   background: transparent;
   border: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 12px;
-  padding: 4px;
+  font-size: 11px;
+  padding: 2px 4px;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   opacity: 0;
   transition: opacity 0.2s ease, background 0.2s ease, color 0.2s ease;
-  z-index: 10;
 }
 
 .message:hover .message-copy-btn {

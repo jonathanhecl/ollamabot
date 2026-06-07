@@ -2065,8 +2065,13 @@ function renderMessages() {
       contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
     }
     const timeHtml = message.timestamp ? `<span class="message-time">${escapeHtml(formatMessageTime(message.timestamp))}</span>` : "";
-    const copyHtml = `<button class="message-copy-btn" type="button" title="Copy raw markdown">📋</button>`;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${timeHtml}${copyHtml}`;
+    const metaHtml = `
+      <div class="message-meta-container">
+        <button class="message-copy-btn" type="button" title="Copy raw markdown">📋</button>
+        ${timeHtml}
+      </div>
+    `;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
