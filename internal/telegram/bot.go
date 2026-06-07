@@ -984,7 +984,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	chunks := splitMessage(finalAnswer, 4000)
 	for _, chunk := range chunks {
-		sentMsgID, _ := b.sendMessage(chatID, toTelegramMarkdown(chunk), msg.MessageID, "Markdown")
+		sentMsgID, _ := b.sendMessage(chatID, toTelegramHTML(chunk), msg.MessageID, "HTML")
 		if sentMsgID > 0 {
 			// Find the index of the last assistant message in the session
 			lastAssistantIdx := -1
@@ -1397,23 +1397,81 @@ func splitMessage(text string, maxLen int) []string {
 	return chunks
 }
 
-// toTelegramMarkdown converts standard Markdown constructs to Telegram's legacy Markdown format.
-func toTelegramMarkdown(text string) string {
-	// Replace **bold** with *bold* (Telegram legacy Markdown only supports single asterisks for bold).
-	reBold := regexp.MustCompile(`\*\*(.+?)\*\*`)
-	text = reBold.ReplaceAllString(text, `*$1*`)
+// toTelegramHTML converts standard Markdown constructs to Telegram HTML format.
+func toTelegramHTML(text string) string {
+	// 1. Protect code blocks
+	var codeBlocks []string
+	reCodeBlock := regexp.MustCompile("(?s)```(?:\\w*)?\\n?(.*?)```")
+	text = reCodeBlock.ReplaceAllStringFunc(text, func(match string) string {
+		m := reCodeBlock.FindStringSubmatch(match)
+		if len(m) > 1 {
+			codeBlocks = append(codeBlocks, m[1])
+		} else {
+			codeBlocks = append(codeBlocks, "")
+		}
+		return fmt.Sprintf("\x00CODEBLOCK%d\x00", len(codeBlocks)-1)
+	})
 
-	// Replace bullet points "* " at the start of a line with "• "
-	// to prevent Telegram from interpreting them as bold formatting.
+	// 2. Protect inline code
+	var inlineCodes []string
+	reInlineCode := regexp.MustCompile("`([^`]+)`")
+	text = reInlineCode.ReplaceAllStringFunc(text, func(match string) string {
+		m := reInlineCode.FindStringSubmatch(match)
+		if len(m) > 1 {
+			inlineCodes = append(inlineCodes, m[1])
+		} else {
+			inlineCodes = append(inlineCodes, "")
+		}
+		return fmt.Sprintf("\x00INLINECODE%d\x00", len(inlineCodes)-1)
+	})
+
+	// 3. Escape HTML special chars
+	text = strings.ReplaceAll(text, "&", "&amp;")
+	text = strings.ReplaceAll(text, "<", "&lt;")
+	text = strings.ReplaceAll(text, ">", "&gt;")
+
+	// 4. Convert headings
+	reHeading := regexp.MustCompile(`(?m)^#{1,6}\s*(.+)$`)
+	text = reHeading.ReplaceAllString(text, `<b>$1</b>`)
+
+	// 5. Convert bold
+	reBold := regexp.MustCompile(`\*\*(.+?)\*\*`)
+	text = reBold.ReplaceAllString(text, `<b>$1</b>`)
+
+	// 6. Convert italic (_italic_)
+	reItalic := regexp.MustCompile(`_(.+?)_`)
+	text = reItalic.ReplaceAllString(text, `<i>$1</i>`)
+
+	// 7. Convert links
+	reLink := regexp.MustCompile(`\[([^\]]+)\]\(([^)]+)\)`)
+	text = reLink.ReplaceAllString(text, `<a href="$2">$1</a>`)
+
+	// 8. Convert bullet lists
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		trimmed := strings.TrimLeft(line, " \t")
 		leading := line[:len(line)-len(trimmed)]
-		if strings.HasPrefix(trimmed, "* ") {
+		if strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "- ") {
 			lines[i] = leading + "• " + trimmed[2:]
 		}
 	}
 	text = strings.Join(lines, "\n")
+
+	// 9. Restore code blocks
+	for i, block := range codeBlocks {
+		escaped := strings.ReplaceAll(block, "&", "&amp;")
+		escaped = strings.ReplaceAll(escaped, "<", "&lt;")
+		escaped = strings.ReplaceAll(escaped, ">", "&gt;")
+		text = strings.ReplaceAll(text, fmt.Sprintf("\x00CODEBLOCK%d\x00", i), fmt.Sprintf("<pre><code>%s</code></pre>", escaped))
+	}
+
+	// 10. Restore inline code
+	for i, code := range inlineCodes {
+		escaped := strings.ReplaceAll(code, "&", "&amp;")
+		escaped = strings.ReplaceAll(escaped, "<", "&lt;")
+		escaped = strings.ReplaceAll(escaped, ">", "&gt;")
+		text = strings.ReplaceAll(text, fmt.Sprintf("\x00INLINECODE%d\x00", i), fmt.Sprintf("<code>%s</code>", escaped))
+	}
 
 	return text
 }
