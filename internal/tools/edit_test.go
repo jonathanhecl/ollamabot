@@ -144,3 +144,100 @@ func TestEditFilePathTraversal(t *testing.T) {
 		t.Fatal("expected error for path traversal")
 	}
 }
+
+func TestEditFileFuzzySingleOccurrence(t *testing.T) {
+	ws := t.TempDir()
+	content := "func hello() {\n\tfmt.Println(\"world\")\n}\n"
+	if err := WriteFile(ws, "fuzzy.txt", content); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// oldString has 4 spaces indent, while file has tab indent.
+	oldString := "func hello() {\n    fmt.Println(\"world\")\n}"
+	newString := "func hello() {\n    fmt.Println(\"goodbye\")\n}"
+
+	diff, err := EditFile(ws, "fuzzy.txt", oldString, newString, false)
+	if err != nil {
+		t.Fatalf("EditFile fuzzy: %v", err)
+	}
+	if diff == "" {
+		t.Fatal("expected non-empty diff")
+	}
+
+	data, _ := os.ReadFile(filepath.Join(ws, "fuzzy.txt"))
+	expected := "func hello() {\n    fmt.Println(\"goodbye\")\n}\n"
+	if string(data) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(data))
+	}
+}
+
+func TestEditFileFuzzyMultipleOccurrence(t *testing.T) {
+	ws := t.TempDir()
+	content := "func hi() {\n\tfmt.Println(\"hi\")\n}\nfunc hi() {\n\tfmt.Println(\"hi\")\n}\n"
+	if err := WriteFile(ws, "fuzzy_multi.txt", content); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// 2 spaces indent instead of tab
+	oldString := "func hi() {\n  fmt.Println(\"hi\")\n}"
+	newString := "func hi() {\n  fmt.Println(\"hello\")\n}"
+
+	// 1. Without replaceAll, should fail due to ambiguity
+	_, err := EditFile(ws, "fuzzy_multi.txt", oldString, newString, false)
+	if err == nil {
+		t.Fatal("expected error for multiple fuzzy matches without replaceAll")
+	}
+	if !strings.Contains(err.Error(), "matched 2 times fuzzily") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+
+	// 2. With replaceAll, should succeed
+	_, err = EditFile(ws, "fuzzy_multi.txt", oldString, newString, true)
+	if err != nil {
+		t.Fatalf("EditFile fuzzy multi replaceAll: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(ws, "fuzzy_multi.txt"))
+	expected := "func hi() {\n  fmt.Println(\"hello\")\n}\nfunc hi() {\n  fmt.Println(\"hello\")\n}\n"
+	if string(data) != expected {
+		t.Fatalf("expected %q, got %q", expected, string(data))
+	}
+}
+
+func TestEditFileFuzzyLineEndings(t *testing.T) {
+	// Test CRLF preservation
+	ws := t.TempDir()
+	contentCRLF := "line1\r\nline2\r\nline3\r\n"
+	if err := WriteFile(ws, "crlf.txt", contentCRLF); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// oldString has LF only
+	_, err := EditFile(ws, "crlf.txt", "line2\n", "line_two\n", false)
+	if err != nil {
+		t.Fatalf("EditFile: %v", err)
+	}
+
+	data, _ := os.ReadFile(filepath.Join(ws, "crlf.txt"))
+	expectedCRLF := "line1\r\nline_two\r\nline3\r\n"
+	if string(data) != expectedCRLF {
+		t.Fatalf("expected %q, got %q", expectedCRLF, string(data))
+	}
+
+	// Test no trailing newline preservation
+	contentNoNL := "line1\nline2"
+	if err := WriteFile(ws, "nonl.txt", contentNoNL); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	_, err = EditFile(ws, "nonl.txt", "line2", "line_two", false)
+	if err != nil {
+		t.Fatalf("EditFile: %v", err)
+	}
+
+	dataNoNL, _ := os.ReadFile(filepath.Join(ws, "nonl.txt"))
+	expectedNoNL := "line1\nline_two"
+	if string(dataNoNL) != expectedNoNL {
+		t.Fatalf("expected %q, got %q", expectedNoNL, string(dataNoNL))
+	}
+}

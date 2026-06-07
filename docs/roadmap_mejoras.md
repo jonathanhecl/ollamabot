@@ -42,13 +42,13 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** La búsqueda actual depende de scraping básico de DuckDuckGo sin API key (riesgo de rate limits y bloqueos).
 - **Feedback del Usuario:** *"seria bueno conseguir mas alternativas a esto."*
 - **Acción:**
-  - [ ] Incorporar soporte configurable mediante `.env` para proveedores adicionales (ej. API de SearXNG local, Brave Search API, Tavily, o Google Custom Search).
+  - [x] Incorporar soporte configurable mediante `.env` para proveedores adicionales (ej. API de SearXNG local, Brave Search API, Tavily, o Google Custom Search).
 
 ### 7. Herramienta de Edición Robusta (Edit)
 - **Punto del Relevamiento:** `Edit` por reemplazo exacto suele fallar con modelos locales pequeños debido a problemas menores de indentación o espacios.
 - **Feedback del Usuario:** *"buena idea"* (sobre cambiar a diffs unificados o reemplazo difuso).
 - **Acción:**
-  - [ ] Desarrollar una herramienta complementaria de edición basada en diffs unificados (formato patch) o un algoritmo de reemplazo difuso.
+  - [x] Desarrollar una herramienta complementaria de edición basada en diffs unificados (formato patch) o un algoritmo de reemplazo difuso.
 
 ### 8. Manejo de Aprobaciones y Timeouts
 - **Punto del Relevamiento:** Las peticiones de aprobación expiran de forma abrupta a los 5 minutos, interrumpiendo el flujo.
