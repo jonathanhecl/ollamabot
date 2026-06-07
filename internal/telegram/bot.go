@@ -352,9 +352,13 @@ func (b *Bot) handleMessage(msg *Message) {
 		sessionID = b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "👋 Hello! I have initialized a new conversation session for you. Ask me anything, send me a photo, or send a voice message!", msg.MessageID, "Markdown")
 	} else {
-		// Confirm session exists on disk
-		if _, err := b.sessions.Get(sessionID); err != nil {
+		// Confirm session exists on disk and has not expired (30-minute inactivity limit)
+		sess, err := b.sessions.Get(sessionID)
+		if err != nil {
 			sessionID = b.startNewSession(chatIDStr)
+		} else if time.Since(sess.UpdatedAt) > 30*time.Minute {
+			sessionID = b.startNewSession(chatIDStr)
+			b.sendMessage(chatID, "⏰ *Session expired due to 30 minutes of inactivity.* Started a new session!", msg.MessageID, "Markdown")
 		}
 	}
 
@@ -387,6 +391,39 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	_ = b.sessions.Save(sess)
 	b.sessManager.Set(chatIDStr, sessionID)
 	return sessionID
+}
+
+func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assistantContent string) {
+	log.Printf("[Telegram Auto-Name] Triggered for session ID: %s, Content length: %d", sessID, len(assistantContent))
+	resp, err := b.client.Chat(ctx, ollama.ChatRequest{
+		Model: b.cfg.OllamaDefaultModel,
+		Messages: []ollama.Message{
+			{
+				Role:    "system",
+				Content: "Summarize the main topic of the response in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with only the title.",
+			},
+			{
+				Role:    "user",
+				Content: assistantContent,
+			},
+		},
+		Options: map[string]any{"temperature": 0},
+	})
+	if err != nil {
+		log.Printf("[Telegram Auto-Name] FAILED: %v", err)
+		return
+	}
+	generatedTitle := strings.TrimSpace(resp.Message.Content)
+	generatedTitle = strings.Trim(generatedTitle, `"'`)
+	generatedTitle = strings.TrimRight(generatedTitle, ".!?")
+	if generatedTitle != "" {
+		log.Printf("[Telegram Auto-Name] Saving generated title: %s", generatedTitle)
+		sess, err := b.sessions.Get(sessID)
+		if err == nil {
+			sess.Title = generatedTitle
+			_ = b.sessions.Save(sess)
+		}
+	}
 }
 
 func snapshotPath() string {
@@ -837,6 +874,19 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	sess.Messages = newRawMessages
 	_ = b.sessions.Save(sess)
 
+	// Count user and assistant messages to trigger auto-naming on first exchange
+	var userMsgsCount, assistantMsgsCount int
+	for _, rm := range sess.Messages {
+		var m rawMsg
+		if err := json.Unmarshal(rm, &m); err == nil {
+			if m.Role == "user" {
+				userMsgsCount++
+			} else if m.Role == "assistant" {
+				assistantMsgsCount++
+			}
+		}
+	}
+
 	// 11. Send the final Synthesized text response back to the user
 	var finalAnswer string
 	for i := len(finalHistory) - 1; i >= 0; i-- {
@@ -857,6 +907,10 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	chunks := splitMessage(finalAnswer, 4000)
 	for _, chunk := range chunks {
 		_, _ = b.sendMessage(chatID, chunk, msg.MessageID, "Markdown")
+	}
+
+	if b.cfg.SessionAutoName && userMsgsCount == 1 && assistantMsgsCount == 1 {
+		b.autoGenerateSessionTitle(ctx, sessionID, finalAnswer)
 	}
 }
 

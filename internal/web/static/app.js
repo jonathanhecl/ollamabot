@@ -712,6 +712,122 @@ function startHealthCheck() {
   }, 5000);
 }
 
+function startSessionPolling() {
+  setInterval(async () => {
+    if (!isCurrentlyConnected) return;
+
+    try {
+      // 1. Poll sessions list
+      const sessResp = await fetch("/api/sessions");
+      if (sessResp.ok) {
+        const fetchedSessions = await sessResp.json();
+        
+        // Check if session list changed (compare length, IDs, titles, or updated_at)
+        let changed = fetchedSessions.length !== state.sessions.length;
+        if (!changed) {
+          for (let i = 0; i < fetchedSessions.length; i++) {
+            if (fetchedSessions[i].id !== state.sessions[i].id || 
+                fetchedSessions[i].updated_at !== state.sessions[i].updated_at ||
+                fetchedSessions[i].title !== state.sessions[i].title) {
+              changed = true;
+              break;
+            }
+          }
+        }
+        
+        const oldIds = new Set(state.sessions.map(s => s.id));
+        const newSessions = fetchedSessions.filter(s => !oldIds.has(s.id));
+        
+        if (changed) {
+          state.sessions = fetchedSessions;
+          renderSessions();
+        }
+
+        if (newSessions.length > 0 && !state.isProcessing) {
+          // Switch to the newest session if it was created externally (e.g. by Telegram)
+          const newest = fetchedSessions[0];
+          if (newest && newest.id !== state.activeSessionId) {
+            console.log("[Session Polling] Switching to newly created session:", newest.id);
+            await loadSession(newest.id);
+          }
+        }
+      }
+
+      // 2. Poll active session messages
+      if (state.activeSessionId && !state.isProcessing) {
+        const activeSessResp = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`);
+        if (activeSessResp.ok) {
+          const activeSess = await activeSessResp.json();
+          const fetchedMsgs = activeSess.messages || [];
+          
+          // Compare with state.messages length or content
+          let msgsChanged = fetchedMsgs.length !== state.messages.length;
+          if (!msgsChanged) {
+            for (let i = 0; i < fetchedMsgs.length; i++) {
+              const msg = typeof fetchedMsgs[i] === "string" ? JSON.parse(fetchedMsgs[i]) : fetchedMsgs[i];
+              const stateMsg = state.messages[i];
+              if (!stateMsg || msg.role !== stateMsg.role || msg.content !== stateMsg.content) {
+                msgsChanged = true;
+                break;
+              }
+            }
+          }
+          
+          if (msgsChanged) {
+            state.messages = fetchedMsgs.map((m) => {
+              const msg = typeof m === "string" ? JSON.parse(m) : m;
+              let steps = msg.steps || [];
+              if (!steps.length) {
+                if (msg.thinking) {
+                  steps.push({ type: "thinking", content: msg.thinking });
+                }
+                const tc = msg.toolCalls || msg.tool_calls || [];
+                const tr = msg.toolResults || msg.tool_results || [];
+                for (const call of tc) {
+                  steps.push({ type: "tool_call", call });
+                }
+                for (const res of tr) {
+                  steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
+                }
+              }
+              return {
+                role: msg.role || "user",
+                content: msg.content || "",
+                steps,
+                images: msg.images || undefined,
+                attachments: (msg.attachments || []).map((att) => {
+                  let url = att.url;
+                  if (!url || url === "undefined") {
+                    if (att.data) {
+                      const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
+                      url = `data:${mime};base64,${att.data}`;
+                    }
+                  }
+                  return {
+                    name: att.name || "",
+                    mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
+                    kind: att.kind || "",
+                    data: att.data || "",
+                    url: url || ""
+                  };
+                }),
+                streaming: false,
+                waiting: false,
+                timestamp: msg.timestamp || "",
+              };
+            });
+            renderMessages();
+            renderAttachments();
+            updateContextBar();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn("Session polling failed:", err);
+    }
+  }, 2000);
+}
+
 bootstrap();
 
 async function bootstrap() {
@@ -726,6 +842,7 @@ async function bootstrap() {
     await createSession();
   }
   startHealthCheck();
+  startSessionPolling();
 }
 
 function applySidebarState() {
@@ -2703,6 +2820,7 @@ function formatMessageTime(dateString) {
 
 function renderSessions() {
   if (!els.sessionList) return;
+  if (els.sessionList.querySelector(".session-title-input")) return;
   els.sessionList.innerHTML = "";
   if (!state.sessions.length) {
     els.sessionList.innerHTML = `<div class="empty">No sessions yet</div>`;
