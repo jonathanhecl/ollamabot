@@ -3252,7 +3252,6 @@ els.backToDetailBtn.addEventListener("click", () => {
 async function openMemoryExplorer() {
   els.memoryDialog.showModal();
   els.memorySearch.value = "";
-  els.newMemoryText.value = "";
   els.reindexStatusArea.style.display = "none";
   await loadAndRenderMemories();
 }
