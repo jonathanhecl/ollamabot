@@ -1396,7 +1396,7 @@ async function sendMessage(event) {
   const visibleAttachments = [...state.attachments];
   
   // Push the message with processed = false to state
-  const userMessage = { role: "user", content, images, attachments: visibleAttachments, processed: false };
+  const userMessage = { role: "user", content, images, attachments: visibleAttachments, processed: false, timestamp: new Date().toISOString() };
   state.messages.push(userMessage);
   
   state.attachments = [];
@@ -1645,6 +1645,7 @@ async function processNextQueueItem() {
     // Stream is fully closed by the server. All rounds are complete!
     assistant.waiting = false;
     assistant.streaming = false;
+    assistant.timestamp = new Date().toISOString();
     renderMessages();
     updateContextBar();
     // Clear binary base64 images from user messages that were pre-processed (transcribed/analyzed)
@@ -2402,6 +2403,7 @@ async function saveSession() {
       images: msg.images || undefined,
       attachments: msg.attachments || undefined,
       image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
+      timestamp: msg.timestamp,
     }));
     await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
       method: "PUT",
@@ -2440,6 +2442,23 @@ function formatRelativeTime(dateString) {
   } else {
     return date.toLocaleDateString();
   }
+}
+
+function formatMessageTime(dateString) {
+  if (!dateString) return "";
+  const date = new Date(dateString);
+  const now = new Date();
+  const hours = date.getHours();
+  const minutes = date.getMinutes();
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = hours % 12 || 12;
+  const displayMinutes = minutes < 10 ? '0' + minutes : minutes;
+  const timeStr = `${displayHours}:${displayMinutes} ${ampm}`;
+  
+  if (date.toDateString() === now.toDateString()) {
+    return timeStr;
+  }
+  return `${date.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})} ${timeStr}`;
 }
 
 function renderSessions() {

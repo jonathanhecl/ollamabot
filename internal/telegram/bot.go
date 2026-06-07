@@ -664,8 +664,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	// 2. Append new user message with media if present
 	userMsg := rawMsg{
-		Role:    "user",
-		Content: msg.Text,
+		Role:      "user",
+		Content:   msg.Text,
+		Timestamp: time.Now().Format(time.RFC3339),
 	}
 
 	if len(mediaBytes) > 0 {
@@ -779,8 +780,27 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 
 	// 10. Persist full history details (thinking process and tool results) in session messages
+	var userAssistantTimestamps []string
+	for _, hm := range history {
+		if hm.Role == "user" || hm.Role == "assistant" {
+			userAssistantTimestamps = append(userAssistantTimestamps, hm.Timestamp)
+		}
+	}
+
+	uaIdx := 0
 	var newRawMessages []json.RawMessage
 	for _, m := range finalHistory {
+		msgTimestamp := ""
+		if m.Role == "user" || m.Role == "assistant" {
+			if uaIdx < len(userAssistantTimestamps) {
+				msgTimestamp = userAssistantTimestamps[uaIdx]
+				uaIdx++
+			}
+			if msgTimestamp == "" {
+				msgTimestamp = time.Now().Format(time.RFC3339)
+			}
+		}
+
 		if m.Role == "user" && len(m.Images) > 0 {
 			rm := rawMsg{
 				Role:        m.Role,
@@ -790,6 +810,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				ImageKinds:  userMsg.ImageKinds,
 				Attachments: userMsg.Attachments,
 				Name:        m.Name,
+				Timestamp:   msgTimestamp,
 			}
 			rawBytes, _ := json.Marshal(rm)
 			newRawMessages = append(newRawMessages, rawBytes)
@@ -806,6 +827,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				Name:      m.Name,
 				Images:    m.Images,
 				ToolCalls: tcRaw,
+				Timestamp: msgTimestamp,
 			}
 			rawBytes, _ := json.Marshal(rm)
 			newRawMessages = append(newRawMessages, rawBytes)

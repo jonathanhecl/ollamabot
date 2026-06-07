@@ -28,6 +28,7 @@ type rawMsg struct {
 	Content        string            `json:"content,omitempty"`
 	Thinking       string            `json:"thinking,omitempty"`
 	Name           string            `json:"name,omitempty"`
+	Timestamp      string            `json:"timestamp,omitempty"`
 	Images         []string          `json:"images,omitempty"`
 	AttachmentRefs []string          `json:"attachment_refs,omitempty"`
 	ImageKinds     []string          `json:"image_kinds,omitempty"`
