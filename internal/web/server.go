@@ -1440,7 +1440,22 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timeout:
-			return "", fmt.Errorf("clarification timeout")
+			chosen := selectDefaultOption(options)
+			log.Printf("[Web] Clarification timed out. Auto-selected default option: %q", chosen)
+			return chosen, nil
 		}
 	}
+}
+
+func selectDefaultOption(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	for _, opt := range options {
+		low := strings.ToLower(opt)
+		if strings.Contains(low, "recommended") || strings.Contains(low, "recomendado") || strings.Contains(low, "default") || strings.Contains(low, "predeterminado") {
+			return opt
+		}
+	}
+	return options[0]
 }

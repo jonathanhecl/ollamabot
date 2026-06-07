@@ -428,4 +428,47 @@ func TestClarifyTool(t *testing.T) {
 	}
 }
 
+func TestSelectDefaultOption(t *testing.T) {
+	tests := []struct {
+		name    string
+		options []string
+		want    string
+	}{
+		{
+			name:    "selects recommended option",
+			options: []string{"Option A", "Option B (Recommended)", "Option C"},
+			want:    "Option B (Recommended)",
+		},
+		{
+			name:    "selects recomendado option",
+			options: []string{"Option A", "Option B (Recomendado)", "Option C"},
+			want:    "Option B (Recomendado)",
+		},
+		{
+			name:    "selects default option",
+			options: []string{"Option A", "Default Option", "Option C"},
+			want:    "Default Option",
+		},
+		{
+			name:    "fallback to first option",
+			options: []string{"Option A", "Option B", "Option C"},
+			want:    "Option A",
+		},
+		{
+			name:    "empty options slice",
+			options: []string{},
+			want:    "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := selectDefaultOption(tt.options)
+			if got != tt.want {
+				t.Errorf("selectDefaultOption() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 

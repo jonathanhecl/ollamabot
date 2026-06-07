@@ -54,7 +54,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Las peticiones de aprobación expiran de forma abrupta a los 5 minutos, interrumpiendo el flujo.
 - **Feedback del Usuario:** *"claro, se puede mejorar"*
 - **Acción:**
-  - [ ] Implementar un estado de suspensión en el loop del agente que permita guardar temporalmente el estado del turno para reanudarlo asíncronamente cuando el usuario responda, eliminando el timeout rígido de 5 minutos.
+  - [x] Implementar un estado de suspensión en el loop del agente que permita guardar temporalmente el estado del turno para reanudarlo asíncronamente cuando el usuario responda, eliminando el timeout rígido de 5 minutos.
 
 ### 9. Indexación Vectorial para RAG Semántico
 - **Punto del Relevamiento:** La búsqueda RAG lineal O(n) sobre `memory.jsonl` no escalará si se acumulan miles de registros.

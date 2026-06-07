@@ -397,6 +397,9 @@
           <button id="denyToolBtn" class="danger-button" type="button" style="background: #ef4444; border-color: #ef4444; color: white;">Deny ❌</button>
           <button id="approveToolBtn" class="primary-button" type="button">Approve ✅</button>
         </div>
+        <div id="approvalCountdownContainer" style="text-align: center; margin-top: 15px; color: #ef4444; font-size: 13px; font-weight: 500; font-family: monospace;">
+          ⏱️ Auto-denying in <span id="approvalCountdown">05:00</span>
+        </div>
       </div>
     </dialog>
 
@@ -411,6 +414,9 @@
         <p>Please select one of the following options to help the agent plan the next action:</p>
         <div id="clarificationOptionsContainer" class="clarification-options-list" style="margin: 20px 0 10px 0; display: flex; flex-direction: column; gap: 10px;">
           <!-- Options will be dynamically populated here -->
+        </div>
+        <div id="clarificationCountdownContainer" style="text-align: center; margin-top: 15px; color: #f59e0b; font-size: 13px; font-weight: 500; font-family: monospace;">
+          ⏱️ Auto-answering default option in <span id="clarificationCountdown">05:00</span>
         </div>
       </div>
     </dialog>

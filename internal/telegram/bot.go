@@ -1182,8 +1182,10 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "")
 		return "", ctx.Err()
 	case <-time.After(5 * time.Minute):
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* clarification request timed out.", "")
-		return "", fmt.Errorf("clarification timeout")
+		chosen := selectDefaultOption(options)
+		statusText := fmt.Sprintf("⚠️ *Timed out:* auto-selected option: %s", chosen)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "")
+		return chosen, nil
 	}
 }
 
@@ -1430,4 +1432,17 @@ func (b *Bot) sendMessageWithMarkup(chatID int64, text string, replyToID int64, 
 		return apiResp.Result.MessageID, nil
 	}
 	return 0, nil
+}
+
+func selectDefaultOption(options []string) string {
+	if len(options) == 0 {
+		return ""
+	}
+	for _, opt := range options {
+		low := strings.ToLower(opt)
+		if strings.Contains(low, "recommended") || strings.Contains(low, "recomendado") || strings.Contains(low, "default") || strings.Contains(low, "predeterminado") {
+			return opt
+		}
+	}
+	return options[0]
 }

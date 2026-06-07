@@ -1957,7 +1957,13 @@ function writeAscii(view, offset, value) {
   }
 }
 
+let approvalInterval = null;
+let clarificationInterval = null;
+
 function showApprovalDialog(id, toolName, args) {
+  if (approvalInterval) {
+    clearInterval(approvalInterval);
+  }
   state.currentApprovalId = id;
   els.approvalToolName.textContent = toolName;
   try {
@@ -1965,10 +1971,37 @@ function showApprovalDialog(id, toolName, args) {
   } catch {
     els.approvalToolArgs.textContent = String(args);
   }
+  
+  const countdownEl = document.querySelector("#approvalCountdown");
+  if (countdownEl) {
+    const startTime = Date.now();
+    const duration = 300 * 1000; // 5 minutes
+    
+    const updateTimer = () => {
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, duration - elapsed);
+      const totalSecs = Math.ceil(remaining / 1000);
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      countdownEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      if (remaining <= 0) {
+        clearInterval(approvalInterval);
+        approvalInterval = null;
+        respondToApproval(id, false); // Auto-deny
+      }
+    };
+    updateTimer();
+    approvalInterval = setInterval(updateTimer, 500);
+  }
+  
   els.approvalDialog.showModal();
 }
 
 async function respondToApproval(id, approved) {
+  if (approvalInterval) {
+    clearInterval(approvalInterval);
+    approvalInterval = null;
+  }
   try {
     await fetch("/api/tools/approve", {
       method: "POST",
@@ -1984,6 +2017,9 @@ async function respondToApproval(id, approved) {
 }
 
 function showClarificationDialog(id, question, options) {
+  if (clarificationInterval) {
+    clearInterval(clarificationInterval);
+  }
   state.currentClarificationId = id;
   els.clarificationQuestion.textContent = question;
   els.clarificationOptionsContainer.innerHTML = "";
@@ -2000,10 +2036,48 @@ function showClarificationDialog(id, question, options) {
     els.clarificationOptionsContainer.appendChild(btn);
   });
   
+  const countdownEl = document.querySelector("#clarificationCountdown");
+  if (countdownEl) {
+    const startTime = Date.now();
+    const duration = 300 * 1000; // 5 minutes
+    
+    const updateTimer = () => {
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, duration - elapsed);
+      const totalSecs = Math.ceil(remaining / 1000);
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      countdownEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      if (remaining <= 0) {
+        clearInterval(clarificationInterval);
+        clarificationInterval = null;
+        const chosen = selectDefaultOptionJS(options);
+        respondToClarification(id, chosen); // Auto-respond with default
+      }
+    };
+    updateTimer();
+    clarificationInterval = setInterval(updateTimer, 500);
+  }
+  
   els.clarificationDialog.showModal();
 }
 
+function selectDefaultOptionJS(options) {
+  if (!options || options.length === 0) return "";
+  for (const opt of options) {
+    const low = opt.toLowerCase();
+    if (low.includes("recommended") || low.includes("recomendado") || low.includes("default") || low.includes("predeterminado")) {
+      return opt;
+    }
+  }
+  return options[0];
+}
+
 async function respondToClarification(id, option) {
+  if (clarificationInterval) {
+    clearInterval(clarificationInterval);
+    clarificationInterval = null;
+  }
   try {
     await fetch("/api/tools/clarify", {
       method: "POST",
