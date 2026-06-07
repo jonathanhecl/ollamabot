@@ -58,6 +58,9 @@ Hecho:
 - Sleep Mode y GPU Safety: Reflector de Sleep Mode secuencial en segundo plano que comprueba la carga de hardware en Ollama (`/api/ps`) antes de iniciar la iteración para no ralentizar el equipo.
 - Seguridad en Consola Web: Autenticación básica mediante cabecera `X-Web-Password` y variable de entorno `WEB_PASSWORD` con pantalla de login en la SPA.
 - Explorador Visual de Memoria Semántica: Panel en la Web Console para buscar, agregar, borrar y re-indexar manualmente los vectores RAG tras un cambio de modelo de embeddings.
+- Fechas y Horas en Mensajes: Registro automático de marcas de tiempo en mensajes de chat y visualización de burbujas horarias en la esquina inferior derecha de cada mensaje, similar a Telegram.
+- Alineación y Agrupación de Acciones de Sesión: Ubicación del botón de renombrar (lápiz) y eliminar (x) en un contenedor `.session-actions` a la derecha de cada elemento de la barra lateral, alineados horizontalmente con un diseño unificado de 22x22px y efectos hover optimizados.
+- Monitoreo de Estado y Conexión: Comprobación continua (cada 5 segundos) contra el servidor Go y Ollama, actualizando el estado visual a rojo/offline cuando no hay respuesta o el servidor se detiene.
 
 Comandos disponibles:
 

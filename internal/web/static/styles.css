@@ -163,23 +163,50 @@ input {
   flex: 1;
 }
 
-.session-rename-btn {
+.session-actions {
   display: none;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 10px;
-  padding: 0;
+  align-items: center;
+  gap: 4px;
   flex-shrink: 0;
 }
 
-.session-item:hover .session-rename-btn {
-  display: inline-flex;
+.session-item:hover .session-actions {
+  display: flex;
+}
+
+.session-rename-btn,
+.session-delete {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.session-rename-btn {
+  font-size: 11px;
+}
+
+.session-delete {
+  font-size: 14px;
 }
 
 .session-rename-btn:hover {
+  background: var(--line);
   color: var(--accent);
+}
+
+.session-delete:hover {
+  background: var(--bad);
+  color: #fff;
 }
 
 .session-title-input {
@@ -201,31 +228,6 @@ input {
 .session-meta {
   color: var(--muted);
   font-size: 11px;
-}
-
-.session-delete {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  font-size: 14px;
-  flex-shrink: 0;
-  padding: 0;
-}
-
-.session-item:hover .session-delete {
-  display: flex;
-}
-
-.session-delete:hover {
-  background: var(--bad);
-  color: #fff;
 }
 
 .app {
@@ -429,7 +431,7 @@ h2 {
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 8px;
-  padding: 13px;
+  padding: 13px 13px 26px 13px;
   margin-bottom: 12px;
   position: relative;
   overflow: hidden;
@@ -2946,5 +2948,13 @@ textarea {
   background: #141812;
 }
 
-
-
+.message-time {
+  position: absolute;
+  bottom: 8px;
+  right: 12px;
+  font-size: 10px;
+  color: var(--muted);
+  user-select: none;
+  font-weight: 500;
+  opacity: 0.85;
+}

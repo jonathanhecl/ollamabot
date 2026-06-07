@@ -2009,8 +2009,8 @@ function renderMessages() {
     } else {
       contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
     }
-    
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}`;
+    const timeHtml = message.timestamp ? `<span class="message-time">${escapeHtml(formatMessageTime(message.timestamp))}</span>` : "";
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${timeHtml}`;
     els.messages.appendChild(div);
   }
   els.messages.scrollTop = els.messages.scrollHeight;
@@ -2553,6 +2553,7 @@ async function loadSession(id) {
         }),
         streaming: false,
         waiting: false,
+        timestamp: msg.timestamp || "",
       };
     });
     if (sess.model) state.activeModel = sess.model;
@@ -2661,7 +2662,7 @@ function renderSessions() {
     btn.dataset.id = sess.id;
     const fullDate = sess.updated_at ? new Date(sess.updated_at).toLocaleString() : "";
     const relativeDate = sess.updated_at ? formatRelativeTime(sess.updated_at) : "";
-    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span><button class="session-rename-btn" type="button" title="Rename session">✏️</button></div><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span></div><button class="session-delete" type="button" title="Delete session">×</button>`;
+    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span></div><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span></div><div class="session-actions"><button class="session-rename-btn" type="button" title="Rename session">✏️</button><button class="session-delete" type="button" title="Delete session">×</button></div>`;
     els.sessionList.appendChild(btn);
   }
 }
