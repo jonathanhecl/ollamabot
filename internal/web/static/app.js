@@ -499,6 +499,7 @@ els.imageDialog.addEventListener("keydown", (e) => {
 function setupBackdropClose(dialog) {
   if (!dialog) return;
   dialog.addEventListener("click", (e) => {
+    if (e.target !== dialog) return;
     const rect = dialog.getBoundingClientRect();
     const isInDialog = (
       rect.top <= e.clientY &&
