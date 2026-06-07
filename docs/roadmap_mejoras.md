@@ -83,7 +83,7 @@ Este documento recopila el feedback del usuario sobre la auditoría técnica de 
 - **Punto del Relevamiento:** Conflictos de procesamiento cuando múltiples proyectos compiten por Ollama en un mismo latido de ticker.
 - **Feedback del Usuario:** *"hay q pensarlo mas"*
 - **Acción:**
-  - [ ] Mantener el ticker actual de procesamiento secuencial simple y reevaluar la cola/paralelismo en etapas posteriores.
+  - [x] Mantener el ticker actual de procesamiento secuencial simple y reevaluar la cola/paralelismo en etapas posteriores.
 
 ### 13. Sleep Mode y Consumo de GPU (Subagentes)
 - **Punto del Relevamiento:** El refinamiento en segundo plano de Sleep Mode puede ralentizar el equipo de forma imprevista si el usuario está usando otra app pesada.

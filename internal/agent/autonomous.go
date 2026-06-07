@@ -302,6 +302,21 @@ Do NOT write any conversational text, markdown formatting blocks, or packaging. 
 
 // Tick checks all projects and processes the next pending task of one active project
 func (am *AutonomousManager) Tick(ctx context.Context) {
+	am.mu.RLock()
+	anyWorking := false
+	for _, working := range am.isWorking {
+		if working {
+			anyWorking = true
+			break
+		}
+	}
+	am.mu.RUnlock()
+
+	if anyWorking {
+		// Already executing a task, wait for the next tick to avoid overloading Ollama
+		return
+	}
+
 	projects, err := am.ListProjects()
 	if err != nil {
 		log.Printf("[autonomous] Tick error listing projects: %v", err)
