@@ -38,6 +38,12 @@ type Project struct {
 	CurrentTask string        `json:"current_task,omitempty"`
 }
 
+// TaskNotificationFunc defines a callback for task success or failure
+type TaskNotificationFunc func(proj Project, task ProjectTodo, err error)
+
+// OnTaskCompletion is a global callback triggered when an autonomous task completes or fails
+var OnTaskCompletion TaskNotificationFunc
+
 // AutonomousManager manages background tickers and executions of workspace projects
 type AutonomousManager struct {
 	mu           sync.RWMutex
@@ -404,7 +410,11 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		task.Status = "failed"
 		task.Result = "No default model configured in settings. Cannot execute."
 		_ = am.SaveProject(proj)
-		return fmt.Errorf("missing Ollama default model")
+		err := fmt.Errorf("missing Ollama default model")
+		if OnTaskCompletion != nil {
+			OnTaskCompletion(proj, *task, err)
+		}
+		return err
 	}
 
 	log.Printf("[autonomous] Task execution started for project %q: %q", proj.Name, task.Content)
@@ -456,6 +466,9 @@ Task Description: %s
 		task.Status = "failed"
 		task.Result = fmt.Sprintf("Error running agent turn: %v", err)
 		_ = am.SaveProject(proj)
+		if OnTaskCompletion != nil {
+			OnTaskCompletion(proj, *task, err)
+		}
 		return err
 	}
 
@@ -529,6 +542,10 @@ Task Description: %s
 
 	_ = os.WriteFile(logPath, []byte(logContent.String()), 0644)
 	log.Printf("[autonomous] Task execution completed successfully for project %q: %s", proj.Name, task.ID)
+
+	if OnTaskCompletion != nil {
+		OnTaskCompletion(proj, *task, nil)
+	}
 
 	return nil
 }

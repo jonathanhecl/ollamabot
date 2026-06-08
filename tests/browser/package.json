@@ -1,0 +1,11 @@
+{
+  "name": "ollamabot-browser-tests",
+  "version": "1.0.0",
+  "description": "Integration tests for OllamaBot Web UI",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

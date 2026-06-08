@@ -279,6 +279,10 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.registerCommands()
 	log.Println("[Telegram] Polling loop started successfully")
 	b.sendStartupNotification()
+
+	agent.OnTaskCompletion = func(proj agent.Project, task agent.ProjectTodo, err error) {
+		b.notifyTaskCompletion(proj, task, err)
+	}
 	offset := int64(0)
 	retryDelay := 5 * time.Second
 	const maxRetryDelay = 60 * time.Second
@@ -2156,6 +2160,54 @@ func (b *Bot) registerCommands() {
 			log.Println("[Telegram] Commands successfully registered with Menu button")
 		} else {
 			log.Printf("[Telegram] Warning: Failed to register commands: %s", apiResp.Description)
+		}
+	}
+}
+
+func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, err error) {
+	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+		return
+	}
+
+	var sb strings.Builder
+	if err != nil {
+		sb.WriteString("❌ *Autonomous Task Failed!*\n\n")
+		sb.WriteString(fmt.Sprintf("📂 *Project:* `%s`\n", proj.Name))
+		sb.WriteString(fmt.Sprintf("🎯 *Goal:* %s\n", proj.Goal))
+		sb.WriteString(fmt.Sprintf("📝 *Task:* %s\n", task.Content))
+		sb.WriteString(fmt.Sprintf("⚠️ *Error:* %v\n", err))
+	} else {
+		if task.Status == "completed" {
+			sb.WriteString("✅ *Autonomous Task Completed!*\n\n")
+			sb.WriteString(fmt.Sprintf("📂 *Project:* `%s`\n", proj.Name))
+			sb.WriteString(fmt.Sprintf("🎯 *Goal:* %s\n", proj.Goal))
+			sb.WriteString(fmt.Sprintf("📝 *Task:* %s\n\n", task.Content))
+			
+			// Show execution result if present
+			if strings.TrimSpace(task.Result) != "" {
+				sb.WriteString("*Result:*\n")
+				sb.WriteString(task.Result)
+				sb.WriteString("\n\n")
+			}
+			
+			if proj.Status == "completed" {
+				sb.WriteString("🎉 *Project Fully Completed!*\n")
+				sb.WriteString(fmt.Sprintf("All tasks for project `%s` have finished successfully.", proj.Name))
+			}
+		} else {
+			return
+		}
+	}
+
+	messageText := strings.TrimSpace(sb.String())
+	chunks := splitMessage(messageText, 4000)
+
+	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+		id, err := parseChatID(authID)
+		if err == nil {
+			for _, chunk := range chunks {
+				_, _ = b.sendMessage(id, toTelegramHTML(chunk), 0, "HTML")
+			}
 		}
 	}
 }

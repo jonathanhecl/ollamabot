@@ -1,0 +1,17 @@
+[
+  {
+    "role": "user",
+    "content": "Hello test",
+    "steps": [],
+    "images": [],
+    "attachments": [],
+    "image_kinds": [],
+    "timestamp": "2026-06-08T06:57:39.391Z"
+  },
+  {
+    "role": "assistant",
+    "content": "Here is some code:\n```javascript\nconsole.log('hello');\n```",
+    "steps": [],
+    "timestamp": "2026-06-08T06:57:39.416Z"
+  }
+]

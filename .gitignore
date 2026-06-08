@@ -36,3 +36,17 @@ go.work.sum
 /workspace/
 /agent/
 /skills/
+
+# Frontend/Playwright test artifacts
+/tests/browser/node_modules/
+/tests/browser/assets/test_image.png
+/tests/browser/workspace/
+/tests/browser/sessions/
+/tests/browser/memory/
+/tests/browser/skills/
+/tests/browser/.env.test
+/tests/browser/test_ollamabot.exe
+/tests/browser/test-results/
+/tests/browser/playwright-report/
+/playwright-report/
+/test-results/
