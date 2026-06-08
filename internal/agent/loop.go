@@ -60,6 +60,42 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	a.currentGoal = goal
 	a.mu.Unlock()
 
+	// Proactive Update Soul from User prompt
+	if goal != "" {
+		_ = UpdateSoulFromPrompt(goal)
+	}
+
+	// Proactive Auto-RAG context pre-fetching
+	var recalledMemoriesBlock string
+	if a.registry != nil && a.registry.MemoryStore() != nil && a.cfg.OllamaModelEmbed != "" && goal != "" {
+		embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
+			Model: a.cfg.OllamaModelEmbed,
+			Input: goal,
+		})
+		if err == nil && len(embedResp.Embeddings) > 0 {
+			results := a.registry.MemoryStore().Search(embedResp.Embeddings[0], 3)
+			if len(results) > 0 {
+				var sb strings.Builder
+				hasMatchingMemories := false
+				for _, res := range results {
+					if res.Score >= 0.70 {
+						if !hasMatchingMemories {
+							sb.WriteString("# Recalled Context (Long-term Memory)\n")
+							sb.WriteString("The following relevant information was retrieved from your long-term memory:\n")
+							hasMatchingMemories = true
+						}
+						fmt.Fprintf(&sb, "- %s (Source: %s, Relevance: %.2f)\n", res.Text, res.Source, res.Score)
+					}
+				}
+				if hasMatchingMemories {
+					recalledMemoriesBlock = sb.String()
+				}
+			}
+		} else if err != nil {
+			log.Printf("[Agent Run] Memory pre-fetch embedding error: %v (gracefully continuing)", err)
+		}
+	}
+
 	// Load and inject custom skills from configurable skills path
 	skillsDir := a.cfg.SkillsPath
 	var skillsBlock string
@@ -72,6 +108,48 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	emptyChatErrRetries := 0
 
 	for i := 0; i < MaxIterations; i++ {
+		var systemPrefix []ollama.Message
+
+		// Load SOUL.md dynamically
+		if soul, err := LoadSoul(); err == nil && soul != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: soul,
+			})
+		}
+
+		// Load USER_PROFILE.md dynamically
+		if profile, err := LoadUserProfile(); err == nil && profile != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: "# User Profile & Preferences\n" + profile,
+			})
+		}
+
+		// Inject memory tools instruction
+		if a.cfg.OllamaModelEmbed != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.",
+			})
+		}
+
+		// Inject proactive recalled memories if any
+		if recalledMemoriesBlock != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: recalledMemoriesBlock,
+			})
+		}
+
+		// Inject loaded skills block if discovered
+		if skillsBlock != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: "# Loaded Custom Skills\n\n" + skillsBlock,
+			})
+		}
+
 		// 1. Check Todo list status
 		todoStore := a.registry.TodoStore()
 		var todoNote string
@@ -88,39 +166,33 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 		}
 
-		// 2. Build system instructions incorporating Todo checklists, goals, and skills
-		activeMessages := make([]ollama.Message, len(messages))
-		copy(activeMessages, messages)
 		if todoNote != "" {
-			activeMessages = append([]ollama.Message{{
+			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: todoNote,
-			}}, activeMessages...)
-		}
-
-		// Inject loaded skills block if discovered
-		if skillsBlock != "" {
-			activeMessages = append([]ollama.Message{{
-				Role:    "system",
-				Content: "# Loaded Custom Skills\n\n" + skillsBlock,
-			}}, activeMessages...)
+			})
 		}
 
 		// Inject the current goal reinforcement
 		if goal != "" {
 			goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done.", goal)
-			activeMessages = append([]ollama.Message{{
+			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: goalReinforce,
-			}}, activeMessages...)
+			})
 		}
 
 		// Inject reinforcement for clarification
 		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool to present a clear question with at least 2 proposed options. Do not assume or guess if key details are missing."
-		activeMessages = append([]ollama.Message{{
+		systemPrefix = append(systemPrefix, ollama.Message{
 			Role:    "system",
 			Content: clarificationReinforce,
-		}}, activeMessages...)
+		})
+
+		// 2. Build system instructions incorporating Todo checklists, goals, and skills
+		activeMessages := make([]ollama.Message, 0, len(systemPrefix)+len(messages))
+		activeMessages = append(activeMessages, systemPrefix...)
+		activeMessages = append(activeMessages, messages...)
 
 		// 3. Prepare the request
 		req := ollama.ChatRequest{

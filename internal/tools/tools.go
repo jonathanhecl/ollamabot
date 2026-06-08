@@ -455,6 +455,16 @@ func (r *Registry) TodoStore() *TodoStore {
 	return r.todoStore
 }
 
+// MemoryStore returns the long-term memory store instance.
+func (r *Registry) MemoryStore() *memory.Store {
+	return r.memoryStore
+}
+
+// EmbedModel returns the embedding model name.
+func (r *Registry) EmbedModel() string {
+	return r.embedModel
+}
+
 // Execute runs a tool call and returns the result string.
 func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, error) {
 	name := call.Function.Name

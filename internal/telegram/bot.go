@@ -857,36 +857,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		b.sendMessage(chatID, "❌ Error pre-processing media: "+err.Error(), 0, "")
 		return
 	}
-
-	// 5. Inject memory system instructions
-	if b.cfg.OllamaModelEmbed != "" {
-		ollamaMessages = append([]ollama.Message{{
-			Role:    "system",
-			Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.",
-		}}, ollamaMessages...)
-	}
-
-	// 6. Dynamically update personality from query
-	if msg.Text != "" {
-		_ = agent.UpdateSoulFromPrompt(msg.Text)
-	}
-
-	// 7. Inject SOUL.md system instruction
-	if soulContent, err := agent.LoadSoul(); err == nil && soulContent != "" {
-		ollamaMessages = append([]ollama.Message{{
-			Role:    "system",
-			Content: soulContent,
-		}}, ollamaMessages...)
-	}
-
-	// Inject USER_PROFILE.md system instruction
-	if profileContent, err := agent.LoadUserProfile(); err == nil && profileContent != "" {
-		ollamaMessages = append([]ollama.Message{{
-			Role:    "system",
-			Content: "# User Profile & Preferences\n" + profileContent,
-		}}, ollamaMessages...)
-	}
-
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    b.cfg.SearchProviders,

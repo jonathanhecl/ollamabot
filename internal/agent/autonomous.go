@@ -424,17 +424,6 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 
 	// Generate Tick execution system context
 	var systemInstructions strings.Builder
-	if soul, err := LoadSoul(); err == nil && soul != "" {
-		systemInstructions.WriteString(soul)
-		systemInstructions.WriteString("\n\n")
-	}
-
-	if profile, err := LoadUserProfile(); err == nil && profile != "" {
-		systemInstructions.WriteString("# User Profile & Preferences\n")
-		systemInstructions.WriteString(profile)
-		systemInstructions.WriteString("\n\n")
-	}
-
 	systemInstructions.WriteString(fmt.Sprintf(`## Autonomous Project Mode
 You are executing a focused task in an autonomous cycle.
 Project ID: %s
