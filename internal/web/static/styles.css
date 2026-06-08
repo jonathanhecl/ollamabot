@@ -237,6 +237,13 @@ input {
   overflow: hidden;
 }
 
+.app > .topbar { grid-row: 1; }
+.app > .status-strip { grid-row: 2; }
+.app > .capability-bar { grid-row: 3; }
+.app > .messages { grid-row: 4; }
+.app > .attachments { grid-row: 5; }
+.app > .composer { grid-row: 6; }
+
 .app.drag-over {
   outline: 2px dashed var(--accent);
   outline-offset: -4px;
