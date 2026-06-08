@@ -126,7 +126,7 @@ func TestAttachmentExtractionAndRestore(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(got.Messages))
 	}
 
-	var restored rawMsg
+	var restored RawMsg
 	if err := json.Unmarshal(got.Messages[0], &restored); err != nil {
 		t.Fatalf("Unmarshal restored message: %v", err)
 	}

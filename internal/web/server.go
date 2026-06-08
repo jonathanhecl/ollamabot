@@ -43,6 +43,7 @@ type Server struct {
 	sessionStore     *sessions.Store
 	memoryStore      *memory.Store
 	autoMgr          *agent.AutonomousManager
+	goalMgr          *agent.GoalManager
 	approvalsMu      sync.Mutex
 	approvals        map[string]chan bool
 	clarificationsMu sync.Mutex
@@ -126,6 +127,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 	ss := sessions.NewStore(cfg.SessionsPath)
 	ms := memory.NewStore(cfg.MemoryPath)
 	am := agent.NewAutonomousManager(cfg, client, ms)
+	gm := agent.NewGoalManager(cfg, client)
 	return &Server{
 		cfg:            cfg,
 		envPath:        envPath,
@@ -136,6 +138,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		sessionStore:   ss,
 		memoryStore:    ms,
 		autoMgr:        am,
+		goalMgr:        gm,
 		approvals:      make(map[string]chan bool),
 		clarifications: make(map[string]chan string),
 	}
@@ -144,6 +147,12 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 func (s *Server) SetSleepManager(sm *learning.SleepManager) {
 	s.mu.Lock()
 	s.sleepMgr = sm
+	s.mu.Unlock()
+}
+
+func (s *Server) SetGoalManager(gm *agent.GoalManager) {
+	s.mu.Lock()
+	s.goalMgr = gm
 	s.mu.Unlock()
 }
 
@@ -160,6 +169,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
+	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
 	mux.HandleFunc("GET /api/memory", s.handleListMemory)
 	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
@@ -1567,4 +1577,55 @@ func selectDefaultOption(options []string) string {
 		}
 	}
 	return options[0]
+}
+
+type sessionGoalRequest struct {
+	Action    string `json:"action"` // "start", "pause", "resume", "clear"
+	Objective string `json:"objective,omitempty"`
+}
+
+func (s *Server) handleSessionGoal(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req sessionGoalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	s.mu.RLock()
+	goalMgr := s.goalMgr
+	s.mu.RUnlock()
+
+	if goalMgr == nil {
+		writeError(w, http.StatusInternalServerError, fmt.Errorf("GoalManager not initialized"))
+		return
+	}
+
+	var err error
+	switch req.Action {
+	case "start":
+		err = goalMgr.StartGoal(id, req.Objective)
+	case "pause":
+		err = goalMgr.PauseGoal(id)
+	case "resume":
+		err = goalMgr.ResumeGoal(id)
+	case "clear":
+		err = goalMgr.ClearGoal(id)
+	default:
+		writeError(w, http.StatusBadRequest, fmt.Errorf("unknown goal action %q", req.Action))
+		return
+	}
+
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	sess, err := s.sessionStore.Get(id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, sess)
 }

@@ -1693,6 +1693,67 @@ async function sendMessage(event) {
     await stopRecording();
   }
   const content = els.prompt.value.trim();
+  if (content.startsWith("/goal")) {
+    els.prompt.value = "";
+    els.prompt.focus();
+
+    if (!state.activeSessionId) {
+      const title = content.slice(0, 40);
+      await createSession(title);
+    }
+
+    const command = content.slice(5).trim();
+    let action = "status";
+    let objective = "";
+
+    if (command === "pause") {
+      action = "pause";
+    } else if (command === "resume") {
+      action = "resume";
+    } else if (command === "clear") {
+      action = "clear";
+    } else if (command === "") {
+      action = "status";
+    } else {
+      action = "start";
+      objective = command;
+    }
+
+    try {
+      if (action === "status") {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`);
+        if (res.ok) {
+          const sess = await res.json();
+          if (sess.goal_objective) {
+            addSystemMessage(`🎯 **Active Goal:** ${sess.goal_objective}\n\n**Status:** \`${sess.goal_status}\`\n\n**Last evaluation check:** ${sess.goal_reasoning || "None"}`);
+          } else {
+            addSystemMessage("ℹ️ No active goal in this session. Start one with `/goal <objective>`");
+          }
+          renderMessages();
+        }
+      } else {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/goal`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action, objective }),
+        });
+        if (res.ok) {
+          const sess = await res.json();
+          state.messages = sess.messages || [];
+          renderMessages();
+          updateContextBar();
+        } else {
+          const errText = await res.text();
+          addSystemMessage(`❌ Error executing goal: ${errText}`);
+          renderMessages();
+        }
+      }
+    } catch (err) {
+      addSystemMessage(`❌ Error: ${err.message}`);
+      renderMessages();
+    }
+    return;
+  }
   console.log("[sendMessage] Triggered. content_len:", content.length, "attachments:", state.attachments.length, "activeModel:", state.activeModel);
   if (state.attachments.length > 0) {
     console.log("[sendMessage] Attachment kinds:", state.attachments.map(a => a.kind), "data_lens:", state.attachments.map(a => a.data?.length || 0));

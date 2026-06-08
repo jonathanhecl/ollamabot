@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -209,6 +210,7 @@ type Bot struct {
 	sessManager      *SessionManager
 	memoryStore      *memory.Store
 	autoMgr          *agent.AutonomousManager
+	goalMgr          *agent.GoalManager
 	apiBase          string
 	httpClient       *http.Client
 	approvalsMu      sync.Mutex
@@ -231,6 +233,7 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		sessManager:    NewSessionManager(cfg.SessionsPath),
 		memoryStore:    ms,
 		autoMgr:        agent.NewAutonomousManager(cfg, client, ms),
+		goalMgr:        agent.NewGoalManager(cfg, client),
 		apiBase:        "https://api.telegram.org/bot" + token,
 		httpClient:     &http.Client{Timeout: 40 * time.Second},
 		approvals:      make(map[string]chan bool),
@@ -250,10 +253,30 @@ func (b *Bot) SetSleepManager(sm *learning.SleepManager) {
 	b.sleepMgr = sm
 }
 
+func (b *Bot) SetGoalManager(gm *agent.GoalManager) {
+	b.goalMgr = gm
+}
+
 // Start initiates the long polling loop
 func (b *Bot) Start(ctx context.Context) error {
 	if err := b.sessManager.Load(); err != nil {
 		return fmt.Errorf("failed to load telegram session mapping: %w", err)
+	}
+
+	// Register notifiers for active/paused goals on startup
+	if b.goalMgr != nil {
+		b.sessManager.mu.RLock()
+		for chatIDStr, sessionID := range b.sessManager.mapping {
+			cID, err := strconv.ParseInt(chatIDStr, 10, 64)
+			if err == nil {
+				// Capture current chat ID in a local variable for the closure
+				targetChatID := cID
+				b.goalMgr.RegisterNotifier(sessionID, func(message string) {
+					b.sendMessage(targetChatID, message, 0, "Markdown")
+				})
+			}
+		}
+		b.sessManager.mu.RUnlock()
 	}
 
 	// Verify ffmpeg presence and log clear warnings in console if missing
@@ -711,8 +734,63 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		}
 		b.sessManager.Set(chatIDStr, sessionID)
 		b.sendMessage(chatID, fmt.Sprintf("🔄 *Switched to session:* \"%s\"\n• *ID:* `%s`", title, sessionID), 0, "Markdown")
+	case "/goal":
+		if b.goalMgr == nil {
+			b.sendMessage(chatID, "❌ *Error:* Goal system is not initialized.", 0, "Markdown")
+			return
+		}
+
+		sessionID := b.sessManager.Get(chatIDStr)
+		if sessionID == "" {
+			sessionID = b.startNewSession(chatIDStr)
+		}
+
+		// Register notifier dynamically
+		b.goalMgr.RegisterNotifier(sessionID, func(message string) {
+			b.sendMessage(chatID, message, 0, "Markdown")
+		})
+
+		trimmedArgs := strings.TrimSpace(args)
+		if trimmedArgs == "" {
+			sess, err := b.sessions.Get(sessionID)
+			if err != nil || sess.GoalObjective == "" {
+				b.sendMessage(chatID, "ℹ️ *Usage:* `/goal <objective>` to start a persistent task.\nOther commands:\n• `/goal pause` - Pause active goal\n• `/goal resume` - Resume paused goal\n• `/goal clear` - Clear current goal", 0, "Markdown")
+				return
+			}
+			b.sendMessage(chatID, fmt.Sprintf("🎯 *Active Goal:* %s\n\n*Status:* `%s`\n*Last check:* %s", sess.GoalObjective, sess.GoalStatus, sess.GoalReasoning), 0, "Markdown")
+			return
+		}
+
+		var err error
+		switch trimmedArgs {
+		case "pause":
+			err = b.goalMgr.PauseGoal(sessionID)
+		case "resume":
+			err = b.goalMgr.ResumeGoal(sessionID)
+		case "clear":
+			err = b.goalMgr.ClearGoal(sessionID)
+		default:
+			err = b.goalMgr.StartGoal(sessionID, trimmedArgs)
+		}
+
+		if err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Error:* %v", err), 0, "Markdown")
+		} else {
+			sess, err := b.sessions.Get(sessionID)
+			if err == nil {
+				if trimmedArgs == "clear" {
+					b.sendMessage(chatID, "🧹 *Goal cleared successfully.*", 0, "Markdown")
+				} else if trimmedArgs == "pause" {
+					b.sendMessage(chatID, "⏸️ *Goal paused.*", 0, "Markdown")
+				} else if trimmedArgs == "resume" {
+					b.sendMessage(chatID, "▶️ *Goal resumed.*", 0, "Markdown")
+				} else {
+					b.sendMessage(chatID, fmt.Sprintf("🚀 *Goal started in background!*\nObjective: *%s*", sess.GoalObjective), 0, "Markdown")
+				}
+			}
+		}
 	default:
-		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/sessions`, `/session`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/start`", 0, "Markdown")
+		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/sessions`, `/session`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/goal`, `/start`", 0, "Markdown")
 	}
 }
 
@@ -2134,6 +2212,7 @@ func (b *Bot) registerCommands() {
 			{Command: "projects", Description: "List autonomous workspace projects"},
 			{Command: "memory", Description: "Query long-term semantic memory"},
 			{Command: "reloadmodels", Description: "Force reload models inventory"},
+			{Command: "goal", Description: "Manage persistent objective (start/pause/resume/clear/status)"},
 		},
 	}
 

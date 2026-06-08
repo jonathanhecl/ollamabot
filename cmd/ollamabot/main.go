@@ -99,12 +99,15 @@ func run(args []string) error {
 				sleepMgr = learning.NewSleepManager(cfg, client)
 				sleepMgr.Start(ctx)
 			}
-			startTelegramBot(cfg, client, sleepMgr, *envPath)
+			goalMgr := agent.NewGoalManager(cfg, client)
+			_ = goalMgr.ResumeActiveGoals()
+			startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr)
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
 			if sleepMgr != nil {
 				srv.SetSleepManager(sleepMgr)
 			}
+			srv.SetGoalManager(goalMgr)
 			return srv.ListenAndServe()
 		}
 		fmt.Println("Server disabled in .env (SERVER_ENABLED=false).")
@@ -263,15 +266,19 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		sleepMgr.Start(context.Background())
 	}
 
-	startTelegramBot(cfg, client, sleepMgr, envPath)
+	goalMgr := agent.NewGoalManager(cfg, client)
+	_ = goalMgr.ResumeActiveGoals()
+
+	startTelegramBot(cfg, client, sleepMgr, envPath, goalMgr)
 	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
 	if sleepMgr != nil {
 		srv.SetSleepManager(sleepMgr)
 	}
+	srv.SetGoalManager(goalMgr)
 	return srv.ListenAndServe()
 }
 
-func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string) {
+func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string, goalMgr *agent.GoalManager) {
 	if cfg.TelegramBotToken == "" {
 		return
 	}
@@ -280,6 +287,9 @@ func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learni
 		bot := telegram.NewBotWithEnv(cfg, client, envPath)
 		if sleepMgr != nil {
 			bot.SetSleepManager(sleepMgr)
+		}
+		if goalMgr != nil {
+			bot.SetGoalManager(goalMgr)
 		}
 		if err := bot.Start(context.Background()); err != nil {
 			log.Printf("[Telegram] Bot service error: %v", err)

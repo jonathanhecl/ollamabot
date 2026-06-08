@@ -21,17 +21,20 @@ type Feedback struct {
 // Session holds a persisted conversation.
 // Messages are stored in a separate file within the session folder.
 type Session struct {
-	ID        string            `json:"id"`
-	Title     string            `json:"title"`
-	Model     string            `json:"model"`
-	Messages  []json.RawMessage `json:"messages,omitempty"`
-	Feedback  []Feedback        `json:"feedback,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	ID            string            `json:"id"`
+	Title         string            `json:"title"`
+	Model         string            `json:"model"`
+	Messages      []json.RawMessage `json:"messages,omitempty"`
+	Feedback      []Feedback        `json:"feedback,omitempty"`
+	CreatedAt     time.Time         `json:"created_at"`
+	UpdatedAt     time.Time         `json:"updated_at"`
+	GoalObjective string            `json:"goal_objective,omitempty"`
+	GoalStatus    string            `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
+	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
 }
 
-// rawMsg is the shape of messages as received from/sent to the frontend.
-type rawMsg struct {
+// RawMsg is the shape of messages as received from/sent to the frontend.
+type RawMsg struct {
 	Role           string            `json:"role"`
 	Content        string            `json:"content,omitempty"`
 	Thinking       string            `json:"thinking,omitempty"`
@@ -40,12 +43,12 @@ type rawMsg struct {
 	Images         []string          `json:"images,omitempty"`
 	AttachmentRefs []string          `json:"attachment_refs,omitempty"`
 	ImageKinds     []string          `json:"image_kinds,omitempty"`
-	Attachments    []attachmentMeta  `json:"attachments,omitempty"`
+	Attachments    []AttachmentMeta  `json:"attachments,omitempty"`
 	ToolCalls      []json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults    []json.RawMessage `json:"tool_results,omitempty"`
 }
 
-type attachmentMeta struct {
+type AttachmentMeta struct {
 	Name string `json:"name,omitempty"`
 	Mime string `json:"mime,omitempty"`
 	Kind string `json:"kind,omitempty"`
@@ -215,7 +218,7 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 	attDir := s.attachmentsDir(id)
 
 	for mi, raw := range messages {
-		var msg rawMsg
+		var msg RawMsg
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			out = append(out, raw)
 			continue
@@ -257,7 +260,7 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 	attDir := s.attachmentsDir(id)
 
 	for _, raw := range messages {
-		var msg rawMsg
+		var msg RawMsg
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			out = append(out, raw)
 			continue
