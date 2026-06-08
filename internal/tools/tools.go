@@ -53,7 +53,6 @@ func (r *Registry) SetSkillsPath(p string) {
 	r.skillsPath = p
 }
 
-
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string, searchCfg SearchConfig) *Registry {
 	r := &Registry{
@@ -645,7 +644,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("empty embedding response")
 		}
 		entry := memory.Entry{Text: text, Source: source, Embedding: resp.Embeddings[0]}
-		if err := r.memoryStore.Add(entry); err != nil {
+		if err := r.memoryStore.Add(&entry); err != nil {
 			return "", fmt.Errorf("store failed: %w", err)
 		}
 		return fmt.Sprintf("Stored in memory with ID: %s", entry.ID), nil

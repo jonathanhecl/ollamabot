@@ -96,8 +96,8 @@ type SettingsResponse struct {
 	SleepModeInactivityThreshold string `json:"sleep_mode_inactivity_threshold"`
 	SleepModeResumeDelay         string `json:"sleep_mode_resume_delay"`
 	ModelLearning                string `json:"model_learning"`
-	SearchProviders              string `json:"search_providers"`    // comma-separated: "brave,ddg"
-	BraveSearchAPIKey            string `json:"brave_search_api_key"` // masked ("***") on GET if set
+	SearchProviders              string `json:"search_providers"`      // comma-separated: "brave,ddg"
+	BraveSearchAPIKey            string `json:"brave_search_api_key"`  // masked ("***") on GET if set
 	TavilySearchAPIKey           string `json:"tavily_search_api_key"` // masked ("***") on GET if set
 	SleepModeSubagentsEnabled    bool   `json:"sleep_mode_subagents_enabled"`
 	ModelSubagent                string `json:"model_subagent"`
@@ -170,6 +170,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
+	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/memory", s.handleListMemory)
 	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
@@ -227,6 +228,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				if strings.HasPrefix(auth, "Bearer ") {
 					reqPass = strings.TrimPrefix(auth, "Bearer ")
 				}
+			}
+			if reqPass == "" {
+				reqPass = r.URL.Query().Get("password")
 			}
 
 			if reqPass != cfg.WebPassword {
@@ -945,6 +949,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	sessions.NotifyUpdate(sess.ID)
 	writeJSON(w, http.StatusOK, sess)
 }
 
@@ -983,6 +988,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	sessions.NotifyUpdate(sess.ID)
 	writeJSON(w, http.StatusOK, sess)
 }
 
@@ -992,6 +998,7 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	sessions.NotifyUpdate(id)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
 }
 
@@ -1019,6 +1026,7 @@ func (s *Server) handleSessionFeedback(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+	sessions.NotifyUpdate(id)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
@@ -1063,11 +1071,11 @@ func (s *Server) handleAddMemory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entry := memory.Entry{Text: req.Text, Source: req.Source, Embedding: resp.Embeddings[0]}
-	if err := s.memoryStore.Add(entry); err != nil {
+	if err := s.memoryStore.Add(&entry); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "added"})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "added", "id": entry.ID})
 }
 
 func (s *Server) handleSearchMemory(w http.ResponseWriter, r *http.Request) {
@@ -1627,5 +1635,40 @@ func (s *Server) handleSessionGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	sessions.NotifyUpdate(id)
 	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ch := sessions.Subscribe()
+	defer sessions.Unsubscribe(ch)
+
+	flusher, _ := w.(http.Flusher)
+	writeSSE(w, "connected", "ok")
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case sessionID := <-ch:
+			writeSSE(w, "session_updated", sessionID)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		case <-time.After(15 * time.Second):
+			// Keep alive
+			writeSSE(w, "heartbeat", "")
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
 }

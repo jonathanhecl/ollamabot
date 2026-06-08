@@ -17,13 +17,13 @@ func TestAddAndSearch(t *testing.T) {
 	e2 := Entry{Text: "Rust programming language", Embedding: []float64{0.5, 0.866, 0}}
 	e3 := Entry{Text: "French cuisine recipes", Embedding: []float64{0, 0, 1}}
 
-	if err := store.Add(e1); err != nil {
+	if err := store.Add(&e1); err != nil {
 		t.Fatalf("Add e1: %v", err)
 	}
-	if err := store.Add(e2); err != nil {
+	if err := store.Add(&e2); err != nil {
 		t.Fatalf("Add e2: %v", err)
 	}
-	if err := store.Add(e3); err != nil {
+	if err := store.Add(&e3); err != nil {
 		t.Fatalf("Add e3: %v", err)
 	}
 
@@ -53,7 +53,7 @@ func TestDeleteRemovesEntry(t *testing.T) {
 	store := NewStore(dir)
 
 	e := Entry{Text: "to be deleted", Embedding: []float64{1, 0}}
-	if err := store.Add(e); err != nil {
+	if err := store.Add(&e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 	if store.Count() != 1 {
@@ -93,8 +93,8 @@ func TestListOrder(t *testing.T) {
 	e1 := Entry{Text: "first", Embedding: []float64{1, 0}, CreatedAt: now.Add(-time.Second)}
 	e2 := Entry{Text: "second", Embedding: []float64{0, 1}, CreatedAt: now}
 
-	_ = store.Add(e1)
-	_ = store.Add(e2)
+	_ = store.Add(&e1)
+	_ = store.Add(&e2)
 
 	entries := store.List()
 	if len(entries) != 2 {
@@ -111,7 +111,7 @@ func TestPersistence(t *testing.T) {
 	store := NewStore(dir)
 
 	e := Entry{Text: "persistent data", Embedding: []float64{1, 2, 3}}
-	if err := store.Add(e); err != nil {
+	if err := store.Add(&e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
 
@@ -167,7 +167,8 @@ func TestSearchEmptyStore(t *testing.T) {
 func TestSearchEmptyQuery(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
-	_ = store.Add(Entry{Text: "test", Embedding: []float64{1}})
+	tmp := Entry{Text: "test", Embedding: []float64{1}}
+	_ = store.Add(&tmp)
 
 	results := store.Search([]float64{}, 5)
 	if results != nil {
@@ -182,8 +183,8 @@ func TestUpdateEmbeddings(t *testing.T) {
 	e1 := Entry{Text: "first entry", Embedding: []float64{1, 2}}
 	e2 := Entry{Text: "second entry", Embedding: []float64{3, 4}}
 
-	_ = store.Add(e1)
-	_ = store.Add(e2)
+	_ = store.Add(&e1)
+	_ = store.Add(&e2)
 
 	entries := store.List()
 	var id1, id2 string
@@ -228,12 +229,12 @@ func TestDeduplication(t *testing.T) {
 	e1 := Entry{Text: "  User likes apples  ", Embedding: []float64{1.0, 0.0}}
 	e2 := Entry{Text: "user likes apples", Embedding: []float64{1.0, 0.0}}
 
-	_ = store.Add(e1)
+	_ = store.Add(&e1)
 	if store.Count() != 1 {
 		t.Fatalf("expected 1 entry, got %d", store.Count())
 	}
 
-	_ = store.Add(e2)
+	_ = store.Add(&e2)
 	if store.Count() != 1 {
 		t.Fatalf("expected 1 entry after adding exact text duplicate, got %d", store.Count())
 	}
@@ -247,7 +248,7 @@ func TestDeduplication(t *testing.T) {
 	// 2. Test near-duplicate by vector similarity (threshold >= 0.85)
 	// cosine similarity of [1.0, 0.0] and [0.90, 0.435889894] is 0.90
 	e3 := Entry{Text: "user enjoys apples", Embedding: []float64{0.90, 0.435889894}}
-	_ = store.Add(e3)
+	_ = store.Add(&e3)
 	if store.Count() != 1 {
 		t.Fatalf("expected 1 entry after near-duplicate addition, got %d", store.Count())
 	}
@@ -260,7 +261,7 @@ func TestDeduplication(t *testing.T) {
 	// 3. Test non-duplicate (below threshold)
 	// cosine similarity of [0.90, 0.435889894] and [0.50, 0.8660254] is 0.45 + 0.377 = 0.827, which is < 0.85
 	e4 := Entry{Text: "user eats oranges", Embedding: []float64{0.50, 0.8660254}}
-	_ = store.Add(e4)
+	_ = store.Add(&e4)
 	if store.Count() != 2 {
 		t.Fatalf("expected 2 entries after non-duplicate addition, got %d", store.Count())
 	}

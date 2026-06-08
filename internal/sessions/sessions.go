@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -299,4 +300,38 @@ var idCounter atomic.Uint64
 func GenerateID() string {
 	seq := idCounter.Add(1)
 	return fmt.Sprintf("%d_%d", time.Now().UnixNano(), seq)
+}
+
+var (
+	listenersMu sync.Mutex
+	listeners   = make(map[chan string]bool)
+)
+
+// Subscribe returns a channel that receives session IDs when they are updated.
+func Subscribe() chan string {
+	listenersMu.Lock()
+	defer listenersMu.Unlock()
+	ch := make(chan string, 10)
+	listeners[ch] = true
+	return ch
+}
+
+// Unsubscribe removes a channel from the list of update listeners.
+func Unsubscribe(ch chan string) {
+	listenersMu.Lock()
+	defer listenersMu.Unlock()
+	delete(listeners, ch)
+	close(ch)
+}
+
+// NotifyUpdate broadcasts a session update event to all subscribed listeners.
+func NotifyUpdate(sessionID string) {
+	listenersMu.Lock()
+	defer listenersMu.Unlock()
+	for ch := range listeners {
+		select {
+		case ch <- sessionID:
+		default:
+		}
+	}
 }

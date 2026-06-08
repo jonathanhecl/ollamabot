@@ -791,7 +791,41 @@ function startSessionPolling() {
     } catch (err) {
       console.warn("Session polling failed:", err);
     }
-  }, 2000);
+  }, 10000);
+}
+
+let eventSource = null;
+
+function startRealtimeEvents() {
+  if (eventSource) {
+    eventSource.close();
+  }
+
+  const webPassword = sessionStorage.getItem("ollamabot.webPassword") || "";
+  const queryParam = webPassword ? `?password=${encodeURIComponent(webPassword)}` : "";
+  
+  eventSource = new EventSource(`/api/events${queryParam}`);
+  
+  eventSource.addEventListener("session_updated", async (event) => {
+    const sessionID = event.data;
+    console.log("[Events Hub] Session updated:", sessionID);
+    
+    // 1. Refresh session list
+    await loadSessions();
+    
+    // 2. If it's the active session, reload it
+    if (state.activeSessionId === sessionID) {
+      if (!state.isProcessing) {
+        await loadSession(sessionID);
+      }
+    }
+  });
+
+  eventSource.onerror = (err) => {
+    console.warn("[Events Hub] EventSource connection error, reconnecting in 5s...", err);
+    eventSource.close();
+    setTimeout(startRealtimeEvents, 5000);
+  };
 }
 
 bootstrap();
@@ -808,6 +842,7 @@ async function bootstrap() {
     await createSession();
   }
   startHealthCheck();
+  startRealtimeEvents();
   startSessionPolling();
 }
 

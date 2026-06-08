@@ -42,7 +42,10 @@ func NewStore(dir string) *Store {
 
 // Add inserts a new entry and persists the store. It automatically removes any existing entries
 // that are highly similar (cosine similarity >= 0.85 or exact text match) to prevent duplication.
-func (s *Store) Add(e Entry) error {
+func (s *Store) Add(e *Entry) error {
+	if e == nil {
+		return fmt.Errorf("nil entry")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -55,7 +58,7 @@ func (s *Store) Add(e Entry) error {
 		isDuplicate := false
 		normExisting := strings.TrimSpace(strings.ToLower(existing.Text))
 		normNew := strings.TrimSpace(strings.ToLower(e.Text))
-		
+
 		if normExisting == normNew {
 			isDuplicate = true
 		} else if len(e.Embedding) > 0 && len(existing.Embedding) > 0 {
@@ -83,7 +86,7 @@ func (s *Store) Add(e Entry) error {
 	if e.CreatedAt.IsZero() {
 		e.CreatedAt = time.Now()
 	}
-	s.entries = append(s.entries, e)
+	s.entries = append(s.entries, *e)
 	s.dirty = true
 	return s.flush()
 }

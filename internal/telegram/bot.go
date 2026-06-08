@@ -465,6 +465,7 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	}
 	_ = b.sessions.Save(sess)
 	b.sessManager.Set(chatIDStr, sessionID)
+	sessions.NotifyUpdate(sessionID)
 	return sessionID
 }
 
@@ -787,6 +788,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 				} else {
 					b.sendMessage(chatID, fmt.Sprintf("🚀 *Goal started in background!*\nObjective: *%s*", sess.GoalObjective), 0, "Markdown")
 				}
+				sessions.NotifyUpdate(sessionID)
 			}
 		}
 	default:
@@ -901,6 +903,16 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 
 	history = append(history, userMsg)
+
+	// Save the user message immediately so that the Web UI gets notified in real-time
+	var initialRawMessages []json.RawMessage
+	for _, hm := range history {
+		rawBytes, _ := json.Marshal(hm)
+		initialRawMessages = append(initialRawMessages, rawBytes)
+	}
+	sess.Messages = initialRawMessages
+	_ = b.sessions.Save(sess)
+	sessions.NotifyUpdate(sessionID)
 
 	// 3. Convert session raw messages to runtime format
 	var mediaMessages []MediaMessage
@@ -1037,6 +1049,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	sess.Messages = newRawMessages
 	_ = b.sessions.Save(sess)
+	sessions.NotifyUpdate(sessionID)
 
 	// Count user and assistant messages to trigger auto-naming on first exchange
 	var userMsgsCount, assistantMsgsCount int
@@ -1154,6 +1167,7 @@ func (b *Bot) handleReaction(reaction *MessageReactionUpdate) {
 		log.Printf("[Telegram] Failed to save feedback: %v", err)
 		return
 	}
+	sessions.NotifyUpdate(sessionID)
 
 	log.Printf("[Telegram] Saved %s feedback for message #%d in session %s", reactionStr, msgIdx, sessionID)
 }
