@@ -968,12 +968,17 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	// 10. Persist full history details (thinking process and tool results) in session messages
 	var userAssistantTimestamps []string
+	var historyUserMsgs []rawMsg
 	for _, hm := range history {
 		if hm.Role == "user" || hm.Role == "assistant" {
 			userAssistantTimestamps = append(userAssistantTimestamps, hm.Timestamp)
 		}
+		if hm.Role == "user" {
+			historyUserMsgs = append(historyUserMsgs, hm)
+		}
 	}
 
+	userMsgIdx := 0
 	uaIdx := 0
 	var newRawMessages []json.RawMessage
 	for _, m := range finalHistory {
@@ -988,16 +993,25 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		}
 
-		if m.Role == "user" && len(m.Images) > 0 {
+		if m.Role == "user" {
+			var origUserMsg rawMsg
+			if userMsgIdx < len(historyUserMsgs) {
+				origUserMsg = historyUserMsgs[userMsgIdx]
+				userMsgIdx++
+			}
+
 			rm := rawMsg{
 				Role:        m.Role,
 				Content:     m.Content,
 				Thinking:    m.Thinking,
-				Images:      m.Images,
-				ImageKinds:  userMsg.ImageKinds,
-				Attachments: userMsg.Attachments,
+				Images:      origUserMsg.Images,
+				ImageKinds:  origUserMsg.ImageKinds,
+				Attachments: origUserMsg.Attachments,
 				Name:        m.Name,
 				Timestamp:   msgTimestamp,
+			}
+			if len(rm.Images) == 0 && len(m.Images) > 0 {
+				rm.Images = m.Images
 			}
 			rawBytes, _ := json.Marshal(rm)
 			newRawMessages = append(newRawMessages, rawBytes)
@@ -1438,6 +1452,9 @@ type attachmentMeta struct {
 
 func getMimeType(kind, name string) string {
 	if kind == "audio" {
+		if strings.HasSuffix(strings.ToLower(name), ".wav") {
+			return "audio/wav"
+		}
 		return "audio/ogg"
 	}
 	if strings.HasSuffix(strings.ToLower(name), ".png") {
