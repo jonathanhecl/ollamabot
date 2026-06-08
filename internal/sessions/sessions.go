@@ -34,6 +34,11 @@ type Session struct {
 	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
 }
 
+// IsEmpty returns true if the session contains no messages, no active goals, and no feedback.
+func (s Session) IsEmpty() bool {
+	return len(s.Messages) == 0 && s.GoalObjective == "" && len(s.Feedback) == 0
+}
+
 // RawMsg is the shape of messages as received from/sent to the frontend.
 type RawMsg struct {
 	Role           string            `json:"role"`
@@ -57,6 +62,11 @@ type AttachmentMeta struct {
 	URL  string `json:"url,omitempty"`
 }
 
+var (
+	emptySessionsMu sync.RWMutex
+	emptySessions   = make(map[string]Session)
+)
+
 // Store persists sessions as folders inside sessionsPath.
 // Each session folder contains:
 //   - session.json  (metadata)
@@ -68,7 +78,9 @@ type Store struct {
 
 func NewStore(sessionsPath string) *Store {
 	_ = os.MkdirAll(sessionsPath, 0o755)
-	return &Store{dir: sessionsPath}
+	return &Store{
+		dir: sessionsPath,
+	}
 }
 
 func (s *Store) sessionDir(id string) string {
@@ -113,31 +125,38 @@ func (s *Store) List() ([]Session, error) {
 
 // Get loads a full session including messages with base64 images restored.
 func (s *Store) Get(id string) (Session, error) {
-	var sess Session
+	emptySessionsMu.RLock()
+	sess, ok := emptySessions[id]
+	emptySessionsMu.RUnlock()
+	if ok {
+		return sess, nil
+	}
+
+	var metaSess Session
 	metaPath := s.sessionMetaPath(id)
 	metaData, err := os.ReadFile(metaPath)
 	if err != nil {
-		return sess, fmt.Errorf("session not found")
+		return metaSess, fmt.Errorf("session not found")
 	}
-	if err := json.Unmarshal(metaData, &sess); err != nil {
-		return sess, err
+	if err := json.Unmarshal(metaData, &metaSess); err != nil {
+		return metaSess, err
 	}
 
 	msgsPath := s.messagesPath(id)
 	msgsData, err := os.ReadFile(msgsPath)
 	if err != nil {
-		return sess, nil // no messages yet
+		return metaSess, nil // no messages yet
 	}
 	var rawMessages []json.RawMessage
 	if err := json.Unmarshal(msgsData, &rawMessages); err != nil {
-		return sess, err
+		return metaSess, err
 	}
 
-	sess.Messages, err = s.loadMessagesWithAttachments(id, rawMessages)
+	metaSess.Messages, err = s.loadMessagesWithAttachments(id, rawMessages)
 	if err != nil {
-		return sess, err
+		return metaSess, err
 	}
-	return sess, nil
+	return metaSess, nil
 }
 
 // Save persists a session, extracting base64 images into the attachments folder.
@@ -146,6 +165,19 @@ func (s *Store) Save(sess Session) error {
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = sess.UpdatedAt
 	}
+
+	if sess.IsEmpty() {
+		emptySessionsMu.Lock()
+		emptySessions[sess.ID] = sess
+		emptySessionsMu.Unlock()
+		// Clean up from disk if it was previously saved
+		_ = os.RemoveAll(s.sessionDir(sess.ID))
+		return nil
+	}
+
+	emptySessionsMu.Lock()
+	delete(emptySessions, sess.ID)
+	emptySessionsMu.Unlock()
 
 	sd := s.sessionDir(sess.ID)
 	if err := os.MkdirAll(sd, 0o755); err != nil {
@@ -180,23 +212,20 @@ func (s *Store) Save(sess Session) error {
 
 // Delete removes a session folder and all its contents.
 func (s *Store) Delete(id string) error {
+	emptySessionsMu.Lock()
+	delete(emptySessions, id)
+	emptySessionsMu.Unlock()
 	return os.RemoveAll(s.sessionDir(id))
 }
 
 // SaveFeedback appends a feedback entry to an existing session's metadata.
 func (s *Store) SaveFeedback(id string, fb Feedback) error {
-	sess, err := s.readMeta(id)
+	sess, err := s.Get(id)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
 	sess.Feedback = append(sess.Feedback, fb)
-	sess.UpdatedAt = time.Now()
-
-	metaData, err := json.MarshalIndent(sess, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(s.sessionMetaPath(id), metaData, 0o644)
+	return s.Save(sess)
 }
 
 func (s *Store) readMeta(id string) (Session, error) {

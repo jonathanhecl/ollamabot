@@ -424,6 +424,13 @@ h2 {
 .messages {
   padding: 22px;
   overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.messages::before {
+  content: "";
+  margin-top: auto;
 }
 
 .message {
@@ -831,6 +838,7 @@ pre {
 
 .attachments {
   min-height: 34px;
+  height: max-content;
   padding: 0 16px 10px;
 }
 

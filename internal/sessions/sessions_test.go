@@ -159,3 +159,66 @@ func TestGetNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent session")
 	}
 }
+
+func TestEmptySessions(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	sess := Session{
+		ID:    GenerateID(),
+		Title: "Empty Session",
+		Model: "test-model",
+	}
+
+	// Saving an empty session should NOT write to disk
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save empty session failed: %v", err)
+	}
+
+	// Directory should not exist on disk
+	sessDir := store.sessionDir(sess.ID)
+	if _, err := os.Stat(sessDir); err == nil {
+		t.Fatalf("expected empty session folder to not exist on disk")
+	}
+
+	// It should still be retrievable from the store while in-memory
+	got, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("expected empty session to be retrievable from in-memory map: %v", err)
+	}
+	if got.ID != sess.ID {
+		t.Fatalf("retrieved empty session ID mismatch")
+	}
+
+	// List should NOT return empty sessions since they are not on disk
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("expected List to return 0 sessions, got %d", len(list))
+	}
+
+	// After adding a message, it should no longer be empty and should be written to disk
+	msg := map[string]any{"role": "user", "content": "hi"}
+	raw, _ := json.Marshal(msg)
+	sess.Messages = []json.RawMessage{raw}
+
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save non-empty session failed: %v", err)
+	}
+
+	// Directory should exist now
+	if _, err := os.Stat(sessDir); err != nil {
+		t.Fatalf("expected non-empty session folder to exist on disk: %v", err)
+	}
+
+	// List should now return the session
+	list2, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(list2) != 1 {
+		t.Fatalf("expected List to return 1 session, got %d", len(list2))
+	}
+}
