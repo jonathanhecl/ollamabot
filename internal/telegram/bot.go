@@ -280,6 +280,8 @@ func (b *Bot) Start(ctx context.Context) error {
 	log.Println("[Telegram] Polling loop started successfully")
 	b.sendStartupNotification()
 	offset := int64(0)
+	retryDelay := 5 * time.Second
+	const maxRetryDelay = 60 * time.Second
 
 	for {
 		select {
@@ -287,12 +289,26 @@ func (b *Bot) Start(ctx context.Context) error {
 			log.Println("[Telegram] Polling loop stopped")
 			return ctx.Err()
 		default:
-			updates, err := b.getUpdates(offset)
+			updates, err := b.getUpdates(ctx, offset)
 			if err != nil {
-				log.Printf("[Telegram] Error fetching updates: %v, retrying in 5 seconds...", err)
-				time.Sleep(5 * time.Second)
+				log.Printf("[Telegram] Error fetching updates: %v, retrying in %v...", err, retryDelay)
+				select {
+				case <-ctx.Done():
+					log.Println("[Telegram] Polling loop stopped during retry cooldown")
+					return ctx.Err()
+				case <-time.After(retryDelay):
+				}
+
+				// Exponential backoff
+				retryDelay *= 2
+				if retryDelay > maxRetryDelay {
+					retryDelay = maxRetryDelay
+				}
 				continue
 			}
+
+			// Reset backoff on success
+			retryDelay = 5 * time.Second
 
 			for _, update := range updates {
 				if update.UpdateID >= offset {
@@ -304,9 +320,13 @@ func (b *Bot) Start(ctx context.Context) error {
 	}
 }
 
-func (b *Bot) getUpdates(offset int64) ([]Update, error) {
+func (b *Bot) getUpdates(ctx context.Context, offset int64) ([]Update, error) {
 	url := fmt.Sprintf("%s/getUpdates?offset=%d&timeout=30&allowed_updates=%s", b.apiBase, offset, `["message","callback_query","message_reaction"]`)
-	resp, err := b.httpClient.Get(url)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := b.httpClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
