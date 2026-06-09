@@ -2104,6 +2104,20 @@ async function processNextQueueItem() {
     assistant.timestamp = new Date().toISOString();
     renderMessages();
     updateContextBar();
+    // For passthrough audio (no dedicated audio model), store the assistant's response
+    // as the audio transcription so it appears inline below the player.
+    if (nextItem && nextItem.role === "user" && assistant.content) {
+      const hasAudio = nextItem.attachments?.some((a) => a.kind === "audio");
+      const hasRoutedAudio = nextItem.attachments?.some((a) => a.kind === "audio" && a.transcription);
+      if (hasAudio && !hasRoutedAudio) {
+        for (const att of nextItem.attachments) {
+          if (att.kind === "audio" && !att.transcription) {
+            att.transcription = assistant.content;
+          }
+        }
+      }
+    }
+
     // Clear binary base64 images from user messages that were pre-processed (transcribed/analyzed)
     // to prevent re-sending and reduce session size.
     if (nextItem && nextItem.role === "user") {

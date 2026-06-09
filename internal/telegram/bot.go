@@ -1083,13 +1083,13 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	finalAnswer = agent.CleanThinkingTokens(finalAnswer)
 
 	if finalAnswer == "" {
-		b.sendMessage(chatID, "⚠️ I did not generate a text response. Please try again.", msg.MessageID, "")
+		b.sendMessage(chatID, "⚠️ I did not generate a text response. Please try again.", 0, "")
 		return
 	}
 
 	chunks := splitMessage(finalAnswer, 4000)
 	for _, chunk := range chunks {
-		sentMsgID, _ := b.sendMessage(chatID, toTelegramHTML(chunk), msg.MessageID, "HTML")
+		sentMsgID, _ := b.sendMessage(chatID, toTelegramHTML(chunk), 0, "HTML")
 		if sentMsgID > 0 {
 			// Find the index of the last assistant message in the session
 			lastAssistantIdx := -1
