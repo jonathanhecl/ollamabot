@@ -2246,7 +2246,7 @@ function renderMessages() {
     let legacyHtml = "";
     if (!message.steps?.length) {
       if (message.thinking) {
-        legacyHtml += `<details class="step step-thinking" open><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
+        legacyHtml += `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
       }
       if (message.toolCalls?.length) {
         legacyHtml += message.toolCalls.map(renderLegacyToolCall).join("");
@@ -2300,7 +2300,7 @@ function renderMessages() {
 function renderStep(step) {
   switch (step.type) {
     case "thinking":
-      return `<details class="step step-thinking" open><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
+      return `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
     case "tool_call": {
       const fn = step.call?.function || {};
       const name = fn.name || "unknown";
