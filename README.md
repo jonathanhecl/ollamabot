@@ -53,3 +53,9 @@ notes, and local probe results.
 The web UI supports runtime Ollama URL configuration, model selection from a
 modal, streamed chat responses, thinking blocks, multimodal file/paste inputs,
 and visible future tool-call events.
+
+To allow audio recording / clipboard on remote LAN devices in Google Chrome (or other Chromium-based browsers like Edge or Brave):
+1. Navigate to `chrome://flags/#unsafely-treat-insecure-origin-as-secure` on the remote device.
+2. Search for **Insecure origins treated as secure** and set it to **Enabled**.
+3. In the text field, enter the address of your manager (e.g., `http://192.168.1.50:8088`).
+4. Click **Relaunch** to restart the browser. The browser will now treat this LAN address as secure, allowing microphone access.
