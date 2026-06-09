@@ -803,6 +803,7 @@ function startSessionPolling() {
 }
 
 let eventSource = null;
+let sessionUpdateDebounce = null;
 
 function startRealtimeEvents() {
   if (eventSource) {
@@ -811,23 +812,29 @@ function startRealtimeEvents() {
 
   const serverPassword = sessionStorage.getItem("ollamabot.serverPassword") || "";
   const queryParam = serverPassword ? `?password=${encodeURIComponent(serverPassword)}` : "";
-  
+
   eventSource = new EventSource(`/api/events${queryParam}`);
-  
+
   eventSource.addEventListener("session_updated", async (event) => {
     const sessionID = event.data;
     console.log("[Events Hub] Session updated:", sessionID);
-    
-    // 1. Refresh session list
-    await loadSessions();
-    
-    // 2. If it's the active session, reload it
-    if (state.activeSessionId === sessionID) {
-      if (!state.isProcessing) {
-        await loadSession(sessionID);
-        updateComposerUI();
-      }
+
+    if (sessionUpdateDebounce) {
+      clearTimeout(sessionUpdateDebounce);
     }
+    sessionUpdateDebounce = setTimeout(async () => {
+      sessionUpdateDebounce = null;
+      // 1. Refresh session list
+      await loadSessions();
+
+      // 2. If it's the active session, reload it
+      if (state.activeSessionId === sessionID) {
+        if (!state.isProcessing) {
+          await loadSession(sessionID);
+          updateComposerUI();
+        }
+      }
+    }, 800);
   });
 
   eventSource.onerror = (err) => {

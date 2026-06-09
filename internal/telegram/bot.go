@@ -1469,8 +1469,10 @@ func (h *telegramStreamHandler) notifyUpdate(force bool) {
 	}
 
 	sess.Messages = allMessages
-	_ = h.bot.sessions.Save(sess)
-	sessions.NotifyUpdate(h.sessionID)
+	go func(store *sessions.Store, s sessions.Session, msgs []json.RawMessage, sid string) {
+		_ = store.Save(s)
+		sessions.NotifyUpdate(sid)
+	}(h.bot.sessions, sess, allMessages, h.sessionID)
 }
 
 func (h *telegramStreamHandler) OnThinking(delta string) {
