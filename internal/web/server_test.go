@@ -475,7 +475,7 @@ func TestSelectDefaultOption(t *testing.T) {
 func TestAuthentication(t *testing.T) {
 	s := &Server{
 		cfg: config.Config{
-			WebPassword: "secretpassword",
+			ServerPassword: "secretpassword",
 		},
 	}
 
@@ -500,13 +500,13 @@ func TestAuthentication(t *testing.T) {
 		t.Errorf("expected protected path without auth to return 401, got %d", w.Result().StatusCode)
 	}
 
-	// Case 3: Protected path (/api/settings) with correct X-Web-Password header should succeed
+	// Case 3: Protected path (/api/settings) with correct X-Server-Password header should succeed
 	req = httptest.NewRequest("GET", "/api/settings", nil)
-	req.Header.Set("X-Web-Password", "secretpassword")
+	req.Header.Set("X-Server-Password", "secretpassword")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusOK {
-		t.Errorf("expected protected path with X-Web-Password header to succeed, got %d", w.Result().StatusCode)
+		t.Errorf("expected protected path with X-Server-Password header to succeed, got %d", w.Result().StatusCode)
 	}
 
 	// Case 4: Protected path (/api/settings) with correct Bearer token in Authorization header should succeed
@@ -520,7 +520,7 @@ func TestAuthentication(t *testing.T) {
 
 	// Case 5: Protected path (/api/settings) with incorrect password should return 401 Unauthorized
 	req = httptest.NewRequest("GET", "/api/settings", nil)
-	req.Header.Set("X-Web-Password", "wrongpassword")
+	req.Header.Set("X-Server-Password", "wrongpassword")
 	w = httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 	if w.Result().StatusCode != http.StatusUnauthorized {
@@ -535,6 +535,3 @@ func TestAuthentication(t *testing.T) {
 		t.Errorf("expected static path /index.html to succeed without auth, got %d", w.Result().StatusCode)
 	}
 }
-
-
-

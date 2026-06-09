@@ -132,7 +132,7 @@ WORKSPACE=./tests/browser/workspace
 SESSIONS_PATH=./tests/browser/sessions
 MEMORY_PATH=./tests/browser/memory
 SKILLS_PATH=./tests/browser/skills
-WEB_PASSWORD=testpass
+SERVER_PASSWORD=testpass
 `;
   fs.writeFileSync(envPath, envContent);
   console.log('Created temporary .env.test configuration');
@@ -176,7 +176,7 @@ async function waitForGoServer() {
     try {
       const response = await new Promise((resolve, reject) => {
         const req = http.get(url, {
-          headers: { 'X-Web-Password': 'testpass' }
+          headers: { 'X-Server-Password': 'testpass' }
         }, (res) => {
           if (res.statusCode === 200) resolve(true);
           else resolve(false);

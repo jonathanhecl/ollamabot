@@ -101,7 +101,7 @@ type SettingsResponse struct {
 	TavilySearchAPIKey           string `json:"tavily_search_api_key"` // masked ("***") on GET if set
 	SleepModeSubagentsEnabled    bool   `json:"sleep_mode_subagents_enabled"`
 	ModelSubagent                string `json:"model_subagent"`
-	WebPassword                  string `json:"web_password"`
+	ServerPassword               string `json:"server_password"`
 	TelegramSessionExpiryMin     int    `json:"telegram_session_expiry_min"`
 }
 
@@ -216,13 +216,13 @@ func (s *Server) ListenAndServe() error {
 func (s *Server) authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := s.config()
-		if cfg.WebPassword == "" {
+		if cfg.ServerPassword == "" {
 			next.ServeHTTP(w, r)
 			return
 		}
 
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health" {
-			reqPass := r.Header.Get("X-Web-Password")
+			reqPass := r.Header.Get("X-Server-Password")
 			if reqPass == "" {
 				auth := r.Header.Get("Authorization")
 				if strings.HasPrefix(auth, "Bearer ") {
@@ -233,7 +233,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 				reqPass = r.URL.Query().Get("password")
 			}
 
-			if reqPass != cfg.WebPassword {
+			if reqPass != cfg.ServerPassword {
 				writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "Unauthorized"})
 				return
 			}
@@ -353,11 +353,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
 	s.cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
 	s.cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
-	newWebPass := strings.TrimSpace(input.WebPassword)
-	if newWebPass != "" && newWebPass != "***" {
-		s.cfg.WebPassword = newWebPass
-	} else if newWebPass == "" {
-		s.cfg.WebPassword = ""
+	newServerPass := strings.TrimSpace(input.ServerPassword)
+	if newServerPass != "" && newServerPass != "***" {
+		s.cfg.ServerPassword = newServerPass
+	} else if newServerPass == "" {
+		s.cfg.ServerPassword = ""
 	}
 	// Search providers: parse CSV from UI
 	rawProviders := strings.TrimSpace(input.SearchProviders)
@@ -1208,9 +1208,9 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 	if cfg.TavilyAPIKey != "" {
 		maskedTavily = "***"
 	}
-	maskedWebPassword := ""
-	if cfg.WebPassword != "" {
-		maskedWebPassword = "***"
+	maskedServerPassword := ""
+	if cfg.ServerPassword != "" {
+		maskedServerPassword = "***"
 	}
 	return SettingsResponse{
 		OllamaBaseURL:                cfg.OllamaBaseURL,
@@ -1237,7 +1237,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		TavilySearchAPIKey:           maskedTavily,
 		SleepModeSubagentsEnabled:    cfg.SleepModeSubagentsEnabled,
 		ModelSubagent:                cfg.OllamaModelSubagent,
-		WebPassword:                  maskedWebPassword,
+		ServerPassword:               maskedServerPassword,
 	}
 }
 

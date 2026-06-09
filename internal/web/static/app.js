@@ -6,12 +6,12 @@ window.fetch = async function(resource, options) {
   
   const url = typeof resource === 'string' ? resource : resource.url;
   if (url && (url.startsWith('/api/') || url.includes('/api/'))) {
-    const webPassword = sessionStorage.getItem("ollamabot.webPassword") || "";
-    if (webPassword) {
+    const serverPassword = sessionStorage.getItem("ollamabot.serverPassword") || "";
+    if (serverPassword) {
       if (options.headers instanceof Headers) {
-        options.headers.set("X-Web-Password", webPassword);
+        options.headers.set("X-Server-Password", serverPassword);
       } else {
-        options.headers["X-Web-Password"] = webPassword;
+        options.headers["X-Server-Password"] = serverPassword;
       }
     }
   }
@@ -19,7 +19,7 @@ window.fetch = async function(resource, options) {
   const response = await originalFetch(resource, options);
   
   if (response.status === 401 && url && !url.includes('/api/health')) {
-    sessionStorage.removeItem("ollamabot.webPassword");
+    sessionStorage.removeItem("ollamabot.serverPassword");
     showLoginOverlay();
   }
   
@@ -57,10 +57,10 @@ document.addEventListener("DOMContentLoaded", () => {
       
       try {
         const res = await originalFetch("/api/settings", {
-          headers: { "X-Web-Password": pass }
+          headers: { "X-Server-Password": pass }
         });
         if (res.ok) {
-          sessionStorage.setItem("ollamabot.webPassword", pass);
+          sessionStorage.setItem("ollamabot.serverPassword", pass);
           hideLoginOverlay();
           window.location.reload();
         } else {
@@ -153,7 +153,7 @@ const els = {
   sessionsPath: document.querySelector("#sessionsPath"),
   memoryPath: document.querySelector("#memoryPath"),
   webPort: document.querySelector("#webPort"),
-  webPassword: document.querySelector("#webPassword"),
+  serverPassword: document.querySelector("#serverPassword"),
   logoutBtn: document.querySelector("#logoutBtn"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
   searchProvidersContainer: document.querySelector("#searchProvidersContainer"),
@@ -365,7 +365,7 @@ els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.file
 els.recordControl.addEventListener("click", toggleRecording);
 if (els.logoutBtn) {
   els.logoutBtn.addEventListener("click", () => {
-    sessionStorage.removeItem("ollamabot.webPassword");
+    sessionStorage.removeItem("ollamabot.serverPassword");
     window.location.reload();
   });
 }
@@ -801,8 +801,8 @@ function startRealtimeEvents() {
     eventSource.close();
   }
 
-  const webPassword = sessionStorage.getItem("ollamabot.webPassword") || "";
-  const queryParam = webPassword ? `?password=${encodeURIComponent(webPassword)}` : "";
+  const serverPassword = sessionStorage.getItem("ollamabot.serverPassword") || "";
+  const queryParam = serverPassword ? `?password=${encodeURIComponent(serverPassword)}` : "";
   
   eventSource = new EventSource(`/api/events${queryParam}`);
   
@@ -1146,8 +1146,8 @@ async function loadSettings() {
   renderSearchProviders(order, activeMap, keysMap);
 
   els.webPort.value = state.settings.server_port || "8080";
-  els.webPassword.value = state.settings.web_password || "";
-  if (state.settings.web_password) {
+  els.serverPassword.value = state.settings.server_password || "";
+  if (state.settings.server_password) {
     if (els.logoutBtn) els.logoutBtn.style.display = "inline-block";
   } else {
     if (els.logoutBtn) els.logoutBtn.style.display = "none";
@@ -1223,7 +1223,7 @@ async function saveSettings(event) {
       sleep_mode_subagents_enabled: els.sleepModeSubagentsToggle.checked,
       model_subagent: state.subagentModel,
       model_learning: state.learningModel,
-      web_password: els.webPassword.value.trim(),
+      server_password: els.serverPassword.value.trim(),
     }),
   });
   const data = await response.json();
@@ -1231,11 +1231,11 @@ async function saveSettings(event) {
     addSystemMessage(`Settings error: ${data.error || "could not save settings"}`);
     return;
   }
-  const newPass = els.webPassword.value.trim();
+  const newPass = els.serverPassword.value.trim();
   if (newPass && newPass !== "***") {
-    sessionStorage.setItem("ollamabot.webPassword", newPass);
+    sessionStorage.setItem("ollamabot.serverPassword", newPass);
   } else if (!newPass) {
-    sessionStorage.removeItem("ollamabot.webPassword");
+    sessionStorage.removeItem("ollamabot.serverPassword");
   }
   state.settings = data;
   els.settingsDialog.close();
@@ -1273,7 +1273,7 @@ async function saveRoleModels() {
       sleep_mode_subagents_enabled: state.settings.sleep_mode_subagents_enabled || false,
       model_subagent: state.subagentModel,
       model_learning: state.learningModel,
-      web_password: state.settings.web_password || "",
+      server_password: state.settings.server_password || "",
     }),
   });
 
