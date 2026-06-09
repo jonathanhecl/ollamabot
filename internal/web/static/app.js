@@ -2920,7 +2920,7 @@ function groupMessagesAndTools(messages) {
           break;
         }
       }
-      
+
       if (lastAssistant) {
         let step = lastAssistant.steps.find(s => s.type === "tool_exec" && s.name === msg.name);
         if (!step) {
@@ -2952,7 +2952,26 @@ function groupMessagesAndTools(messages) {
       }
       continue;
     }
-    
+
+    // Merge consecutive assistant messages into a single block so that
+    // thinking, tool calls, and content all appear inside one assistant bubble.
+    const lastProcessed = processed[processed.length - 1];
+    if (msg.role === "assistant" && lastProcessed && lastProcessed.role === "assistant") {
+      lastProcessed.content = (lastProcessed.content || "") + (msg.content || "");
+      lastProcessed.thinking = (lastProcessed.thinking || "") + (msg.thinking || "");
+      lastProcessed.steps = [...lastProcessed.steps, ...(msg.steps || [])];
+      lastProcessed.toolCalls = [...(lastProcessed.toolCalls || []), ...(msg.toolCalls || [])];
+      lastProcessed.toolResults = [...(lastProcessed.toolResults || []), ...(msg.toolResults || [])];
+      if (msg.waiting) lastProcessed.waiting = true;
+      if (msg.streaming) lastProcessed.streaming = true;
+      if (msg.metrics) lastProcessed.metrics = msg.metrics;
+      if (msg.timestamp) lastProcessed.timestamp = msg.timestamp;
+      if (msg.attachments?.length) {
+        lastProcessed.attachments = [...(lastProcessed.attachments || []), ...msg.attachments];
+      }
+      continue;
+    }
+
     processed.push({
       ...msg,
       steps: [...(msg.steps || [])]
