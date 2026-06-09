@@ -1328,7 +1328,7 @@ function updateOllamaStatus(connected, version, fromCache) {
     els.baseUrl.style.borderColor = "var(--bad)";
     els.baseUrl.style.color = "var(--bad)";
     els.memoryState.textContent = `VRAM: -`;
-    if (els.cacheState) {
+    if (els.cacheState && !state.isProcessing) {
       els.cacheState.textContent = `offline`;
       els.cacheState.style.borderColor = "var(--bad)";
       els.cacheState.style.color = "var(--bad)";
@@ -1975,7 +1975,6 @@ async function processNextQueueItem() {
         showClarificationDialog(value.id, value.question, value.options);
       },
       media_pre_processing: (value) => {
-        assistant.waiting = false;
         const mediaRouterMsg = {
           role: "assistant",
           content: value,
@@ -2010,7 +2009,6 @@ async function processNextQueueItem() {
         renderMessages();
       },
       thinking: (value) => {
-        assistant.waiting = false;
         const lastStep = assistant.steps[assistant.steps.length - 1];
         if (lastStep && lastStep.type === "thinking") {
           lastStep.content += value;
@@ -2020,7 +2018,6 @@ async function processNextQueueItem() {
         renderMessages();
       },
       content: (value) => {
-        assistant.waiting = false;
         assistant.content += value;
         renderMessages();
       },
@@ -2142,7 +2139,7 @@ function updateComposerUI() {
   if (state.isProcessing) {
     if (els.skipBtn) els.skipBtn.style.display = "inline-flex";
     if (els.sendBtn) els.sendBtn.textContent = "Queue";
-    if (els.cacheState && els.baseUrl.textContent !== "Ollama: Offline") {
+    if (els.cacheState) {
       els.cacheState.textContent = "processing...";
       els.cacheState.style.borderColor = "var(--accent-2)";
       els.cacheState.style.color = "var(--accent-2)";
@@ -2150,10 +2147,16 @@ function updateComposerUI() {
   } else {
     if (els.skipBtn) els.skipBtn.style.display = "none";
     if (els.sendBtn) els.sendBtn.textContent = "Send";
-    if (els.cacheState && els.baseUrl.textContent !== "Ollama: Offline") {
-      els.cacheState.textContent = "ready";
-      els.cacheState.style.borderColor = "var(--accent)";
-      els.cacheState.style.color = "var(--accent)";
+    if (els.cacheState) {
+      if (els.baseUrl.textContent === "Ollama: Offline") {
+        els.cacheState.textContent = "offline";
+        els.cacheState.style.borderColor = "var(--bad)";
+        els.cacheState.style.color = "var(--bad)";
+      } else {
+        els.cacheState.textContent = "ready";
+        els.cacheState.style.borderColor = "var(--accent)";
+        els.cacheState.style.color = "var(--accent)";
+      }
     }
   }
 }

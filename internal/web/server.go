@@ -849,12 +849,8 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 			}
 		}
 
-		if strings.TrimSpace(resolved.Content) == "" {
-			if len(analyses) > 0 {
-				resolved.Content = "Respond to the attached media analysis."
-			} else if len(passthrough) > 0 {
-				resolved.Content = "Analyze the attached media."
-			}
+		if strings.TrimSpace(resolved.Content) == "" && len(analyses) > 0 {
+			resolved.Content = "Respond to the attached media analysis."
 		}
 
 		log.Printf("[resolveMedia] Final resolved message: role=%q, content_len=%d, images=%d", resolved.Role, len(resolved.Content), len(resolved.Images))

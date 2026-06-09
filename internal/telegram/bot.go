@@ -1295,12 +1295,8 @@ func (b *Bot) resolveTelegramMedia(ctx context.Context, mr *router.Router, messa
 			}
 		}
 
-		if strings.TrimSpace(resolved.Content) == "" {
-			if len(analyses) > 0 {
-				resolved.Content = "Respond to the attached media analysis."
-			} else if len(passthrough) > 0 {
-				resolved.Content = "Analyze the attached media."
-			}
+		if strings.TrimSpace(resolved.Content) == "" && len(analyses) > 0 {
+			resolved.Content = "Respond to the attached media analysis."
 		}
 
 		out = append(out, resolved)
@@ -1476,6 +1472,7 @@ func (h *telegramStreamHandler) notifyUpdate(force bool) {
 }
 
 func (h *telegramStreamHandler) OnThinking(delta string) {
+	_ = h.bot.sendChatAction(h.chatID, "typing")
 	h.mu.Lock()
 	msg := h.getOrCreateAssistantMsg()
 	msg.Thinking += delta
@@ -1484,6 +1481,7 @@ func (h *telegramStreamHandler) OnThinking(delta string) {
 }
 
 func (h *telegramStreamHandler) OnContent(delta string) {
+	_ = h.bot.sendChatAction(h.chatID, "typing")
 	h.mu.Lock()
 	msg := h.getOrCreateAssistantMsg()
 	msg.Content += delta
