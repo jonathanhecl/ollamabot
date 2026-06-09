@@ -449,6 +449,7 @@ h2 {
   margin-bottom: 12px;
   position: relative;
   overflow: hidden;
+  flex-shrink: 0;
 }
 
 .message-metrics {
@@ -1954,6 +1955,7 @@ textarea {
   flex-direction: column;
   gap: 12px;
   margin-top: 4px;
+  margin-bottom: 8px;
 }
 
 .preprocessing-header {
