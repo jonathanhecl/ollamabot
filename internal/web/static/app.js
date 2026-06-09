@@ -1895,9 +1895,19 @@ async function processNextQueueItem() {
       const hasRoutedVision = msg.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
       const shouldClearImages = hasAudio || hasRoutedVision;
 
+      let historyContent = msg.content || "";
+      if (hasAudio && !historyContent) {
+        const audioTexts = (msg.attachments || [])
+          .filter((a) => a.kind === "audio" && a.transcription)
+          .map((a) => a.transcription);
+        if (audioTexts.length > 0) {
+          historyContent = audioTexts.map((t) => `[Audio transcription: ${t}]`).join("\n");
+        }
+      }
+
       outboundMessages.push({
         role: msg.role,
-        content: msg.content || "",
+        content: historyContent,
         images: shouldClearImages ? undefined : (msg.images || undefined),
         image_kinds: shouldClearImages ? undefined : (msg.attachments?.map((a) => a.kind) || undefined),
       });
@@ -1973,33 +1983,21 @@ async function processNextQueueItem() {
           state.messages.unshift(mediaRouterMsg);
         }
 
-        // Extract transcription/analysis and assign to nextItem.content to preserve context
-        if (nextItem && !nextItem.content) {
-          let textParts = [];
-          const parts = value.split("\n\n");
-          const transcriptions = [];
-          const analyses = [];
-          for (let i = 1; i < parts.length; i++) {
-            const part = parts[i].trim();
-            if (part.startsWith("[Audio Transcription & Analysis]:")) {
-              transcriptions.push(part.slice("[Audio Transcription & Analysis]:".length).trim());
-            } else if (part.startsWith("[Image Analysis")) {
-              const closingIdx = part.indexOf(")]:");
-              if (closingIdx !== -1) {
-                analyses.push(part.slice(closingIdx + 3).trim());
-              } else {
-                analyses.push(part);
-              }
+        // Extract transcriptions and store them on the matching audio attachments
+        const parts = value.split("\n\n");
+        const transcriptions = [];
+        for (let i = 1; i < parts.length; i++) {
+          const part = parts[i].trim();
+          if (part.startsWith("[Audio Transcription & Analysis]:")) {
+            transcriptions.push(part.slice("[Audio Transcription & Analysis]:".length).trim());
+          }
+        }
+        if (nextItem && transcriptions.length > 0) {
+          let audioIdx = 0;
+          for (const att of (nextItem.attachments || [])) {
+            if (att.kind === "audio" && audioIdx < transcriptions.length) {
+              att.transcription = transcriptions[audioIdx++];
             }
-          }
-          if (transcriptions.length > 0) {
-            textParts.push(transcriptions.join("\n\n"));
-          }
-          if (analyses.length > 0) {
-            textParts.push(analyses.join("\n\n"));
-          }
-          if (textParts.length > 0) {
-            nextItem.content = textParts.join("\n\n");
           }
         }
 
@@ -2438,7 +2436,10 @@ function attachmentPreview(attachment) {
     // This avoids issues where interacting with native audio controls (play, pause,
     // seek, volume) could interfere with form submission or steal focus from prompt.
     const stopAll = `onclick="event.stopPropagation(); event.stopImmediatePropagation()" onkeydown="event.stopPropagation(); event.stopImmediatePropagation()" onkeypress="event.stopPropagation(); event.stopImmediatePropagation()" onkeyup="event.stopPropagation(); event.stopImmediatePropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()" onfocus="event.stopPropagation()"`;
-    return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio></div>`;
+    const transcriptionHtml = attachment.transcription
+      ? `<div class="audio-transcription">${escapeHtml(attachment.transcription)}</div>`
+      : "";
+    return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio>${transcriptionHtml}</div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }
@@ -2837,7 +2838,8 @@ function normalizeRawMessages(rawMessages) {
           mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
           kind: att.kind || "",
           data: att.data || "",
-          url: url || ""
+          url: url || "",
+          transcription: att.transcription || ""
         };
       }),
       streaming: false,
@@ -3152,11 +3154,14 @@ async function deleteSession(id) {
       state.attachments = [];
       renderMessages();
       renderAttachments();
-    }
-    renderSessions();
-    // If no sessions remain, ensure we have an active session
-    if (state.sessions.length === 0) {
-      await ensureActiveSession();
+      renderSessions();
+      if (state.sessions.length > 0) {
+        await loadSession(state.sessions[0].id);
+      } else {
+        await ensureActiveSession();
+      }
+    } else {
+      renderSessions();
     }
   } catch (e) {
     console.warn("deleteSession failed:", e);
