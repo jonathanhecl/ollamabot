@@ -420,7 +420,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "ask_clarification",
-			Description: "Ask the user a clarifying question with a list of pre-defined options (at least 2) to resolve ambiguity in their instruction and plan the next action better.",
+			Description: "Ask the user a clarifying question with a list of pre-defined affirmative options (at least 2) to resolve ambiguity in their instruction and plan the next action better.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -433,7 +433,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 						"items": map[string]any{
 							"type": "string",
 						},
-						"description": "A list of at least 2 option suggestions for the user to choose from.",
+						"description": "A list of at least 3 affirmative option statements for the user to choose from. Each option must be a statement, not a question.",
 					},
 				},
 				"required": []string{"question", "options"},
