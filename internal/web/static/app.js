@@ -2856,6 +2856,12 @@ async function createSession(title = "New session") {
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.messages = [];
     state.attachments = [];
+    // Add the new session to the local list immediately to avoid race condition
+    const existingIndex = state.sessions.findIndex((s) => s.id === sess.id);
+    if (existingIndex === -1) {
+      state.sessions.unshift(sess);
+    }
+    renderSessions();
     renderMessages();
     renderAttachments();
     updateContextBar();
