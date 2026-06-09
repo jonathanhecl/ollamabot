@@ -2250,19 +2250,50 @@ function renderPreProcessingContent(content) {
 }
 
 function renderMessages() {
+  // Save open thinking states before clearing so user-opened blocks stay open
+  const openThinkingIndices = new Set();
+  const oldArticles = els.messages.querySelectorAll("article");
+  oldArticles.forEach((article, idx) => {
+    if (article.querySelector("details.step-thinking[open]")) {
+      openThinkingIndices.add(idx);
+    }
+  });
+
   els.messages.innerHTML = "";
   const grouped = groupMessagesAndTools(state.messages);
+
+  // Detect if the last message is an assistant still in progress (e.g. from Telegram)
+  const lastMsg = state.messages[state.messages.length - 1];
+  let lastAssistantInProgress = false;
+  if (lastMsg && lastMsg.role === "assistant") {
+    const hasMetrics = lastMsg.metrics && lastMsg.metrics.total_duration;
+    if (!hasMetrics) {
+      const ts = lastMsg.timestamp ? new Date(lastMsg.timestamp) : null;
+      const now = new Date();
+      if (ts && (now - ts) < 60000) {
+        lastAssistantInProgress = true;
+      }
+    }
+  }
+
+  let msgIdx = 0;
   for (const message of grouped) {
     if (message.role === "system") continue;
     const div = document.createElement("article");
     const isQueued = message.role === "user" && message.processed === false;
     const isPreProcessing = message.role === "assistant" && message.content && message.content.startsWith("The user has attached media. The pre-processing analysis is as follows:");
-    
-    div.className = `message ${message.role} ${message.streaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
-    const pending = message.waiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
+
+    // For remote (Telegram) in-progress messages, synthesize waiting/streaming states
+    const isLastMsg = message === grouped[grouped.length - 1];
+    const isRemoteProcessing = lastAssistantInProgress && isLastMsg;
+    const effectiveWaiting = message.waiting || (isRemoteProcessing && !message.content);
+    const effectiveStreaming = message.streaming || isRemoteProcessing;
+
+    div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
+    const pending = effectiveWaiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
-    const cursor = message.streaming ? `<span class="stream-cursor"></span>` : "";
-    
+    const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
+
     // Build steps HTML (interleaved thinking / tool blocks).
     const stepsHtml = (message.steps || []).map(renderStep).join("");
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
@@ -2315,7 +2346,12 @@ function renderMessages() {
       </div>
     `;
     div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
+    if (openThinkingIndices.has(msgIdx)) {
+      const thinkingDetails = div.querySelector("details.step-thinking");
+      if (thinkingDetails) thinkingDetails.open = true;
+    }
     els.messages.appendChild(div);
+    msgIdx++;
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }
