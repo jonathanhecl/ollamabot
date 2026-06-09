@@ -751,6 +751,7 @@ function startSessionPolling() {
         if (changed) {
           state.sessions = fetchedSessions;
           renderSessions();
+          updateComposerUI();
         }
 
         if (newSessions.length > 0 && !state.isProcessing) {
@@ -824,6 +825,7 @@ function startRealtimeEvents() {
     if (state.activeSessionId === sessionID) {
       if (!state.isProcessing) {
         await loadSession(sessionID);
+        updateComposerUI();
       }
     }
   });
@@ -2149,8 +2151,25 @@ async function processNextQueueItem() {
   }
 }
 
+// Returns true if any assistant response is currently in progress (local or remote)
+function isAnyAssistantInProgress() {
+  const lastMsg = state.messages[state.messages.length - 1];
+  if (lastMsg && lastMsg.role === "assistant") {
+    const hasMetrics = lastMsg.metrics && lastMsg.metrics.total_duration;
+    if (!hasMetrics) {
+      const ts = lastMsg.timestamp ? new Date(lastMsg.timestamp) : null;
+      const now = new Date();
+      if (ts && (now - ts) < 60000) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 function updateComposerUI() {
-  if (state.isProcessing) {
+  const processing = state.isProcessing || isAnyAssistantInProgress();
+  if (processing) {
     if (els.skipBtn) els.skipBtn.style.display = "inline-flex";
     if (els.sendBtn) els.sendBtn.textContent = "Queue";
     if (els.cacheState) {
