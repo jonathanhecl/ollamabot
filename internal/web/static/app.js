@@ -2305,7 +2305,7 @@ function renderMessages() {
     // For remote (Telegram) in-progress messages, synthesize waiting/streaming states
     const isLastMsg = message === grouped[grouped.length - 1];
     const isRemoteProcessing = lastAssistantInProgress && isLastMsg;
-    const effectiveWaiting = message.waiting || (isRemoteProcessing && !message.content);
+    const effectiveWaiting = message.waiting || isRemoteProcessing;
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 
     div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;

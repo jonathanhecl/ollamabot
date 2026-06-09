@@ -1438,7 +1438,9 @@ func (h *telegramStreamHandler) getOrCreateAssistantMsg() *rawMsg {
 			Timestamp: time.Now().Format(time.RFC3339),
 		})
 	}
-	return &h.activeMessages[len(h.activeMessages)-1]
+	msg := &h.activeMessages[len(h.activeMessages)-1]
+	msg.Timestamp = time.Now().Format(time.RFC3339)
+	return msg
 }
 
 func (h *telegramStreamHandler) notifyUpdate(force bool) {
