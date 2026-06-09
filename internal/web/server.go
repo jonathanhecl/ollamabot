@@ -103,6 +103,9 @@ type SettingsResponse struct {
 	ModelSubagent                string `json:"model_subagent"`
 	ServerPassword               string `json:"server_password"`
 	TelegramSessionExpiryMin     int    `json:"telegram_session_expiry_min"`
+	TelegramBotToken             string `json:"telegram_bot_token"`      // masked ("***") on GET if set
+	TelegramAuthorizedIDs        string `json:"telegram_authorized_ids"` // comma-separated
+	TelegramStartupNotification  bool   `json:"telegram_startup_notification"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -342,6 +345,28 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.TelegramSessionExpiryMin = input.TelegramSessionExpiryMin
 	if s.cfg.TelegramSessionExpiryMin <= 0 {
 		s.cfg.TelegramSessionExpiryMin = 30
+	}
+	s.cfg.TelegramStartupNotification = input.TelegramStartupNotification
+	// Telegram Bot Token: only update if not masked sentinel
+	newBotToken := strings.TrimSpace(input.TelegramBotToken)
+	if newBotToken != "" && newBotToken != "***" {
+		s.cfg.TelegramBotToken = newBotToken
+	} else if newBotToken == "" {
+		s.cfg.TelegramBotToken = ""
+	}
+	// Telegram Authorized IDs: parse CSV
+	rawAuthorizedIDs := strings.TrimSpace(input.TelegramAuthorizedIDs)
+	if rawAuthorizedIDs != "" {
+		var ids []string
+		for _, id := range strings.Split(rawAuthorizedIDs, ",") {
+			id = strings.TrimSpace(id)
+			if id != "" {
+				ids = append(ids, id)
+			}
+		}
+		s.cfg.TelegramAuthorizedIDs = ids
+	} else {
+		s.cfg.TelegramAuthorizedIDs = []string{}
 	}
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
@@ -1212,6 +1237,10 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 	if cfg.ServerPassword != "" {
 		maskedServerPassword = "***"
 	}
+	maskedTelegramBotToken := ""
+	if cfg.TelegramBotToken != "" {
+		maskedTelegramBotToken = "***"
+	}
 	return SettingsResponse{
 		OllamaBaseURL:                cfg.OllamaBaseURL,
 		ServerPort:                   cfg.ServerPort,
@@ -1238,6 +1267,9 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		SleepModeSubagentsEnabled:    cfg.SleepModeSubagentsEnabled,
 		ModelSubagent:                cfg.OllamaModelSubagent,
 		ServerPassword:               maskedServerPassword,
+		TelegramBotToken:             maskedTelegramBotToken,
+		TelegramAuthorizedIDs:        strings.Join(cfg.TelegramAuthorizedIDs, ","),
+		TelegramStartupNotification:  cfg.TelegramStartupNotification,
 	}
 }
 

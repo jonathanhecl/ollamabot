@@ -1691,6 +1691,9 @@ func toTelegramHTML(text string) string {
 }
 
 func (b *Bot) sendStartupNotification() {
+	if !b.cfg.TelegramStartupNotification {
+		return
+	}
 	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
 		return
 	}
@@ -2393,14 +2396,14 @@ func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, e
 			sb.WriteString(fmt.Sprintf("📂 *Project:* `%s`\n", proj.Name))
 			sb.WriteString(fmt.Sprintf("🎯 *Goal:* %s\n", proj.Goal))
 			sb.WriteString(fmt.Sprintf("📝 *Task:* %s\n\n", task.Content))
-			
+
 			// Show execution result if present
 			if strings.TrimSpace(task.Result) != "" {
 				sb.WriteString("*Result:*\n")
 				sb.WriteString(task.Result)
 				sb.WriteString("\n\n")
 			}
-			
+
 			if proj.Status == "completed" {
 				sb.WriteString("🎉 *Project Fully Completed!*\n")
 				sb.WriteString(fmt.Sprintf("All tasks for project `%s` have finished successfully.", proj.Name))

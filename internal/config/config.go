@@ -21,6 +21,7 @@ type Config struct {
 	TelegramBotToken             string
 	TelegramAuthorizedIDs        []string
 	TelegramSessionExpiryMin     int
+	TelegramStartupNotification  bool
 	ServerPort                   string
 	ServerEnabled                bool
 	WebSearchEnabled             bool
@@ -214,7 +215,7 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nSERVER_PASSWORD=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nTELEGRAM_STARTUP_NOTIFICATION=%t\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nSERVER_PASSWORD=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -229,6 +230,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		cfg.TelegramSessionExpiryMin,
+		cfg.TelegramStartupNotification,
 		cfg.Workspace,
 		cfg.SessionsPath,
 		cfg.MemoryPath,

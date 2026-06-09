@@ -161,6 +161,9 @@ const els = {
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
   telegramSessionExpiry: document.querySelector("#telegramSessionExpiry"),
+  telegramBotToken: document.querySelector("#telegramBotToken"),
+  telegramAuthorizedIds: document.querySelector("#telegramAuthorizedIds"),
+  telegramStartupNotification: document.querySelector("#telegramStartupNotification"),
   sleepModeToggle: document.querySelector("#sleepModeToggle"),
   sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
@@ -1120,6 +1123,9 @@ async function loadSettings() {
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
+  els.telegramBotToken.value = state.settings.telegram_bot_token || "";
+  els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
+  els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
 
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
@@ -1216,6 +1222,9 @@ async function saveSettings(event) {
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
       telegram_session_expiry_min: parseInt(els.telegramSessionExpiry.value.trim(), 10) || 30,
+      telegram_bot_token: els.telegramBotToken.value.trim(),
+      telegram_authorized_ids: els.telegramAuthorizedIds.value.trim(),
+      telegram_startup_notification: els.telegramStartupNotification.checked,
       server_port: els.webPort.value.trim() || "8080",
       sleep_mode_enabled: els.sleepModeToggle.checked,
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),

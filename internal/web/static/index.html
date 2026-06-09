@@ -328,6 +328,7 @@
           <button type="button" class="tab-btn" data-tab="server">🌐 Server</button>
           <button type="button" class="tab-btn" data-tab="features">🚀 Features</button>
           <button type="button" class="tab-btn" data-tab="sessions">💬 Sessions</button>
+          <button type="button" class="tab-btn" data-tab="telegram">📱 Telegram</button>
         </aside>
         
         <form id="settingsForm" class="settings-form-tabbed">
@@ -434,6 +435,24 @@
               Telegram Session Expiration (minutes)
               <input id="telegramSessionExpiry" type="number" placeholder="30" min="1" />
             </label>
+          </div>
+          
+          <!-- Telegram Tab -->
+          <div class="tab-content" id="tab-telegram">
+            <label>
+              Bot Token
+              <input id="telegramBotToken" type="password" placeholder="Leave blank to disable Telegram bot" />
+            </label>
+            <label style="margin-top: 10px;">
+              Authorized IDs (comma-separated)
+              <input id="telegramAuthorizedIds" type="text" placeholder="123456789, 987654321" />
+            </label>
+            <div class="checkbox-row" style="margin-top: 14px;">
+              <label class="think-toggle">
+                <input id="telegramStartupNotification" type="checkbox" />
+                <span>Send startup notification (🚀 OllamaBot Initialized)</span>
+              </label>
+            </div>
           </div>
           
           <div class="settings-actions">
