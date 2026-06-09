@@ -502,6 +502,7 @@ func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assis
 		if err == nil {
 			sess.Title = generatedTitle
 			_ = b.sessions.Save(sess)
+			sessions.NotifyUpdate(sessID)
 		}
 	}
 }
@@ -1110,7 +1111,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}
 	}
 
-	if b.cfg.SessionAutoName && userMsgsCount == 1 && assistantMsgsCount == 1 {
+	if b.cfg.SessionAutoName && sessions.IsDefaultTitle(sess.Title) && finalAnswer != "" {
 		b.autoGenerateSessionTitle(ctx, sessionID, finalAnswer)
 	}
 }

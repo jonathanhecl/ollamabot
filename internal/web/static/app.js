@@ -2070,17 +2070,11 @@ async function processNextQueueItem() {
     await saveSession();
     await loadModels();
 
-    // Auto-generate session title if enabled and it's the first message exchange
+    // Auto-generate session title if enabled and it's still a default title
     if (state.settings && state.settings.session_auto_name !== false) {
-      const userMsgs = state.messages.filter((m) => m.role === "user");
-      const assistantMsgs = state.messages.filter((m) => m.role === "assistant");
-      console.log("[Auto-Name Check]", {
-        session_auto_name: state.settings.session_auto_name,
-        userMsgsCount: userMsgs.length,
-        assistantMsgsCount: assistantMsgs.length,
-        activeSessionId: state.activeSessionId
-      });
-      if (userMsgs.length === 1 && assistantMsgs.length === 1) {
+      const activeSess = state.sessions.find(s => s.id === state.activeSessionId);
+      const isDefault = activeSess ? isDefaultTitle(activeSess.title) : true;
+      if (isDefault && assistant.content) {
         autoGenerateSessionTitle(assistant.content);
       }
     }
@@ -3033,6 +3027,22 @@ document.querySelectorAll(".settings-tabs .tab-btn").forEach((btn) => {
     document.getElementById(`tab-${target}`).classList.add("active");
   });
 });
+
+function isDefaultTitle(title) {
+  if (!title) return true;
+  title = title.trim();
+  if (title === "" || title === "New session" || title === "Empty Session") {
+    return true;
+  }
+  // Check for Telegram Chat (chatID)
+  if (title.startsWith("Telegram Chat (") && title.endsWith(")")) {
+    const numPart = title.slice("Telegram Chat (".length, -1);
+    if (!isNaN(numPart) && !isNaN(parseFloat(numPart))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 async function autoGenerateSessionTitle(assistantContent) {
   if (!state.activeSessionId) return;

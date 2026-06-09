@@ -42,7 +42,12 @@ func (s Session) IsEmpty() bool {
 	if hasContent {
 		return false
 	}
-	title := strings.TrimSpace(s.Title)
+	return IsDefaultTitle(s.Title)
+}
+
+// IsDefaultTitle returns true if the title is empty or matches a default placeholder.
+func IsDefaultTitle(title string) bool {
+	title = strings.TrimSpace(title)
 	if title == "" || title == "New session" || title == "Empty Session" {
 		return true
 	}
