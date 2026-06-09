@@ -856,26 +856,25 @@ async function ensureActiveSession() {
   if (state.activeSessionId && sessionExists) {
     // Valid active session - load it
     await loadSession(state.activeSessionId);
-  } else {
-    // No valid active session - clear stale data and create new
-    if (state.activeSessionId && !sessionExists) {
-      state.activeSessionId = null;
-      localStorage.removeItem("ollamabot.activeSessionId");
-    }
-    
-    // Try to create a session, with fallback for server errors
-    const success = await createSession();
-    if (!success && state.sessions.length === 0) {
-      // If create failed and we have no sessions, create a client-side only session
-      // This ensures the UI always has a session to work with
-      await createClientSession();
-    }
+    return;
   }
   
-  // Final safety check - if still no active session, force create one
-  if (!state.activeSessionId || !state.sessions.some((s) => s.id === state.activeSessionId)) {
-    await createClientSession();
+  // No valid active session - clear stale data
+  if (state.activeSessionId && !sessionExists) {
+    state.activeSessionId = null;
+    localStorage.removeItem("ollamabot.activeSessionId");
   }
+  
+  // Try to create a server session
+  const success = await createSession();
+  if (success) {
+    // Server session created and activated - we're done
+    return;
+  }
+  
+  // Server session creation failed - create client-side session
+  // This ensures the UI always has a session to work with
+  await createClientSession();
 }
 
 function applySidebarState() {
@@ -2867,7 +2866,22 @@ async function loadSessions() {
   try {
     const response = await fetch("/api/sessions");
     if (!response.ok) return;
-    state.sessions = await response.json();
+    const serverSessions = await response.json();
+    
+    // If we have an active session that's not in the server list, preserve it locally
+    if (state.activeSessionId && !serverSessions.some((s) => s.id === state.activeSessionId)) {
+      // Find the active session in current local state
+      const activeSession = state.sessions.find((s) => s.id === state.activeSessionId);
+      if (activeSession) {
+        // Keep the active session in the list
+        state.sessions = [activeSession, ...serverSessions.filter((s) => s.id !== state.activeSessionId)];
+      } else {
+        state.sessions = serverSessions;
+      }
+    } else {
+      state.sessions = serverSessions;
+    }
+    
     renderSessions();
   } catch (e) {
     console.warn("loadSessions failed:", e);
