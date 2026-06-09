@@ -370,13 +370,16 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 
 		var refs []string
 		attachmentIndex := 0
+		// Track already-extracted base64 data to avoid duplicates between Images and Attachments
+		extractedData := make(map[string]bool)
 
 		// Process traditional Images field (array of base64 strings)
 		// Try to infer kind from ImageKinds or default to "image"
 		for ii, b64 := range msg.Images {
-			if b64 == "" {
+			if b64 == "" || extractedData[b64] {
 				continue
 			}
+			extractedData[b64] = true
 			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
 			path := filepath.Join(attDir, ref)
 			kind := "image"
@@ -406,9 +409,10 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 
 		// Process Attachments field (frontend format with data field)
 		for _, att := range msg.Attachments {
-			if att.Data == "" {
+			if att.Data == "" || extractedData[att.Data] {
 				continue
 			}
+			extractedData[att.Data] = true
 			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
 			path := filepath.Join(attDir, ref)
 			storage := attachmentStorage{
