@@ -11,7 +11,7 @@ import (
 
 const imageAnalysisPrompt = "Analyze this image in detail. Describe everything visible: objects, people, colors, text, spatial relationships, mood, style, and any other relevant information a language model would need to answer questions about it."
 
-const audioAnalysisPrompt = "Analyze this audio. YOUR ABSOLUTE HIGHEST PRIORITY IS TO TRANSCRIBE ANY SPEECH VERBATIM. Start your response with the verbatim transcription of the speech. If the audio contains spoken words, transcribe them completely and accurately first. Do not summarize, paraphrase, or omit any spoken words. Only after the transcription, or if there is absolutely no speech, describe other sounds heard, speaker's tone, background noise, or other contextually relevant audio events."
+const audioAnalysisPrompt = "Analyze this audio. YOUR ABSOLUTE HIGHEST PRIORITY IS TO TRANSCRIBE ANY SPEECH VERBATIM. Start your response with the verbatim transcription of the speech. If the audio contains spoken words, transcribe them completely and accurately first. Do not summarize, paraphrase, or omit any spoken words. Only after the transcription, or if there is absolutely no speech, describe other sounds heard, speaker's tone, background noise, or other contextually relevant audio events. If you cannot process, hear, or understand the audio for any reason, respond with ONLY the exact marker: ---UNREADABLE---. Do not add any explanation, apology, or request for more information."
 
 // Config holds the role model assignments. Empty string means fall back to main.
 type Config struct {
@@ -73,7 +73,9 @@ func (r *Router) AnalyzeImage(ctx context.Context, base64data string, prompt str
 }
 
 // AnalyzeAudio sends a base64-encoded audio file to the audio model and returns
-// a detailed textual description.
+// a detailed textual description. If the model reports it cannot process the
+// audio (via the ---UNREADABLE--- sentinel), the result is normalized to a
+// single dash so downstream code has a clear, safe failure flag.
 func (r *Router) AnalyzeAudio(ctx context.Context, base64data string, prompt string) (string, error) {
 	if len(strings.TrimSpace(base64data)) == 0 {
 		return "", fmt.Errorf("audio analysis: empty base64 data provided")
@@ -98,6 +100,10 @@ func (r *Router) AnalyzeAudio(ctx context.Context, base64data string, prompt str
 		return "", fmt.Errorf("audio analysis (%s): %w", model, err)
 	}
 	result := strings.TrimSpace(resp.Message.Content)
+	if strings.EqualFold(result, "---UNREADABLE---") {
+		log.Printf("[Router] AnalyzeAudio detected ---UNREADABLE--- sentinel, normalizing to '-'")
+		result = "-"
+	}
 	log.Printf("[Router] AnalyzeAudio OK: result_len=%d", len(result))
 	return result, nil
 }
@@ -111,17 +117,9 @@ func (r *Router) NeedsMediaRouting(kind string) bool {
 		log.Printf("[Router] NeedsMediaRouting(%q): visionModel=%q, mainModel=%q → %v", kind, r.cfg.VisionModel, r.cfg.MainModel, result)
 		return result
 	case "audio":
-		// Audio must ALWAYS be pre-processed and transcribed via AnalyzeAudio,
-		// because standard Ollama API only accepts images in the images field,
-		// and main models cannot natively parse base64 audio inside images.
-		// We allow unit tests (which have main model name "main" and empty audio model) to bypass.
-		if r.cfg.MainModel == "main" && strings.TrimSpace(r.cfg.AudioModel) == "" {
-			log.Printf("[Router] NeedsMediaRouting(%q): Bypassed for mixed unit test", kind)
-			return false
-		}
-		log.Printf("[Router] NeedsMediaRouting(%q): ALWAYS routed for transcription", kind)
-		// Fallback model resolution will naturally default to MainModel if dedicated AudioModel is not configured.
-		return true
+		result := strings.TrimSpace(r.cfg.AudioModel) != "" && r.cfg.AudioModel != r.cfg.MainModel
+		log.Printf("[Router] NeedsMediaRouting(%q): audioModel=%q, mainModel=%q → %v", kind, r.cfg.AudioModel, r.cfg.MainModel, result)
+		return result
 	}
 	return false
 }

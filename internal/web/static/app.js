@@ -1891,12 +1891,12 @@ async function processNextQueueItem() {
       break;
     }
     if (msg.role === "user" || msg.role === "assistant") {
-      const hasAudio = msg.attachments?.some((a) => a.kind === "audio");
+      const hasRoutedAudio = msg.attachments?.some((a) => a.kind === "audio" && a.transcription);
       const hasRoutedVision = msg.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
-      const shouldClearImages = hasAudio || hasRoutedVision;
+      const shouldClearImages = hasRoutedAudio || hasRoutedVision;
 
       let historyContent = msg.content || "";
-      if (hasAudio && !historyContent) {
+      if (hasRoutedAudio && !historyContent) {
         const audioTexts = (msg.attachments || [])
           .filter((a) => a.kind === "audio" && a.transcription)
           .map((a) => a.transcription);
@@ -2104,9 +2104,9 @@ async function processNextQueueItem() {
     // Clear binary base64 images from user messages that were pre-processed (transcribed/analyzed)
     // to prevent re-sending and reduce session size.
     if (nextItem && nextItem.role === "user") {
-      const hasAudio = nextItem.attachments?.some((a) => a.kind === "audio");
+      const hasRoutedAudio = nextItem.attachments?.some((a) => a.kind === "audio" && a.transcription);
       const hasRoutedVision = nextItem.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
-      if (hasAudio || hasRoutedVision) {
+      if (hasRoutedAudio || hasRoutedVision) {
         nextItem.images = [];
       }
     }
