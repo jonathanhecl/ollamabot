@@ -25,6 +25,7 @@ type StreamHandler interface {
 	OnToolStart(name string, args any)
 	OnToolResult(name string, result string)
 	OnMediaPreProcessing(content string)
+	OnDone(resp ollama.ChatResponse)
 }
 
 type Agent struct {
@@ -243,6 +244,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 			if chunk.Done {
 				done = true
+				if handler != nil {
+					handler.OnDone(chunk)
+				}
 			}
 			return nil
 		})

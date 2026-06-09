@@ -1539,6 +1539,7 @@ func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
 	h.mu.Unlock()
 	h.notifyUpdate(true)
 }
+func (h *telegramStreamHandler) OnDone(resp ollama.ChatResponse) {}
 
 // Struct re-definitions to remain completely self-contained
 type rawMsg struct {

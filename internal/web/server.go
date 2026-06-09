@@ -667,6 +667,20 @@ func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
 	}
 }
 
+func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
+	writeSSE(h.w, "done", map[string]any{
+		"total_duration":       resp.TotalDuration,
+		"load_duration":        resp.LoadDuration,
+		"prompt_eval_count":    resp.PromptEvalCount,
+		"prompt_eval_duration": resp.PromptEvalDuration,
+		"eval_count":           resp.EvalCount,
+		"eval_duration":        resp.EvalDuration,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
 // runChatStream handles the chat streaming loop by delegating to the iterative agent.
 func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
 	a := agent.NewAgent(cfg, client, registry)

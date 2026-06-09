@@ -129,9 +129,9 @@ func (sm *SleepManager) Start(ctx context.Context) {
 						}
 						sm.taskQueue = queue
 						sm.mu.Unlock()
-						
+
 						log.Printf("[sleep] System has been idle for %v. Activating sleep mode learning (queued subtasks: %d)...", now.Sub(lastAct), len(queue))
-						
+
 						if subagentsEnabled {
 							sm.processNextQueuedTask(ctx)
 						} else {
@@ -303,12 +303,13 @@ func (sm *SleepManager) SaveState() error {
 
 type sleepStreamHandler struct{}
 
-func (d *sleepStreamHandler) OnThinking(delta string)           {}
-func (d *sleepStreamHandler) OnContent(delta string)            {}
-func (d *sleepStreamHandler) OnToolCall(call ollama.ToolCall)   {}
-func (d *sleepStreamHandler) OnToolStart(name string, args any) {}
+func (d *sleepStreamHandler) OnThinking(delta string)                 {}
+func (d *sleepStreamHandler) OnContent(delta string)                  {}
+func (d *sleepStreamHandler) OnToolCall(call ollama.ToolCall)         {}
+func (d *sleepStreamHandler) OnToolStart(name string, args any)       {}
 func (d *sleepStreamHandler) OnToolResult(name string, result string) {}
-func (d *sleepStreamHandler) OnMediaPreProcessing(content string)    {}
+func (d *sleepStreamHandler) OnMediaPreProcessing(content string)     {}
+func (d *sleepStreamHandler) OnDone(resp ollama.ChatResponse)         {}
 
 func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 	modelToUse, err := sm.checkHardwareAndSelectModel(parentCtx)

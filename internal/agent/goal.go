@@ -558,6 +558,7 @@ func (h *goalStreamHandler) OnToolResult(name string, result string) {
 }
 
 func (h *goalStreamHandler) OnMediaPreProcessing(content string) {}
+func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     {}
 
 func (h *goalStreamHandler) syncSession() {
 	sess, err := h.sessionStore.Get(h.sessionID)

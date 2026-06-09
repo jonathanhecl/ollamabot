@@ -46,14 +46,14 @@ var OnTaskCompletion TaskNotificationFunc
 
 // AutonomousManager manages background tickers and executions of workspace projects
 type AutonomousManager struct {
-	mu           sync.RWMutex
-	cfg          config.Config
-	client       *ollama.Client
-	memoryStore  *memory.Store
-	isWorking    map[string]bool
-	cancelFunc   context.CancelFunc
-	tickerDone   chan struct{}
-	interval     time.Duration
+	mu          sync.RWMutex
+	cfg         config.Config
+	client      *ollama.Client
+	memoryStore *memory.Store
+	isWorking   map[string]bool
+	cancelFunc  context.CancelFunc
+	tickerDone  chan struct{}
+	interval    time.Duration
 }
 
 // NewAutonomousManager creates a new instance of AutonomousManager
@@ -366,12 +366,13 @@ func (am *AutonomousManager) Tick(ctx context.Context) {
 
 type dummyStreamHandler struct{}
 
-func (d *dummyStreamHandler) OnThinking(delta string)           {}
-func (d *dummyStreamHandler) OnContent(delta string)            {}
-func (d *dummyStreamHandler) OnToolCall(call ollama.ToolCall)   {}
-func (d *dummyStreamHandler) OnToolStart(name string, args any) {}
+func (d *dummyStreamHandler) OnThinking(delta string)                 {}
+func (d *dummyStreamHandler) OnContent(delta string)                  {}
+func (d *dummyStreamHandler) OnToolCall(call ollama.ToolCall)         {}
+func (d *dummyStreamHandler) OnToolStart(name string, args any)       {}
 func (d *dummyStreamHandler) OnToolResult(name string, result string) {}
-func (d *dummyStreamHandler) OnMediaPreProcessing(content string)    {}
+func (d *dummyStreamHandler) OnMediaPreProcessing(content string)     {}
+func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)         {}
 
 // ExecuteTask runs a single step for the project
 func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, taskIdx int) error {
