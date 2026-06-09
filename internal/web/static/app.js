@@ -836,21 +836,43 @@ async function bootstrap() {
   applySidebarState();
   requestAnimationFrame(() => document.body.classList.remove("first-load"));
   await loadSessions();
-  // Check if active session exists in the loaded sessions list
+  
+  // Ensure at least one session exists - create one if needed
+  await ensureActiveSession();
+  
+  startHealthCheck();
+  startRealtimeEvents();
+  startSessionPolling();
+}
+
+// Ensures there's always an active session, creating one if necessary
+async function ensureActiveSession() {
+  // Check if the current active session exists in the loaded list
   const sessionExists = state.sessions.some((s) => s.id === state.activeSessionId);
+  
   if (state.activeSessionId && sessionExists) {
+    // Valid active session - load it
     await loadSession(state.activeSessionId);
   } else {
-    // No active session or it doesn't exist anymore - create a new one
+    // No valid active session - clear stale data and create new
     if (state.activeSessionId && !sessionExists) {
       state.activeSessionId = null;
       localStorage.removeItem("ollamabot.activeSessionId");
     }
-    await createSession();
+    
+    // Try to create a session, with fallback for server errors
+    const success = await createSession();
+    if (!success && state.sessions.length === 0) {
+      // If create failed and we have no sessions, create a client-side only session
+      // This ensures the UI always has a session to work with
+      await createClientSession();
+    }
   }
-  startHealthCheck();
-  startRealtimeEvents();
-  startSessionPolling();
+  
+  // Final safety check - if still no active session, force create one
+  if (!state.activeSessionId || !state.sessions.some((s) => s.id === state.activeSessionId)) {
+    await createClientSession();
+  }
 }
 
 function applySidebarState() {
@@ -1802,9 +1824,9 @@ async function sendMessage(event) {
   }
   if ((!content && state.attachments.length === 0) || !state.activeModel) return;
 
-  if (!state.activeSessionId) {
-    const title = content ? content.slice(0, 40) : "New session";
-    await createSession(title);
+  // Ensure we have an active session before sending
+  if (!state.activeSessionId || !state.sessions.some((s) => s.id === state.activeSessionId)) {
+    await ensureActiveSession();
   }
 
   const beforeFilterCount = state.attachments.length;
@@ -2850,7 +2872,10 @@ async function createSession(title = "New session") {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ title, model: state.activeModel }),
     });
-    if (!response.ok) return;
+    if (!response.ok) {
+      console.warn("createSession: server returned non-OK response", response.status);
+      return false;
+    }
     const sess = await response.json();
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
@@ -2867,9 +2892,34 @@ async function createSession(title = "New session") {
     updateContextBar();
     await loadSessions();
     els.prompt.focus();
+    return true;
   } catch (e) {
     console.warn("createSession failed:", e);
+    return false;
   }
+}
+
+// Creates a temporary client-side only session as fallback
+// This ensures the UI always has a session to work with
+async function createClientSession() {
+  const tempId = "client_" + Date.now();
+  const sess = {
+    id: tempId,
+    title: "New session",
+    model: state.activeModel,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+  state.activeSessionId = tempId;
+  localStorage.setItem("ollamabot.activeSessionId", tempId);
+  state.messages = [];
+  state.attachments = [];
+  state.sessions.unshift(sess);
+  renderSessions();
+  renderMessages();
+  renderAttachments();
+  updateContextBar();
+  console.log("[createClientSession] Created client-side session:", tempId);
 }
 
 async function loadSession(id) {
@@ -3041,9 +3091,9 @@ async function deleteSession(id) {
       renderAttachments();
     }
     renderSessions();
-    // If no sessions remain, create a new empty session and activate it
+    // If no sessions remain, ensure we have an active session
     if (state.sessions.length === 0) {
-      await createSession();
+      await ensureActiveSession();
     }
   } catch (e) {
     console.warn("deleteSession failed:", e);
