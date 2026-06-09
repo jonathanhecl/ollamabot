@@ -3018,6 +3018,10 @@ async function deleteSession(id) {
       renderAttachments();
     }
     renderSessions();
+    // If no sessions remain, create a new empty session and activate it
+    if (state.sessions.length === 0) {
+      await createSession();
+    }
   } catch (e) {
     console.warn("deleteSession failed:", e);
   }
