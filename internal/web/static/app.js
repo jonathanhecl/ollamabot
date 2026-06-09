@@ -1800,9 +1800,12 @@ async function sendMessage(event) {
     await createSession(title);
   }
 
+  const beforeFilterCount = state.attachments.length;
   state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
+  console.log(`[sendMessage] After capabilityFor filter: ${state.attachments.length}/${beforeFilterCount} attachments remain`);
   const images = state.attachments.map((attachment) => attachment.data);
   const visibleAttachments = [...state.attachments];
+  console.log("[sendMessage] images array length:", images.length, "first image data length:", images[0]?.length || 0);
   
   // Push the message with processed = false to state
   const userMessage = { role: "user", content, images, attachments: visibleAttachments, processed: false, timestamp: new Date().toISOString() };
@@ -1876,13 +1879,16 @@ async function processNextQueueItem() {
 
   // Log what we're about to send
   const currentMsg = outboundMessages[outboundMessages.length - 1];
+  const firstImageData = currentMsg?.images?.[0];
   console.log("[processQueue] Sending to /api/chat/stream:", {
     model: state.activeModel,
     totalMessages: outboundMessages.length,
     currentMsg: {
       role: currentMsg?.role,
       content_len: currentMsg?.content?.length || 0,
-      images: currentMsg?.images?.length || 0,
+      images_count: currentMsg?.images?.length || 0,
+      first_image_data_len: firstImageData ? firstImageData.length : 0,
+      first_image_data_preview: firstImageData ? firstImageData.substring(0, 50) + "..." : "none",
       image_kinds: currentMsg?.image_kinds,
     }
   });

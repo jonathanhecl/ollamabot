@@ -540,8 +540,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// Log incoming request summary for debugging media routing
 	for i, msg := range input.Messages {
 		if len(msg.Images) > 0 {
-			log.Printf("[handleChatStream] Message[%d]: role=%q, content_len=%d, images=%d, image_kinds=%v",
-				i, msg.Role, len(msg.Content), len(msg.Images), msg.ImageKinds)
+			dataLen := 0
+			if len(msg.Images) > 0 && msg.Images[0] != "" {
+				dataLen = len(msg.Images[0])
+			}
+			dataPreview := ""
+			if dataLen > 0 {
+				if dataLen > 50 {
+					dataPreview = msg.Images[0][:50] + "..."
+				} else {
+					dataPreview = msg.Images[0]
+				}
+			}
+			log.Printf("[handleChatStream] Message[%d]: role=%q, content_len=%d, images=%d, image_kinds=%v, first_image_data_len=%d, first_image_preview=%q",
+				i, msg.Role, len(msg.Content), len(msg.Images), msg.ImageKinds, dataLen, dataPreview)
 		}
 	}
 
