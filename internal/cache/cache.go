@@ -3,6 +3,7 @@ package cache
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
@@ -53,6 +54,43 @@ func Load(path string) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// Checker returns a capability lookup function backed by the snapshot at path.
+// A model is considered to have a capability when its probed status is
+// Confirmed or Inferred. Returns nil when the snapshot cannot be loaded so
+// callers can fall back to heuristics.
+func Checker(path string) func(model, capability string) bool {
+	snapshot, err := Load(path)
+	if err != nil || len(snapshot.Models) == 0 {
+		return nil
+	}
+	caps := make(map[string]map[string]capabilities.Status, len(snapshot.Models))
+	for _, report := range snapshot.Models {
+		caps[report.Name] = report.Capabilities
+	}
+	lookup := func(model string) map[string]capabilities.Status {
+		if c, ok := caps[model]; ok {
+			return c
+		}
+		// Tolerate the implicit ":latest" tag in either direction.
+		if c, ok := caps[model+":latest"]; ok {
+			return c
+		}
+		if c, ok := caps[strings.TrimSuffix(model, ":latest")]; ok {
+			return c
+		}
+		return nil
+	}
+	return func(model, capability string) bool {
+		statuses := lookup(strings.TrimSpace(model))
+		if statuses == nil {
+			// Unknown model (not probed yet): trust the configuration.
+			return true
+		}
+		status := statuses[capability]
+		return status == capabilities.Confirmed || status == capabilities.Inferred
+	}
 }
 
 // SaveProbeRun loads the snapshot at path (if it exists), upserts the probe run

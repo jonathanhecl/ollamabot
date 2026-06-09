@@ -77,11 +77,13 @@ type RawMsg struct {
 }
 
 type AttachmentMeta struct {
-	Name string `json:"name,omitempty"`
-	Mime string `json:"mime,omitempty"`
-	Kind string `json:"kind,omitempty"`
-	Data string `json:"data,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Mime          string `json:"mime,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Data          string `json:"data,omitempty"`
+	URL           string `json:"url,omitempty"`
+	Transcription string `json:"transcription,omitempty"`
+	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
 var (
@@ -348,10 +350,12 @@ func (s *Store) readMeta(id string) (Session, error) {
 
 // attachmentStorage represents a saved attachment with its metadata and data
 type attachmentStorage struct {
-	Name string `json:"name"`
-	Mime string `json:"mime"`
-	Kind string `json:"kind"`
-	Data string `json:"data"` // base64 encoded
+	Name          string `json:"name"`
+	Mime          string `json:"mime"`
+	Kind          string `json:"kind"`
+	Data          string `json:"data"` // base64 encoded
+	Transcription string `json:"transcription,omitempty"`
+	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
 // extractAttachments decodes base64 images in messages and saves them as
@@ -372,6 +376,35 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 		attachmentIndex := 0
 		// Track already-extracted base64 data to avoid duplicates between Images and Attachments
 		extractedData := make(map[string]bool)
+
+		// Process the Attachments field FIRST: it carries the richest metadata
+		// (name, mime, transcription). Duplicated base64 data in Images is then
+		// skipped by the dedupe map, so metadata is never lost.
+		for _, att := range msg.Attachments {
+			if att.Data == "" || extractedData[att.Data] {
+				continue
+			}
+			extractedData[att.Data] = true
+			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
+			path := filepath.Join(attDir, ref)
+			storage := attachmentStorage{
+				Name:          att.Name,
+				Mime:          att.Mime,
+				Kind:          att.Kind,
+				Data:          att.Data,
+				Transcription: att.Transcription,
+				Unreadable:    att.Unreadable,
+			}
+			storageData, err := json.Marshal(storage)
+			if err != nil {
+				continue
+			}
+			if err := os.WriteFile(path, storageData, 0o644); err != nil {
+				continue
+			}
+			refs = append(refs, ref)
+			attachmentIndex++
+		}
 
 		// Process traditional Images field (array of base64 strings)
 		// Try to infer kind from ImageKinds or default to "image"
@@ -395,31 +428,6 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 				Mime: mime,
 				Kind: kind,
 				Data: b64,
-			}
-			storageData, err := json.Marshal(storage)
-			if err != nil {
-				continue
-			}
-			if err := os.WriteFile(path, storageData, 0o644); err != nil {
-				continue
-			}
-			refs = append(refs, ref)
-			attachmentIndex++
-		}
-
-		// Process Attachments field (frontend format with data field)
-		for _, att := range msg.Attachments {
-			if att.Data == "" || extractedData[att.Data] {
-				continue
-			}
-			extractedData[att.Data] = true
-			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
-			path := filepath.Join(attDir, ref)
-			storage := attachmentStorage{
-				Name: att.Name,
-				Mime: att.Mime,
-				Kind: att.Kind,
-				Data: att.Data,
 			}
 			storageData, err := json.Marshal(storage)
 			if err != nil {
@@ -484,11 +492,13 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 				images = append(images, storage.Data)
 				imageKinds = append(imageKinds, storage.Kind)
 				attachments = append(attachments, AttachmentMeta{
-					Name: storage.Name,
-					Mime: storage.Mime,
-					Kind: storage.Kind,
-					Data: storage.Data,
-					URL:  "",
+					Name:          storage.Name,
+					Mime:          storage.Mime,
+					Kind:          storage.Kind,
+					Data:          storage.Data,
+					URL:           "",
+					Transcription: storage.Transcription,
+					Unreadable:    storage.Unreadable,
 				})
 			} else {
 				// Legacy binary format - assume image

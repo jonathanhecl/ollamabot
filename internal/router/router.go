@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"strings"
@@ -11,17 +12,67 @@ import (
 
 const imageAnalysisPrompt = "Analyze this image in detail. Describe everything visible: objects, people, colors, text, spatial relationships, mood, style, and any other relevant information a language model would need to answer questions about it."
 
-const audioAnalysisPrompt = "Analyze this audio. YOUR ABSOLUTE HIGHEST PRIORITY IS TO TRANSCRIBE ANY SPEECH VERBATIM. Start your response with the verbatim transcription of the speech. If the audio contains spoken words, transcribe them completely and accurately first. Do not summarize, paraphrase, or omit any spoken words. Only after the transcription, or if there is absolutely no speech, describe other sounds heard, speaker's tone, background noise, or other contextually relevant audio events. If you cannot process, hear, or understand the audio for any reason, respond with ONLY the exact marker: ---UNREADABLE---. Do not add any explanation, apology, or request for more information."
+// Keep this prompt SHORT: long, verbose prompts make multimodal models (e.g.
+// gemma4) return empty transcriptions when combined with structured output.
+// Field semantics are carried by the JSON schema descriptions instead.
+const audioTranscriptionPrompt = "Listen to the attached audio. Return JSON with the verbatim transcription of the speech, the language code, and any relevant non-speech sounds."
 
 // Config holds the role model assignments. Empty string means fall back to main.
 type Config struct {
 	MainModel   string
 	VisionModel string
 	AudioModel  string
+	// HasCapability reports whether a model supports a capability ("audio" or
+	// "vision"), based on probed/confirmed data. Nil means capabilities are
+	// unknown and routing falls back to config-equality heuristics.
+	HasCapability func(model, capability string) bool
 }
 
-// Router pre-processes media attachments using dedicated role models so the
-// main model only receives text context.
+// Decision describes how a media attachment of a given kind must be handled.
+type Decision string
+
+const (
+	// DecisionPassthrough sends the raw attachment directly to the main model.
+	DecisionPassthrough Decision = "passthrough"
+	// DecisionRoute pre-processes the attachment with a dedicated role model.
+	DecisionRoute Decision = "route"
+	// DecisionUnsupported drops the attachment: no configured model supports it.
+	DecisionUnsupported Decision = "unsupported"
+)
+
+// AudioTranscription is the structured output produced by the audio role model.
+type AudioTranscription struct {
+	Transcription string `json:"transcription"`
+	Language      string `json:"language,omitempty"`
+	Sounds        string `json:"sounds,omitempty"`
+	Unreadable    bool   `json:"unreadable"`
+}
+
+var audioTranscriptionSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"transcription": map[string]any{
+			"type":        "string",
+			"description": "Verbatim transcription of all speech in the audio, in the original language. Do not summarize or translate. Empty string if there is no speech.",
+		},
+		"language": map[string]any{
+			"type":        "string",
+			"description": "ISO 639-1 code of the spoken language. Empty string if no speech.",
+		},
+		"sounds": map[string]any{
+			"type":        "string",
+			"description": "Brief description of relevant non-speech sounds. Empty string if none.",
+		},
+		"unreadable": map[string]any{
+			"type":        "boolean",
+			"description": "True only if the audio could not be processed or understood at all.",
+		},
+	},
+	"required": []string{"transcription", "language", "sounds", "unreadable"},
+}
+
+// Router pre-processes media attachments using role models so the main model
+// receives text context (or raw media when it supports it natively).
 type Router struct {
 	client *ollama.Client
 	cfg    Config
@@ -39,12 +90,48 @@ func (r *Router) visionModel() string {
 	return r.cfg.MainModel
 }
 
-// audioModel returns the effective model to use for audio analysis.
+// audioModel returns the effective model to use for audio transcription.
 func (r *Router) audioModel() string {
 	if strings.TrimSpace(r.cfg.AudioModel) != "" {
 		return r.cfg.AudioModel
 	}
 	return r.cfg.MainModel
+}
+
+// Decide reports how attachments of the given kind ("image" or "audio") must
+// be handled for the current model configuration:
+//   - a dedicated role model different from main → route (pre-process)
+//   - main supports the capability natively → passthrough
+//   - nobody supports it → unsupported (graceful drop)
+func (r *Router) Decide(kind string) Decision {
+	var dedicated, capability string
+	switch kind {
+	case "image":
+		dedicated, capability = strings.TrimSpace(r.cfg.VisionModel), "vision"
+	case "audio":
+		dedicated, capability = strings.TrimSpace(r.cfg.AudioModel), "audio"
+	default:
+		return DecisionUnsupported
+	}
+
+	main := strings.TrimSpace(r.cfg.MainModel)
+	decision := DecisionPassthrough
+	switch {
+	case dedicated != "" && dedicated != main:
+		decision = DecisionRoute
+	case r.cfg.HasCapability == nil:
+		// Capabilities unknown: legacy behavior, trust the main model.
+		decision = DecisionPassthrough
+	case r.cfg.HasCapability(main, capability):
+		decision = DecisionPassthrough
+	case dedicated != "" && dedicated == main:
+		// User explicitly forced main as the role model: trust it.
+		decision = DecisionPassthrough
+	default:
+		decision = DecisionUnsupported
+	}
+	log.Printf("[Router] Decide(%q): dedicated=%q, main=%q → %s", kind, dedicated, main, decision)
+	return decision
 }
 
 // AnalyzeImage sends a base64-encoded image to the vision model and returns a
@@ -72,54 +159,63 @@ func (r *Router) AnalyzeImage(ctx context.Context, base64data string, prompt str
 	return result, nil
 }
 
-// AnalyzeAudio sends a base64-encoded audio file to the audio model and returns
-// a detailed textual description. If the model reports it cannot process the
-// audio (via the ---UNREADABLE--- sentinel), the result is normalized to a
-// single dash so downstream code has a clear, safe failure flag.
-func (r *Router) AnalyzeAudio(ctx context.Context, base64data string, prompt string) (string, error) {
+// TranscribeAudio sends a base64-encoded audio file to the effective audio
+// model and returns a structured transcription. The request uses a JSON schema
+// (structured output) with temperature 0 so the result is replicable. The user
+// prompt is intentionally NOT mixed in: the transcription must depend only on
+// the audio; interpretation is the main model's job.
+func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioTranscription, error) {
 	if len(strings.TrimSpace(base64data)) == 0 {
-		return "", fmt.Errorf("audio analysis: empty base64 data provided")
+		return AudioTranscription{}, fmt.Errorf("audio transcription: empty base64 data provided")
 	}
 	model := r.audioModel()
-	var effectivePrompt string
-	if strings.TrimSpace(prompt) != "" {
-		effectivePrompt = fmt.Sprintf("%s\n\nAdditional User Request/Context for this audio: \"%s\"", audioAnalysisPrompt, prompt)
-	} else {
-		effectivePrompt = audioAnalysisPrompt
+	log.Printf("[Router] TranscribeAudio: model=%q, data_len=%d", model, len(base64data))
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		resp, err := r.client.Chat(ctx, ollama.ChatRequest{
+			Model: model,
+			Messages: []ollama.Message{
+				{Role: "user", Content: audioTranscriptionPrompt, Images: []string{base64data}},
+			},
+			Format:  audioTranscriptionSchema,
+			Options: map[string]any{"temperature": 0, "num_ctx": 8000},
+		})
+		if err != nil {
+			log.Printf("[Router] TranscribeAudio FAILED (attempt %d): %v", attempt, err)
+			lastErr = fmt.Errorf("audio transcription (%s): %w", model, err)
+			continue
+		}
+		raw := strings.TrimSpace(resp.Message.Content)
+		var out AudioTranscription
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			log.Printf("[Router] TranscribeAudio: invalid JSON (attempt %d, len=%d): %v", attempt, len(raw), err)
+			lastErr = fmt.Errorf("audio transcription (%s): invalid JSON output: %w", model, err)
+			// Last resort on final attempt: treat the raw text as transcription.
+			if attempt == 2 && raw != "" {
+				log.Printf("[Router] TranscribeAudio: falling back to raw text as transcription")
+				return AudioTranscription{Transcription: raw}, nil
+			}
+			continue
+		}
+		out.Transcription = strings.TrimSpace(out.Transcription)
+		out.Sounds = normalizeNone(out.Sounds)
+		out.Language = normalizeNone(out.Language)
+		if out.Transcription == "" && out.Sounds == "" {
+			out.Unreadable = true
+		}
+		log.Printf("[Router] TranscribeAudio OK: transcription_len=%d, language=%q, unreadable=%v", len(out.Transcription), out.Language, out.Unreadable)
+		return out, nil
 	}
-	log.Printf("[Router] AnalyzeAudio: model=%q, prompt_len=%d, data_len=%d", model, len(effectivePrompt), len(base64data))
-	resp, err := r.client.Chat(ctx, ollama.ChatRequest{
-		Model: model,
-		Messages: []ollama.Message{
-			{Role: "user", Content: effectivePrompt, Images: []string{base64data}},
-		},
-		Options: map[string]any{"temperature": 0, "num_ctx": 8000},
-	})
-	if err != nil {
-		log.Printf("[Router] AnalyzeAudio FAILED: %v", err)
-		return "", fmt.Errorf("audio analysis (%s): %w", model, err)
-	}
-	result := strings.TrimSpace(resp.Message.Content)
-	if strings.EqualFold(result, "---UNREADABLE---") {
-		log.Printf("[Router] AnalyzeAudio detected ---UNREADABLE--- sentinel, normalizing to '-'")
-		result = "-"
-	}
-	log.Printf("[Router] AnalyzeAudio OK: result_len=%d", len(result))
-	return result, nil
+	return AudioTranscription{}, lastErr
 }
 
-// NeedsMediaRouting reports whether there is a dedicated role model that
-// differs from the main model for the given kind ("image" or "audio").
-func (r *Router) NeedsMediaRouting(kind string) bool {
-	switch kind {
-	case "image":
-		result := strings.TrimSpace(r.cfg.VisionModel) != "" && r.cfg.VisionModel != r.cfg.MainModel
-		log.Printf("[Router] NeedsMediaRouting(%q): visionModel=%q, mainModel=%q → %v", kind, r.cfg.VisionModel, r.cfg.MainModel, result)
-		return result
-	case "audio":
-		result := strings.TrimSpace(r.cfg.AudioModel) != "" && r.cfg.AudioModel != r.cfg.MainModel
-		log.Printf("[Router] NeedsMediaRouting(%q): audioModel=%q, mainModel=%q → %v", kind, r.cfg.AudioModel, r.cfg.MainModel, result)
-		return result
+// normalizeNone clears placeholder values some models emit for empty fields.
+func normalizeNone(s string) string {
+	trimmed := strings.TrimSpace(s)
+	switch strings.ToLower(strings.TrimRight(trimmed, ".")) {
+	case "", "none", "n/a", "no", "null", "nothing":
+		return ""
 	}
-	return false
+	return trimmed
 }

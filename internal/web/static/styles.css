@@ -933,6 +933,13 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.audio-transcription.unreadable {
+  color: var(--muted);
+  border-left-color: #ff9f63;
+  background: rgba(255, 159, 99, 0.08);
+  font-style: italic;
+}
+
 .media-preview span {
   color: var(--muted);
   font-size: 12px;

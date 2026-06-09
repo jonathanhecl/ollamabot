@@ -62,7 +62,7 @@ func TestResolveMedia_SplitsIntoAssistantAndUser(t *testing.T) {
 	if out[0].Role != "assistant" {
 		t.Errorf("expected first message role assistant, got %s", out[0].Role)
 	}
-	want := "The user has attached media. The pre-processing analysis is as follows:\n\n[Image Analysis (Prompt: What do you see?)]:\nIt shows a red balloon against a blue sky."
+	want := "Media pre-processing context (produced by a vision model, not written by the user):\n\n[Image 1 analysis by vision]:\nIt shows a red balloon against a blue sky."
 	if out[0].Content != want {
 		t.Errorf("unexpected assistant content:\ngot  %q\nwant %q", out[0].Content, want)
 	}
@@ -87,7 +87,7 @@ func TestResolveMedia_EmptyUserText(t *testing.T) {
 		resp := ollama.ChatResponse{
 			Message: ollama.Message{
 				Role:    "assistant",
-				Content: "The audio says hello in an emphatic tone.",
+				Content: `{"transcription": "hello in an emphatic tone", "language": "en", "sounds": "", "unreadable": false}`,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -117,23 +117,20 @@ func TestResolveMedia_EmptyUserText(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if len(out) != 2 {
-		t.Fatalf("expected 2 messages, got %d", len(out))
+	// Routed audio produces a single resolved user message (no synthetic
+	// assistant message): the transcription is injected inline.
+	if len(out) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(out))
 	}
 
-	if out[0].Role != "assistant" {
-		t.Errorf("expected first message role assistant, got %s", out[0].Role)
+	if out[0].Role != "user" {
+		t.Errorf("expected message role user, got %s", out[0].Role)
 	}
-	want := "The user has attached media. The pre-processing analysis is as follows:\n\n[Audio Transcription & Analysis]:\nThe audio says hello in an emphatic tone."
-	if out[0].Content != want {
-		t.Errorf("unexpected assistant content: got %q, want %q", out[0].Content, want)
+	if out[0].Content != "[Transcription of the audio message]: \"hello in an emphatic tone\"" {
+		t.Errorf("expected transcribed audio user content, got %q", out[0].Content)
 	}
-
-	if out[1].Role != "user" {
-		t.Errorf("expected second message role user, got %s", out[1].Role)
-	}
-	if out[1].Content != "[The user sent only this audio transcription]:\n\"The audio says hello in an emphatic tone.\"" {
-		t.Errorf("expected transcribed audio user content, got %q", out[1].Content)
+	if len(out[0].Images) != 0 {
+		t.Errorf("expected 0 images (routed audio), got %d", len(out[0].Images))
 	}
 }
 
@@ -175,10 +172,17 @@ func TestResolveMedia_NoRoutingNeeded(t *testing.T) {
 
 func TestResolveMedia_PassthroughMixedWithAnalysis(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ollama.ChatRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		content := "Detailed image description."
+		if req.Format != nil {
+			// Structured transcription request (audio).
+			content = `{"transcription": "compare them please", "language": "en", "sounds": "", "unreadable": false}`
+		}
 		resp := ollama.ChatResponse{
 			Message: ollama.Message{
 				Role:    "assistant",
-				Content: "Detailed image description.",
+				Content: content,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -225,6 +229,10 @@ func TestResolveMedia_PassthroughMixedWithAnalysis(t *testing.T) {
 	if out[1].Images[0] != "base64audio" {
 		t.Errorf("expected passthrough base64audio, got %s", out[1].Images[0])
 	}
+	// Passthrough audio still gets its transcription injected as text context.
+	if !strings.Contains(out[1].Content, "compare them please") {
+		t.Errorf("expected transcription injected in user content, got %q", out[1].Content)
+	}
 }
 
 func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
@@ -234,7 +242,7 @@ func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
 		resp := ollama.ChatResponse{
 			Message: ollama.Message{
 				Role:    "assistant",
-				Content: "Second audio transcript.",
+				Content: `{"transcription": "Second audio transcript.", "language": "en", "sounds": "", "unreadable": false}`,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -278,12 +286,12 @@ func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// For the first message (historical), it should remain unmodified and not split/transcribed again.
-	// For the second message (assistant), it remains as is.
-	// For the third message (latest user message), it should be processed and split into assistant analysis + user.
-	// Total expected messages: 1 (first user) + 1 (assistant) + 2 (processed third user) = 4 messages.
-	if len(out) != 4 {
-		t.Fatalf("expected 4 messages, got %d: %+v", len(out), out)
+	// The first (historical) user message is sanitized (audio base64 dropped,
+	// text kept) and NOT re-transcribed. The assistant message stays as is.
+	// The latest user message is resolved in place with the transcription
+	// injected inline. Total: 3 messages.
+	if len(out) != 3 {
+		t.Fatalf("expected 3 messages, got %d: %+v", len(out), out)
 	}
 
 	if calls != 1 {
@@ -291,11 +299,17 @@ func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
 	}
 
 	if out[0].Content != "First transcription output." {
-		t.Errorf("expected first user message to remain untouched, but got: %q", out[0].Content)
+		t.Errorf("expected first user message text to remain, but got: %q", out[0].Content)
+	}
+	if len(out[0].Images) != 0 {
+		t.Errorf("expected historical audio base64 to be dropped, got %d images", len(out[0].Images))
 	}
 
-	if out[2].Role != "assistant" || !strings.Contains(out[2].Content, "Second audio transcript.") {
-		t.Errorf("expected third message (processed audio assistant block), got: %+v", out[2])
+	if out[2].Role != "user" || !strings.Contains(out[2].Content, "Second audio transcript.") {
+		t.Errorf("expected resolved user message with transcript, got: %+v", out[2])
+	}
+	if len(out[2].Images) != 0 {
+		t.Errorf("expected routed audio not to passthrough, got %d images", len(out[2].Images))
 	}
 }
 
@@ -306,7 +320,7 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 		resp := ollama.ChatResponse{
 			Message: ollama.Message{
 				Role:    "assistant",
-				Content: "Third audio transcript.",
+				Content: `{"transcription": "Third audio transcript.", "language": "en", "sounds": "", "unreadable": false}`,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -377,9 +391,9 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 	}
 
 	// 6 historical messages (user1, pre1, assistant1, user2, pre2, assistant2)
-	// and 2 messages for Turn 3 (pre3, user3) = 8 messages total.
-	if len(out) != 8 {
-		t.Fatalf("expected 8 messages, got %d", len(out))
+	// and 1 resolved user message for Turn 3 = 7 messages total.
+	if len(out) != 7 {
+		t.Fatalf("expected 7 messages, got %d", len(out))
 	}
 
 	if calls != 1 {
@@ -392,8 +406,8 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 	if out[3].Content != "Second transcription output." {
 		t.Errorf("expected second user content untouched, got %q", out[3].Content)
 	}
-	if out[6].Role != "assistant" || !strings.Contains(out[6].Content, "Third audio transcript.") {
-		t.Errorf("expected pre3 to contain transcript, got: %+v", out[6])
+	if out[6].Role != "user" || !strings.Contains(out[6].Content, "Third audio transcript.") {
+		t.Errorf("expected resolved user message to contain transcript, got: %+v", out[6])
 	}
 }
 

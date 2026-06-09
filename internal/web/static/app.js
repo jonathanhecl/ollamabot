@@ -1415,13 +1415,16 @@ function canBeMain(model) {
 }
 
 // Returns the model name that handles a given role, or null if unavailable.
-// Priority: dedicated role model (if set) → main model (if capable) → null.
+// Priority: dedicated role model (if capable) → main model (if capable) → null.
 function modelForRole(role) {
   const capKey = role === "vision" ? "vision" : "audio";
   const dedicated = role === "vision" ? state.visionModel : state.audioModel;
   if (dedicated) {
-    // If the user configured a dedicated role model, always trust it!
-    return dedicated;
+    const model = state.models.find((m) => m.name === dedicated);
+    // Trust unknown (unprobed) models; reject probed models lacking the capability.
+    if (!model) return dedicated;
+    const status = model.capabilities?.[capKey];
+    if (status === "comprobado" || status === "inferido") return dedicated;
   }
   const main = activeModel();
   if (!main) return null;
@@ -1906,13 +1909,28 @@ async function processNextQueueItem() {
       break;
     }
     if (msg.role === "user" || msg.role === "assistant") {
-      const hasRoutedAudio = msg.attachments?.some((a) => a.kind === "audio" && a.transcription);
-      const hasRoutedVision = msg.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
-      const shouldClearImages = hasRoutedAudio || hasRoutedVision;
+      // Never re-send audio binary data in history: its transcription replaces
+      // it. Images are kept; the backend drops them when vision routing is
+      // active (the description already lives in the history).
+      const atts = msg.attachments || [];
+      let images = msg.images || [];
+      let kinds = atts.map((a) => a.kind);
+      if (atts.length && images.length) {
+        const keptImages = [];
+        const keptKinds = [];
+        images.forEach((img, i) => {
+          const kind = kinds[i] || "image";
+          if (kind === "audio") return;
+          keptImages.push(img);
+          keptKinds.push(kind);
+        });
+        images = keptImages;
+        kinds = keptKinds;
+      }
 
       let historyContent = msg.content || "";
-      if (hasRoutedAudio && !historyContent) {
-        const audioTexts = (msg.attachments || [])
+      if (!historyContent) {
+        const audioTexts = atts
           .filter((a) => a.kind === "audio" && a.transcription)
           .map((a) => a.transcription);
         if (audioTexts.length > 0) {
@@ -1923,8 +1941,8 @@ async function processNextQueueItem() {
       outboundMessages.push({
         role: msg.role,
         content: historyContent,
-        images: shouldClearImages ? undefined : (msg.images || undefined),
-        image_kinds: shouldClearImages ? undefined : (msg.attachments?.map((a) => a.kind) || undefined),
+        images: images.length ? images : undefined,
+        image_kinds: images.length ? kinds : undefined,
       });
     }
   }
@@ -1984,34 +2002,38 @@ async function processNextQueueItem() {
         showClarificationDialog(value.id, value.question, value.options);
       },
       media_pre_processing: (value) => {
-        const mediaRouterMsg = {
-          role: "assistant",
-          content: value,
-          streaming: false,
-          waiting: false
-        };
-        const idx = state.messages.indexOf(assistant);
-        if (idx !== -1) {
-          state.messages.splice(idx, 0, mediaRouterMsg);
-        } else {
-          state.messages.unshift(mediaRouterMsg);
-        }
+        // Structured payload: { summary, attachments: [{index, kind, action,
+        // model, transcription, language, unreadable, note, description}] }.
+        // Legacy string payloads (old sessions/servers) are shown as-is.
+        const data = typeof value === "string" ? { summary: value, attachments: [] } : (value || {});
+        const results = Array.isArray(data.attachments) ? data.attachments : [];
 
-        // Extract transcriptions and store them on the matching audio attachments
-        const parts = value.split("\n\n");
-        const transcriptions = [];
-        for (let i = 1; i < parts.length; i++) {
-          const part = parts[i].trim();
-          if (part.startsWith("[Audio Transcription & Analysis]:")) {
-            transcriptions.push(part.slice("[Audio Transcription & Analysis]:".length).trim());
+        // Map per-attachment results onto the active user message attachments.
+        if (nextItem && results.length) {
+          const atts = nextItem.attachments || [];
+          for (const r of results) {
+            const att = atts[r.index];
+            if (!att || att.kind !== r.kind) continue;
+            if (r.kind === "audio") {
+              att.transcription = r.transcription || "";
+              att.unreadable = !!r.unreadable;
+            }
+            att.routed = r.action === "transcribed" || r.action === "described";
           }
         }
-        if (nextItem && transcriptions.length > 0) {
-          let audioIdx = 0;
-          for (const att of (nextItem.attachments || [])) {
-            if (att.kind === "audio" && audioIdx < transcriptions.length) {
-              att.transcription = transcriptions[audioIdx++];
-            }
+
+        if (data.summary) {
+          const mediaRouterMsg = {
+            role: "assistant",
+            content: data.summary,
+            streaming: false,
+            waiting: false
+          };
+          const idx = state.messages.indexOf(assistant);
+          if (idx !== -1) {
+            state.messages.splice(idx, 0, mediaRouterMsg);
+          } else {
+            state.messages.unshift(mediaRouterMsg);
           }
         }
 
@@ -2113,29 +2135,10 @@ async function processNextQueueItem() {
     assistant.timestamp = new Date().toISOString();
     renderMessages();
     updateContextBar();
-    // For passthrough audio (no dedicated audio model), store the assistant's response
-    // as the audio transcription so it appears inline below the player.
-    if (nextItem && nextItem.role === "user" && assistant.content) {
-      const hasAudio = nextItem.attachments?.some((a) => a.kind === "audio");
-      const hasRoutedAudio = nextItem.attachments?.some((a) => a.kind === "audio" && a.transcription);
-      if (hasAudio && !hasRoutedAudio) {
-        for (const att of nextItem.attachments) {
-          if (att.kind === "audio" && !att.transcription) {
-            att.transcription = assistant.content;
-          }
-        }
-      }
-    }
-
-    // Clear binary base64 images from user messages that were pre-processed (transcribed/analyzed)
-    // to prevent re-sending and reduce session size.
-    if (nextItem && nextItem.role === "user") {
-      const hasRoutedAudio = nextItem.attachments?.some((a) => a.kind === "audio" && a.transcription);
-      const hasRoutedVision = nextItem.attachments?.some((a) => a.kind === "image") && state.settings?.model_vision;
-      if (hasRoutedAudio || hasRoutedVision) {
-        nextItem.images = [];
-      }
-    }
+    // Transcriptions are always provided by the backend via the structured
+    // media_pre_processing event (even in passthrough mode), so no fallback
+    // hack is needed here. Audio base64 is filtered out of outbound history
+    // per-attachment; attachments keep their data for playback/persistence.
 
     await saveSession();
     await loadModels();
@@ -2232,7 +2235,20 @@ function renderPreProcessingContent(content) {
     const part = parts[i].trim();
     if (!part) continue;
     
-    if (part.startsWith("[Audio Transcription & Analysis]:")) {
+    const imageAnalysisMatch = part.match(/^\[Image \d+ analysis by ([^\]]+)\]:/);
+    if (imageAnalysisMatch) {
+      const body = part.slice(part.indexOf("]:") + 2).trim();
+      html += `
+        <div class="analysis-box image-analysis">
+          <div class="analysis-box-head">
+            <span class="analysis-icon">🖼️</span>
+            <strong>Image Context Analysis</strong>
+            <span class="analysis-tag">vision model: ${escapeHtml(imageAnalysisMatch[1])}</span>
+          </div>
+          <div class="analysis-box-body">${renderMarkdown(body)}</div>
+        </div>
+      `;
+    } else if (part.startsWith("[Audio Transcription & Analysis]:")) {
       const body = part.slice("[Audio Transcription & Analysis]:".length).trim();
       html += `
         <div class="analysis-box audio-analysis">
@@ -2307,7 +2323,10 @@ function renderMessages() {
     if (message.role === "system") continue;
     const div = document.createElement("article");
     const isQueued = message.role === "user" && message.processed === false;
-    const isPreProcessing = message.role === "assistant" && message.content && message.content.startsWith("The user has attached media. The pre-processing analysis is as follows:");
+    const isPreProcessing = message.role === "assistant" && message.content && (
+      message.content.startsWith("The user has attached media. The pre-processing analysis is as follows:") ||
+      message.content.startsWith("Media pre-processing context")
+    );
 
     // For remote (Telegram) in-progress messages, synthesize waiting/streaming states
     const isLastMsg = message === grouped[grouped.length - 1];
@@ -2521,9 +2540,12 @@ function attachmentPreview(attachment) {
     // This avoids issues where interacting with native audio controls (play, pause,
     // seek, volume) could interfere with form submission or steal focus from prompt.
     const stopAll = `onclick="event.stopPropagation(); event.stopImmediatePropagation()" onkeydown="event.stopPropagation(); event.stopImmediatePropagation()" onkeypress="event.stopPropagation(); event.stopImmediatePropagation()" onkeyup="event.stopPropagation(); event.stopImmediatePropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()" onfocus="event.stopPropagation()"`;
-    const transcriptionHtml = attachment.transcription
-      ? `<div class="audio-transcription">${escapeHtml(attachment.transcription)}</div>`
-      : "";
+    let transcriptionHtml = "";
+    if (attachment.transcription) {
+      transcriptionHtml = `<div class="audio-transcription">${escapeHtml(attachment.transcription)}</div>`;
+    } else if (attachment.unreadable) {
+      transcriptionHtml = `<div class="audio-transcription unreadable">Audio could not be transcribed.</div>`;
+    }
     return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio>${transcriptionHtml}</div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
@@ -2924,7 +2946,8 @@ function normalizeRawMessages(rawMessages) {
           kind: att.kind || "",
           data: att.data || "",
           url: url || "",
-          transcription: att.transcription || ""
+          transcription: att.transcription || "",
+          unreadable: !!att.unreadable
         };
       }),
       streaming: false,

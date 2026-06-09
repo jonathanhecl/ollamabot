@@ -192,10 +192,7 @@ func (sm *SessionManager) Set(chatID string, sessionID string) {
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata
-type MediaMessage struct {
-	ollama.Message
-	ImageKinds []string `json:"image_kinds,omitempty"`
-}
+type MediaMessage = router.MediaMessage
 
 type pendingClarification struct {
 	ch      chan string
@@ -926,6 +923,15 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		}
 
+		// Expose persisted audio transcriptions so the shared media pipeline
+		// can sanitize history without re-sending or re-processing audio.
+		var transcriptions []string
+		for _, att := range h.Attachments {
+			if att.Kind == "audio" && strings.TrimSpace(att.Transcription) != "" {
+				transcriptions = append(transcriptions, att.Transcription)
+			}
+		}
+
 		mediaMessages = append(mediaMessages, MediaMessage{
 			Message: ollama.Message{
 				Role:      h.Role,
@@ -935,22 +941,48 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				Name:      h.Name,
 				ToolCalls: toolCalls,
 			},
-			ImageKinds: h.ImageKinds,
+			ImageKinds:     h.ImageKinds,
+			Transcriptions: transcriptions,
 		})
 	}
 
-	// 4. Initialize media router and preprocess attachments
+	// 4. Initialize media router and preprocess attachments using the shared
+	// pipeline (same behavior as the web channel).
 	mr := router.New(b.client, router.Config{
-		MainModel:   b.cfg.OllamaDefaultModel,
-		VisionModel: b.cfg.OllamaModelVision,
-		AudioModel:  b.cfg.OllamaModelAudio,
+		MainModel:     b.cfg.OllamaDefaultModel,
+		VisionModel:   b.cfg.OllamaModelVision,
+		AudioModel:    b.cfg.OllamaModelAudio,
+		HasCapability: cache.Checker(snapshotPath()),
 	})
 
-	ollamaMessages, err := b.resolveTelegramMedia(ctx, mr, mediaMessages)
+	mediaRes, err := mr.ResolveMessages(ctx, mediaMessages)
 	if err != nil {
 		log.Printf("[Telegram] Error resolving media: %v", err)
 		b.sendMessage(chatID, "❌ Error pre-processing media: "+err.Error(), 0, "")
 		return
+	}
+	ollamaMessages := mediaRes.Messages
+
+	// Persist transcriptions on the just-sent user message attachments so the
+	// web UI can render them below the audio player (Telegram itself does not
+	// echo the transcription back to the user).
+	if len(mediaRes.Attachments) > 0 && len(history) > 0 {
+		lastMsg := &history[len(history)-1]
+		audioResults := make([]router.AttachmentResult, 0, len(mediaRes.Attachments))
+		for _, ar := range mediaRes.Attachments {
+			if ar.Kind == "audio" {
+				audioResults = append(audioResults, ar)
+			}
+		}
+		audioIdx := 0
+		for i := range lastMsg.Attachments {
+			if lastMsg.Attachments[i].Kind != "audio" || audioIdx >= len(audioResults) {
+				continue
+			}
+			lastMsg.Attachments[i].Transcription = audioResults[audioIdx].Transcription
+			lastMsg.Attachments[i].Unreadable = audioResults[audioIdx].Unreadable
+			audioIdx++
+		}
 	}
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed, tools.SearchConfig{
@@ -1176,132 +1208,6 @@ func (b *Bot) handleReaction(reaction *MessageReactionUpdate) {
 	sessions.NotifyUpdate(sessionID)
 
 	log.Printf("[Telegram] Saved %s feedback for message #%d in session %s", reactionStr, msgIdx, sessionID)
-}
-
-func (b *Bot) resolveTelegramMedia(ctx context.Context, mr *router.Router, messages []MediaMessage) ([]ollama.Message, error) {
-	lastUserIdx := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			lastUserIdx = i
-			break
-		}
-	}
-
-	out := make([]ollama.Message, 0, len(messages))
-	for i, msg := range messages {
-		if msg.Role != "user" || i != lastUserIdx || len(msg.Images) == 0 {
-			out = append(out, msg.Message)
-			continue
-		}
-
-		var analyses []string
-		var passthrough []string
-		var audioTranscriptions []string
-
-		type attachment struct {
-			kind   string
-			base64 string
-		}
-
-		var attachments []attachment
-		for idx, b64 := range msg.Images {
-			kind := "image"
-			if idx < len(msg.ImageKinds) {
-				kind = msg.ImageKinds[idx]
-			}
-			attachments = append(attachments, attachment{
-				kind:   kind,
-				base64: b64,
-			})
-		}
-
-		// Pass 1: Process audio first
-		for _, att := range attachments {
-			if att.kind == "audio" {
-				needsRouting := mr.NeedsMediaRouting(att.kind)
-				if needsRouting {
-					analysis, err := mr.AnalyzeAudio(ctx, att.base64, msg.Content)
-					if err != nil {
-						return nil, err
-					}
-					audioTranscriptions = append(audioTranscriptions, analysis)
-					analyses = append(analyses, fmt.Sprintf("[Audio Transcription & Analysis]:\n%s", analysis))
-				} else {
-					passthrough = append(passthrough, att.base64)
-				}
-			}
-		}
-
-		// Construct image prompt by combining text prompt and audio transcriptions
-		imagePrompt := msg.Content
-		if len(audioTranscriptions) > 0 {
-			combinedAudio := strings.Join(audioTranscriptions, "\n\n")
-			if strings.TrimSpace(imagePrompt) != "" {
-				imagePrompt = fmt.Sprintf("%s\n\n[Instruction/Context from Audio Transcription]:\n%s", imagePrompt, combinedAudio)
-			} else {
-				imagePrompt = fmt.Sprintf("Analyze this image based on the following instruction transcribed from audio:\n%s", combinedAudio)
-			}
-		}
-
-		// Pass 2: Process images
-		for _, att := range attachments {
-			if att.kind != "audio" {
-				needsRouting := mr.NeedsMediaRouting(att.kind)
-				if needsRouting {
-					analysis, err := mr.AnalyzeImage(ctx, att.base64, imagePrompt)
-					if err != nil {
-						return nil, err
-					}
-					logPrompt := imagePrompt
-					if len(logPrompt) > 120 {
-						logPrompt = logPrompt[:117] + "..."
-					}
-					analyses = append(analyses, fmt.Sprintf("[Image Analysis (Prompt: %s)]:\n%s", strings.ReplaceAll(logPrompt, "\n", " "), analysis))
-				} else {
-					passthrough = append(passthrough, att.base64)
-				}
-			}
-		}
-
-		if len(analyses) > 0 {
-			assistantContent := "The user has attached media. The pre-processing analysis is as follows:\n\n" + strings.Join(analyses, "\n\n")
-			out = append(out, ollama.Message{
-				Role:    "assistant",
-				Content: assistantContent,
-			})
-		}
-
-		resolved := msg.Message
-		resolved.Images = passthrough
-
-		// Format and inject the audio transcription contextually into the final user prompt
-		if len(audioTranscriptions) > 0 {
-			combinedAudio := strings.Join(audioTranscriptions, "\n\n")
-			hasPassthroughImages := len(passthrough) > 0
-			hasUserContent := strings.TrimSpace(resolved.Content) != ""
-
-			if hasPassthroughImages {
-				if hasUserContent {
-					resolved.Content = fmt.Sprintf("%s\n\n[The user also sent this audio transcription accompanying the image]:\n\"%s\"", resolved.Content, combinedAudio)
-				} else {
-					resolved.Content = fmt.Sprintf("[The user sent this audio transcription accompanying the image]:\n\"%s\"", combinedAudio)
-				}
-			} else {
-				if hasUserContent {
-					resolved.Content = fmt.Sprintf("%s\n\n[The user also sent this audio transcription]:\n\"%s\"", resolved.Content, combinedAudio)
-				} else {
-					resolved.Content = fmt.Sprintf("[The user sent only this audio transcription]:\n\"%s\"", combinedAudio)
-				}
-			}
-		}
-
-		if strings.TrimSpace(resolved.Content) == "" && len(analyses) > 0 {
-			resolved.Content = "Respond to the attached media analysis."
-		}
-
-		out = append(out, resolved)
-	}
-	return out, nil
 }
 
 func (b *Bot) sendMessage(chatID int64, text string, replyToID int64, parseMode string) (int64, error) {
@@ -1561,11 +1467,13 @@ type rawMsg struct {
 }
 
 type attachmentMeta struct {
-	Name string `json:"name,omitempty"`
-	Mime string `json:"mime,omitempty"`
-	Kind string `json:"kind,omitempty"`
-	Data string `json:"data,omitempty"`
-	URL  string `json:"url,omitempty"`
+	Name          string `json:"name,omitempty"`
+	Mime          string `json:"mime,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Data          string `json:"data,omitempty"`
+	URL           string `json:"url,omitempty"`
+	Transcription string `json:"transcription,omitempty"`
+	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
 func getMimeType(kind, name string) string {
@@ -1719,10 +1627,13 @@ func (b *Bot) sendStartupNotification() {
 
 	sb.WriteString("🛠️ *Active Capabilities:*\n")
 	sb.WriteString("• 💬 Local Chat\n")
-	if b.cfg.OllamaModelVision != "" || b.cfg.OllamaDefaultModel != "" {
+	hasCap := cache.Checker(snapshotPath())
+	canVision := b.cfg.OllamaModelVision != "" || hasCap == nil || hasCap(b.cfg.OllamaDefaultModel, "vision")
+	canAudio := b.cfg.OllamaModelAudio != "" || (hasCap != nil && hasCap(b.cfg.OllamaDefaultModel, "audio"))
+	if canVision {
 		sb.WriteString("• 👁️ Image Analysis\n")
 	}
-	if b.cfg.OllamaModelAudio != "" {
+	if canAudio {
 		sb.WriteString("• 🎙️ Voice Transcription\n")
 	}
 	if b.cfg.WebSearchEnabled {
