@@ -1826,8 +1826,9 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return chosenOption, nil
 	case <-ctx.Done():
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "", nil)
-		return "", ctx.Err()
+		chosen := selectDefaultOption(options)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+fmt.Sprintf("\n\n⚠️ *Cancelled:* proceeding with default option: %s", chosen), "", nil)
+		return fmt.Sprintf("Clarification was cancelled or timed out. Proceeding with default option: %s", chosen), nil
 	case <-time.After(5 * time.Minute):
 		chosen := selectDefaultOption(options)
 		statusText := fmt.Sprintf("⚠️ *Timed out:* auto-selected option: %s", chosen)

@@ -1610,7 +1610,9 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 				h.flusher.Flush()
 			}
 		case <-ctx.Done():
-			return "", ctx.Err()
+			chosen := selectDefaultOption(options)
+			log.Printf("[Web] Clarification cancelled. Proceeding with default option: %q", chosen)
+			return fmt.Sprintf("Clarification was cancelled or timed out. Proceeding with default option: %s", chosen), nil
 		case <-timeout:
 			chosen := selectDefaultOption(options)
 			log.Printf("[Web] Clarification timed out. Auto-selected default option: %q", chosen)
