@@ -729,22 +729,23 @@ function startSessionPolling() {
       // 1. Poll sessions list
       const sessResp = await fetch("/api/sessions");
       if (sessResp.ok) {
-        const fetchedSessions = await sessResp.json();
+        const fetchedSessions = (await sessResp.json()) || [];
+        const currentSessions = state.sessions || [];
         
         // Check if session list changed (compare length, IDs, titles, or updated_at)
-        let changed = fetchedSessions.length !== state.sessions.length;
+        let changed = fetchedSessions.length !== currentSessions.length;
         if (!changed) {
           for (let i = 0; i < fetchedSessions.length; i++) {
-            if (fetchedSessions[i].id !== state.sessions[i].id || 
-                fetchedSessions[i].updated_at !== state.sessions[i].updated_at ||
-                fetchedSessions[i].title !== state.sessions[i].title) {
+            if (fetchedSessions[i].id !== currentSessions[i].id || 
+                fetchedSessions[i].updated_at !== currentSessions[i].updated_at ||
+                fetchedSessions[i].title !== currentSessions[i].title) {
               changed = true;
               break;
             }
           }
         }
         
-        const oldIds = new Set(state.sessions.map(s => s.id));
+        const oldIds = new Set(currentSessions.map(s => s.id));
         const newSessions = fetchedSessions.filter(s => !oldIds.has(s.id));
         
         if (changed) {
@@ -878,6 +879,11 @@ async function ensureActiveSession() {
   // Server session creation failed - create client-side session
   // This ensures the UI always has a session to work with
   await createClientSession();
+
+  // Final safety net: if somehow we still have no active session, create one more time
+  if (!state.activeSessionId) {
+    await createClientSession();
+  }
 }
 
 function applySidebarState() {
@@ -2908,7 +2914,7 @@ async function loadSessions() {
   try {
     const response = await fetch("/api/sessions");
     if (!response.ok) return;
-    const serverSessions = await response.json();
+    const serverSessions = (await response.json()) || [];
     
     // If we have an active session that's not in the server list, preserve it locally
     if (state.activeSessionId && !serverSessions.some((s) => s.id === state.activeSessionId)) {
@@ -2947,9 +2953,11 @@ async function createSession(title = "New session") {
     state.messages = [];
     state.attachments = [];
     // Add the new session to the local list immediately to avoid race condition
-    const existingIndex = state.sessions.findIndex((s) => s.id === sess.id);
+    const sessionsList = state.sessions || [];
+    const existingIndex = sessionsList.findIndex((s) => s.id === sess.id);
     if (existingIndex === -1) {
-      state.sessions.unshift(sess);
+      sessionsList.unshift(sess);
+      state.sessions = sessionsList;
     }
     renderSessions();
     renderMessages();
@@ -2979,7 +2987,9 @@ async function createClientSession() {
   localStorage.setItem("ollamabot.activeSessionId", tempId);
   state.messages = [];
   state.attachments = [];
-  state.sessions.unshift(sess);
+  const sessionsList = state.sessions || [];
+  sessionsList.unshift(sess);
+  state.sessions = sessionsList;
   renderSessions();
   renderMessages();
   renderAttachments();
@@ -3088,13 +3098,14 @@ function renderSessions() {
   if (!els.sessionList) return;
   if (els.sessionList.querySelector(".session-title-input")) return;
   els.sessionList.innerHTML = "";
-  if (!state.sessions.length) {
+  const sessionsList = state.sessions || [];
+  if (!sessionsList.length) {
     els.sessionList.innerHTML = `<div class="empty">No sessions yet</div>`;
     return;
   }
 
   const query = (state.sessionSearchQuery || "").toLowerCase().trim();
-  let filtered = state.sessions;
+  let filtered = sessionsList;
   if (query) {
     filtered = filtered.filter(sess =>
       (sess.title || "Untitled").toLowerCase().includes(query)
@@ -3147,7 +3158,7 @@ async function deleteSession(id) {
   try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
     if (!response.ok) return;
-    state.sessions = state.sessions.filter((s) => s.id !== id);
+    state.sessions = (state.sessions || []).filter((s) => s.id !== id);
     if (state.activeSessionId === id) {
       state.activeSessionId = null;
       state.messages = [];
@@ -3159,6 +3170,10 @@ async function deleteSession(id) {
         await loadSession(state.sessions[0].id);
       } else {
         await ensureActiveSession();
+      }
+      // Defensive fallback: if we still have no active session, force-create one
+      if (!state.activeSessionId) {
+        await createClientSession();
       }
     } else {
       renderSessions();
