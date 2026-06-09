@@ -441,7 +441,9 @@ h2 {
 }
 
 .message {
-  max-width: 980px;
+  max-width: 85%;
+  width: fit-content;
+  min-width: 200px;
   border: 1px solid var(--line);
   background: var(--panel);
   border-radius: 8px;
@@ -450,6 +452,22 @@ h2 {
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
+}
+
+/* User messages aligned to the right */
+.message.user {
+  align-self: flex-end;
+  margin-left: auto;
+  margin-right: 0;
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+/* Assistant messages aligned to the left */
+.message.assistant {
+  align-self: flex-start;
+  margin-left: 0;
+  margin-right: auto;
 }
 
 .message-metrics {
