@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type Client struct {
@@ -19,9 +18,10 @@ type Client struct {
 func NewClient(baseURL string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		httpClient: &http.Client{
-			Timeout: 120 * time.Second,
-		},
+		// No global timeout on the client — streaming chat and multi-turn
+		// tool loops can run for minutes. Timeouts are enforced via
+		// context.WithTimeout at the call sites where appropriate.
+		httpClient: &http.Client{},
 	}
 }
 
