@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -34,9 +36,24 @@ type Session struct {
 	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
 }
 
-// IsEmpty returns true if the session contains no messages, no active goals, and no feedback.
+// IsEmpty returns true if the session contains no messages, no active goals, and no feedback, AND has a default/empty title.
 func (s Session) IsEmpty() bool {
-	return len(s.Messages) == 0 && s.GoalObjective == "" && len(s.Feedback) == 0
+	hasContent := len(s.Messages) > 0 || s.GoalObjective != "" || len(s.Feedback) > 0
+	if hasContent {
+		return false
+	}
+	title := strings.TrimSpace(s.Title)
+	if title == "" || title == "New session" || title == "Empty Session" {
+		return true
+	}
+	// Check for Telegram Chat (chatID) default title
+	if strings.HasPrefix(title, "Telegram Chat (") && strings.HasSuffix(title, ")") {
+		numPart := title[len("Telegram Chat (") : len(title)-1]
+		if _, err := strconv.ParseInt(numPart, 10, 64); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // RawMsg is the shape of messages as received from/sent to the frontend.
@@ -65,7 +82,39 @@ type AttachmentMeta struct {
 var (
 	emptySessionsMu sync.RWMutex
 	emptySessions   = make(map[string]Session)
+
+	cacheMu      sync.RWMutex
+	sessionCache = make(map[string]map[string]*Session)
+	cacheLoaded  = make(map[string]bool)
 )
+
+func cloneSession(s Session) Session {
+	var msgsCopy []json.RawMessage
+	if s.Messages != nil {
+		msgsCopy = make([]json.RawMessage, len(s.Messages))
+		for i, m := range s.Messages {
+			msgsCopy[i] = make(json.RawMessage, len(m))
+			copy(msgsCopy[i], m)
+		}
+	}
+	var fbCopy []Feedback
+	if s.Feedback != nil {
+		fbCopy = make([]Feedback, len(s.Feedback))
+		copy(fbCopy, s.Feedback)
+	}
+	return Session{
+		ID:            s.ID,
+		Title:         s.Title,
+		Model:         s.Model,
+		Messages:      msgsCopy,
+		Feedback:      fbCopy,
+		CreatedAt:     s.CreatedAt,
+		UpdatedAt:     s.UpdatedAt,
+		GoalObjective: s.GoalObjective,
+		GoalStatus:    s.GoalStatus,
+		GoalReasoning: s.GoalReasoning,
+	}
+}
 
 // Store persists sessions as folders inside sessionsPath.
 // Each session folder contains:
@@ -101,26 +150,40 @@ func (s *Store) attachmentsDir(id string) string {
 
 // List returns all sessions ordered by updated_at descending.
 func (s *Store) List() ([]Session, error) {
-	entries, err := os.ReadDir(s.dir)
-	if err != nil {
-		return nil, err
-	}
-	var sessions []Session
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	cacheMu.Lock()
+	loaded := cacheLoaded[s.dir]
+	if !loaded {
+		if sessionCache[s.dir] == nil {
+			sessionCache[s.dir] = make(map[string]*Session)
 		}
-		sess, err := s.readMeta(e.Name())
-		if err != nil {
-			continue
+		entries, err := os.ReadDir(s.dir)
+		if err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				sess, err := s.readMeta(e.Name())
+				if err == nil {
+					sess.Messages = nil
+					sessionCache[s.dir][e.Name()] = &sess
+				}
+			}
+			cacheLoaded[s.dir] = true
 		}
-		sess.Messages = nil
-		sessions = append(sessions, sess)
 	}
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].UpdatedAt.After(sessions[j].UpdatedAt)
+
+	var list []Session
+	for _, cachedPtr := range sessionCache[s.dir] {
+		cloned := cloneSession(*cachedPtr)
+		cloned.Messages = nil
+		list = append(list, cloned)
+	}
+	cacheMu.Unlock()
+
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].UpdatedAt.After(list[j].UpdatedAt)
 	})
-	return sessions, nil
+	return list, nil
 }
 
 // Get loads a full session including messages with base64 images restored.
@@ -129,8 +192,20 @@ func (s *Store) Get(id string) (Session, error) {
 	sess, ok := emptySessions[id]
 	emptySessionsMu.RUnlock()
 	if ok {
-		return sess, nil
+		return cloneSession(sess), nil
 	}
+
+	cacheMu.Lock()
+	if sessionCache[s.dir] == nil {
+		sessionCache[s.dir] = make(map[string]*Session)
+	}
+	cached, found := sessionCache[s.dir][id]
+	if found && cached.Messages != nil {
+		cloned := cloneSession(*cached)
+		cacheMu.Unlock()
+		return cloned, nil
+	}
+	cacheMu.Unlock()
 
 	var metaSess Session
 	metaPath := s.sessionMetaPath(id)
@@ -144,19 +219,22 @@ func (s *Store) Get(id string) (Session, error) {
 
 	msgsPath := s.messagesPath(id)
 	msgsData, err := os.ReadFile(msgsPath)
-	if err != nil {
-		return metaSess, nil // no messages yet
-	}
-	var rawMessages []json.RawMessage
-	if err := json.Unmarshal(msgsData, &rawMessages); err != nil {
-		return metaSess, err
+	if err == nil {
+		var rawMessages []json.RawMessage
+		if err := json.Unmarshal(msgsData, &rawMessages); err == nil {
+			metaSess.Messages, err = s.loadMessagesWithAttachments(id, rawMessages)
+			if err != nil {
+				return metaSess, err
+			}
+		}
 	}
 
-	metaSess.Messages, err = s.loadMessagesWithAttachments(id, rawMessages)
-	if err != nil {
-		return metaSess, err
-	}
-	return metaSess, nil
+	cacheMu.Lock()
+	sessionCache[s.dir][id] = &metaSess
+	cloned := cloneSession(metaSess)
+	cacheMu.Unlock()
+
+	return cloned, nil
 }
 
 // Save persists a session, extracting base64 images into the attachments folder.
@@ -170,6 +248,13 @@ func (s *Store) Save(sess Session) error {
 		emptySessionsMu.Lock()
 		emptySessions[sess.ID] = sess
 		emptySessionsMu.Unlock()
+
+		cacheMu.Lock()
+		if sessionCache[s.dir] != nil {
+			delete(sessionCache[s.dir], sess.ID)
+		}
+		cacheMu.Unlock()
+
 		// Clean up from disk if it was previously saved
 		_ = os.RemoveAll(s.sessionDir(sess.ID))
 		return nil
@@ -178,6 +263,15 @@ func (s *Store) Save(sess Session) error {
 	emptySessionsMu.Lock()
 	delete(emptySessions, sess.ID)
 	emptySessionsMu.Unlock()
+
+	// Update cache
+	cacheMu.Lock()
+	if sessionCache[s.dir] == nil {
+		sessionCache[s.dir] = make(map[string]*Session)
+	}
+	cachedSess := cloneSession(sess)
+	sessionCache[s.dir][sess.ID] = &cachedSess
+	cacheMu.Unlock()
 
 	sd := s.sessionDir(sess.ID)
 	if err := os.MkdirAll(sd, 0o755); err != nil {
@@ -215,6 +309,13 @@ func (s *Store) Delete(id string) error {
 	emptySessionsMu.Lock()
 	delete(emptySessions, id)
 	emptySessionsMu.Unlock()
+
+	cacheMu.Lock()
+	if sessionCache[s.dir] != nil {
+		delete(sessionCache[s.dir], id)
+	}
+	cacheMu.Unlock()
+
 	return os.RemoveAll(s.sessionDir(id))
 }
 

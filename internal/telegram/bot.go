@@ -966,7 +966,12 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		chatID: chatID,
 	})
 	a := agent.NewAgent(b.cfg, b.client, registry)
-	handler := &telegramStreamHandler{bot: b, chatID: chatID}
+	handler := &telegramStreamHandler{
+		bot:         b,
+		chatID:      chatID,
+		sessionID:   sessionID,
+		baseHistory: history,
+	}
 
 	_ = b.sendChatAction(chatID, "typing")
 
@@ -1420,25 +1425,120 @@ func (b *Bot) downloadFile(filePath string) ([]byte, error) {
 
 // Custom StreamHandler for Telegram bot
 type telegramStreamHandler struct {
-	bot    *Bot
-	chatID int64
+	bot            *Bot
+	chatID         int64
+	sessionID      string
+	baseHistory    []rawMsg
+	activeMessages []rawMsg
+	lastNotifyTime time.Time
+	mu             sync.Mutex
 }
 
-func (h *telegramStreamHandler) OnThinking(delta string) {}
+func (h *telegramStreamHandler) getOrCreateAssistantMsg() *rawMsg {
+	if len(h.activeMessages) == 0 || h.activeMessages[len(h.activeMessages)-1].Role != "assistant" {
+		h.activeMessages = append(h.activeMessages, rawMsg{
+			Role:      "assistant",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
+	return &h.activeMessages[len(h.activeMessages)-1]
+}
 
-func (h *telegramStreamHandler) OnContent(delta string) {}
+func (h *telegramStreamHandler) notifyUpdate(force bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
 
-func (h *telegramStreamHandler) OnToolCall(call ollama.ToolCall) {}
+	now := time.Now()
+	if !force && now.Sub(h.lastNotifyTime) < 300*time.Millisecond {
+		return
+	}
+	h.lastNotifyTime = now
+
+	sess, err := h.bot.sessions.Get(h.sessionID)
+	if err != nil {
+		return
+	}
+
+	var allMessages []json.RawMessage
+	for _, m := range h.baseHistory {
+		rawBytes, _ := json.Marshal(m)
+		allMessages = append(allMessages, rawBytes)
+	}
+	for _, m := range h.activeMessages {
+		rawBytes, _ := json.Marshal(m)
+		allMessages = append(allMessages, rawBytes)
+	}
+
+	sess.Messages = allMessages
+	_ = h.bot.sessions.Save(sess)
+	sessions.NotifyUpdate(h.sessionID)
+}
+
+func (h *telegramStreamHandler) OnThinking(delta string) {
+	h.mu.Lock()
+	msg := h.getOrCreateAssistantMsg()
+	msg.Thinking += delta
+	h.mu.Unlock()
+	h.notifyUpdate(false)
+}
+
+func (h *telegramStreamHandler) OnContent(delta string) {
+	h.mu.Lock()
+	msg := h.getOrCreateAssistantMsg()
+	msg.Content += delta
+	h.mu.Unlock()
+	h.notifyUpdate(false)
+}
+
+func (h *telegramStreamHandler) OnToolCall(call ollama.ToolCall) {
+	h.mu.Lock()
+	msg := h.getOrCreateAssistantMsg()
+	tcBytes, _ := json.Marshal(call)
+
+	found := false
+	for _, existing := range msg.ToolCalls {
+		var existingCall ollama.ToolCall
+		if err := json.Unmarshal(existing, &existingCall); err == nil {
+			if existingCall.Function.Name == call.Function.Name {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		msg.ToolCalls = append(msg.ToolCalls, tcBytes)
+	}
+	h.mu.Unlock()
+	h.notifyUpdate(false)
+}
 
 func (h *telegramStreamHandler) OnToolStart(name string, args any) {
 	_ = h.bot.sendChatAction(h.chatID, "typing")
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", name), 0, "Markdown")
 }
 
-func (h *telegramStreamHandler) OnToolResult(name string, result string) {}
+func (h *telegramStreamHandler) OnToolResult(name string, result string) {
+	h.mu.Lock()
+	h.activeMessages = append(h.activeMessages, rawMsg{
+		Role:      "tool",
+		Name:      name,
+		Content:   result,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+	h.mu.Unlock()
+	h.notifyUpdate(true)
+}
 
 func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
 	_ = h.bot.sendChatAction(h.chatID, "typing")
+	h.mu.Lock()
+	h.activeMessages = append(h.activeMessages, rawMsg{
+		Role:      "assistant",
+		Content:   content,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+	h.mu.Unlock()
+	h.notifyUpdate(true)
 }
 
 // Struct re-definitions to remain completely self-contained
