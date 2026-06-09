@@ -346,9 +346,17 @@ func (s *Store) readMeta(id string) (Session, error) {
 	return sess, nil
 }
 
+// attachmentStorage represents a saved attachment with its metadata and data
+type attachmentStorage struct {
+	Name string `json:"name"`
+	Mime string `json:"mime"`
+	Kind string `json:"kind"`
+	Data string `json:"data"` // base64 encoded
+}
+
 // extractAttachments decodes base64 images in messages and saves them as
 // binary files in the session's attachments folder. It replaces Images with
-// AttachmentRefs in the returned messages.
+// AttachmentRefs in the returned messages. Also handles Attachments from frontend.
 func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]json.RawMessage, error) {
 	var out []json.RawMessage
 	attDir := s.attachmentsDir(id)
@@ -359,38 +367,88 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 			out = append(out, raw)
 			continue
 		}
-		if len(msg.Images) == 0 {
-			out = append(out, raw)
-			continue
-		}
 
 		var refs []string
+		attachmentIndex := 0
+
+		// Process traditional Images field (array of base64 strings)
+		// Try to infer kind from ImageKinds or default to "image"
 		for ii, b64 := range msg.Images {
-			data, err := base64.StdEncoding.DecodeString(b64)
+			if b64 == "" {
+				continue
+			}
+			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
+			path := filepath.Join(attDir, ref)
+			kind := "image"
+			if ii < len(msg.ImageKinds) {
+				kind = msg.ImageKinds[ii]
+			}
+			mime := "image/png"
+			if kind == "audio" {
+				mime = "audio/wav"
+			}
+			storage := attachmentStorage{
+				Name: fmt.Sprintf("attachment_%d_%d", mi, ii),
+				Mime: mime,
+				Kind: kind,
+				Data: b64,
+			}
+			storageData, err := json.Marshal(storage)
 			if err != nil {
 				continue
 			}
-			ref := fmt.Sprintf("%d_%d.bin", mi, ii)
-			path := filepath.Join(attDir, ref)
-			if err := os.WriteFile(path, data, 0o644); err != nil {
+			if err := os.WriteFile(path, storageData, 0o644); err != nil {
 				continue
 			}
 			refs = append(refs, ref)
+			attachmentIndex++
 		}
-		msg.Images = nil
-		msg.AttachmentRefs = refs
-		updated, err := json.Marshal(msg)
-		if err != nil {
-			out = append(out, raw)
+
+		// Process Attachments field (frontend format with data field)
+		for _, att := range msg.Attachments {
+			if att.Data == "" {
+				continue
+			}
+			ref := fmt.Sprintf("%d_%d.json", mi, attachmentIndex)
+			path := filepath.Join(attDir, ref)
+			storage := attachmentStorage{
+				Name: att.Name,
+				Mime: att.Mime,
+				Kind: att.Kind,
+				Data: att.Data,
+			}
+			storageData, err := json.Marshal(storage)
+			if err != nil {
+				continue
+			}
+			if err := os.WriteFile(path, storageData, 0o644); err != nil {
+				continue
+			}
+			refs = append(refs, ref)
+			attachmentIndex++
+		}
+
+		// Only update message if we extracted any attachments
+		if len(refs) > 0 {
+			msg.Images = nil
+			msg.Attachments = nil
+			msg.ImageKinds = nil
+			msg.AttachmentRefs = refs
+			updated, err := json.Marshal(msg)
+			if err != nil {
+				out = append(out, raw)
+			} else {
+				out = append(out, updated)
+			}
 		} else {
-			out = append(out, updated)
+			out = append(out, raw)
 		}
 	}
 	return out, nil
 }
 
 // loadMessagesWithAttachments reads referenced attachment files and restores
-// base64 Images in the returned messages.
+// base64 Images and Attachments in the returned messages.
 func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessage) ([]json.RawMessage, error) {
 	var out []json.RawMessage
 	attDir := s.attachmentsDir(id)
@@ -407,15 +465,44 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 		}
 
 		var images []string
+		var attachments []AttachmentMeta
+		var imageKinds []string
 		for _, ref := range msg.AttachmentRefs {
 			path := filepath.Join(attDir, ref)
 			data, err := os.ReadFile(path)
 			if err != nil {
 				continue
 			}
-			images = append(images, base64.StdEncoding.EncodeToString(data))
+			// Try to parse as JSON (new format with metadata)
+			var storage attachmentStorage
+			if err := json.Unmarshal(data, &storage); err == nil {
+				// New JSON format with metadata
+				images = append(images, storage.Data)
+				imageKinds = append(imageKinds, storage.Kind)
+				attachments = append(attachments, AttachmentMeta{
+					Name: storage.Name,
+					Mime: storage.Mime,
+					Kind: storage.Kind,
+					Data: storage.Data,
+					URL:  "",
+				})
+			} else {
+				// Legacy binary format - assume image
+				b64 := base64.StdEncoding.EncodeToString(data)
+				images = append(images, b64)
+				imageKinds = append(imageKinds, "image")
+				attachments = append(attachments, AttachmentMeta{
+					Name: "attachment.bin",
+					Mime: "application/octet-stream",
+					Kind: "image",
+					Data: b64,
+					URL:  "",
+				})
+			}
 		}
 		msg.Images = images
+		msg.ImageKinds = imageKinds
+		msg.Attachments = attachments
 		msg.AttachmentRefs = nil
 		updated, err := json.Marshal(msg)
 		if err != nil {

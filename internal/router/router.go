@@ -75,6 +75,9 @@ func (r *Router) AnalyzeImage(ctx context.Context, base64data string, prompt str
 // AnalyzeAudio sends a base64-encoded audio file to the audio model and returns
 // a detailed textual description.
 func (r *Router) AnalyzeAudio(ctx context.Context, base64data string, prompt string) (string, error) {
+	if len(strings.TrimSpace(base64data)) == 0 {
+		return "", fmt.Errorf("audio analysis: empty base64 data provided")
+	}
 	model := r.audioModel()
 	var effectivePrompt string
 	if strings.TrimSpace(prompt) != "" {

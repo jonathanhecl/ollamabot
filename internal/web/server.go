@@ -721,6 +721,11 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 		// Pass 1: Process routed audio attachments first
 		for _, att := range attachments {
 			if att.kind == "audio" {
+				// Validate audio data is not empty
+				if len(att.base64) == 0 {
+					log.Printf("[resolveMedia] ERROR: Audio attachment has empty base64 data, skipping")
+					continue
+				}
 				needsRouting := mr.NeedsMediaRouting(att.kind)
 				log.Printf("[resolveMedia] Audio attachment: needsRouting=%v, data_len=%d", needsRouting, len(att.base64))
 				if needsRouting {
