@@ -3138,3 +3138,55 @@ textarea {
   color: var(--text);
   display: block;
 }
+
+/* Inline Clarification Card */
+.clarification-card {
+  max-width: 85%;
+  width: fit-content;
+  min-width: 280px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 12px auto;
+  position: relative;
+  z-index: 10;
+}
+
+.clarification-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.clarification-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.clarification-options-list button {
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.clarification-options-list button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+}
+
+.clarification-custom {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}

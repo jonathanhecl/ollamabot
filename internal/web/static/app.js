@@ -190,9 +190,12 @@ const els = {
   approvalToolArgs: document.querySelector("#approvalToolArgs"),
   approveToolBtn: document.querySelector("#approveToolBtn"),
   denyToolBtn: document.querySelector("#denyToolBtn"),
-  clarificationDialog: document.querySelector("#clarificationDialog"),
+  clarificationCard: document.querySelector("#clarificationCard"),
   clarificationQuestion: document.querySelector("#clarificationQuestion"),
   clarificationOptionsContainer: document.querySelector("#clarificationOptionsContainer"),
+  clarificationCancel: document.querySelector("#clarificationCancel"),
+  clarificationCustomInput: document.querySelector("#clarificationCustomInput"),
+  clarificationSendCustom: document.querySelector("#clarificationSendCustom"),
   
   // Memory DOM Elements
   openMemory: document.querySelector("#openMemory"),
@@ -2693,18 +2696,51 @@ function showClarificationDialog(id, question, options) {
   els.clarificationQuestion.textContent = question;
   els.clarificationOptionsContainer.innerHTML = "";
   
+  // Reset custom input
+  els.clarificationCustomInput.value = "";
+  
+  // Create option buttons
   options.forEach(opt => {
     const btn = document.createElement("button");
-    btn.className = "primary-button";
-    btn.style.width = "100%";
-    btn.style.textAlign = "left";
-    btn.style.padding = "10px 14px";
-    btn.style.justifyContent = "flex-start";
     btn.textContent = opt;
     btn.addEventListener("click", () => respondToClarification(id, opt));
     els.clarificationOptionsContainer.appendChild(btn);
   });
   
+  // Setup cancel button
+  els.clarificationCancel.onclick = () => {
+    clearClarification();
+    els.clarificationCard.style.display = "none";
+    els.messages.appendChild(els.clarificationCard);
+  };
+  
+  // Setup custom send button
+  els.clarificationSendCustom.onclick = () => {
+    const customText = els.clarificationCustomInput.value.trim();
+    if (customText) {
+      respondToClarification(id, customText);
+    }
+  };
+  
+  // Handle Enter key in custom input
+  els.clarificationCustomInput.onkeydown = (e) => {
+    if (e.key === "Enter") {
+      els.clarificationSendCustom.click();
+    }
+  };
+  
+  // Insert card into messages (before composer so it appears inline)
+  const messagesContainer = els.messages;
+  const existingCard = els.clarificationCard;
+  if (existingCard.parentNode !== messagesContainer) {
+    messagesContainer.appendChild(existingCard);
+  }
+  existingCard.style.display = "block";
+  
+  // Scroll to show the card
+  existingCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  
+  // Auto-answer timer
   const countdownEl = document.querySelector("#clarificationCountdown");
   if (countdownEl) {
     const startTime = Date.now();
@@ -2721,14 +2757,20 @@ function showClarificationDialog(id, question, options) {
         clearInterval(clarificationInterval);
         clarificationInterval = null;
         const chosen = selectDefaultOptionJS(options);
-        respondToClarification(id, chosen); // Auto-respond with default
+        respondToClarification(id, chosen);
       }
     };
     updateTimer();
     clarificationInterval = setInterval(updateTimer, 500);
   }
-  
-  els.clarificationDialog.showModal();
+}
+
+function clearClarification() {
+  if (clarificationInterval) {
+    clearInterval(clarificationInterval);
+    clarificationInterval = null;
+  }
+  state.currentClarificationId = null;
 }
 
 function selectDefaultOptionJS(options) {
@@ -2743,10 +2785,7 @@ function selectDefaultOptionJS(options) {
 }
 
 async function respondToClarification(id, option) {
-  if (clarificationInterval) {
-    clearInterval(clarificationInterval);
-    clarificationInterval = null;
-  }
+  clearClarification();
   try {
     await fetch("/api/tools/clarify", {
       method: "POST",
@@ -2756,8 +2795,9 @@ async function respondToClarification(id, option) {
   } catch (err) {
     console.error("Failed to send clarification response:", err);
   } finally {
-    state.currentClarificationId = null;
-    els.clarificationDialog.close();
+    // Hide the inline card
+    els.clarificationCard.style.display = "none";
+    els.messages.appendChild(els.clarificationCard);
   }
 }
 

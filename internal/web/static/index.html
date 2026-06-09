@@ -515,23 +515,26 @@
       </div>
     </dialog>
 
-    <dialog id="clarificationDialog" class="modal">
-      <div class="modal-head">
-        <div>
-          <p class="eyebrow">Clarification Required</p>
-          <h2 id="clarificationQuestion" style="margin-top: 8px; font-size: 1.25rem;">Question Text?</h2>
+    <div id="clarificationCard" class="clarification-card" style="display: none;">
+      <div class="clarification-header">
+        <span class="eyebrow">Clarification Required</span>
+        <button id="clarificationCancel" class="ghost-button" style="font-size: 11px; padding: 4px 8px;">Cancel</button>
+      </div>
+      <h3 id="clarificationQuestion" style="margin: 8px 0; font-size: 0.95rem; font-weight: 500;">Question Text?</h3>
+      <div id="clarificationOptionsContainer" class="clarification-options-list">
+        <!-- Options will be dynamically populated here -->
+      </div>
+      <div class="clarification-custom">
+        <p style="font-size: 11px; color: var(--muted); margin-bottom: 8px;">Or type a custom response:</p>
+        <div style="display: flex; gap: 8px;">
+          <input id="clarificationCustomInput" type="text" placeholder="Type your own explanation..." style="flex: 1; font-size: 12px; padding: 6px 10px;" />
+          <button id="clarificationSendCustom" class="primary-button" style="font-size: 11px; padding: 6px 12px;">Send</button>
         </div>
       </div>
-      <div class="confirm-body">
-        <p>Please select one of the following options to help the agent plan the next action:</p>
-        <div id="clarificationOptionsContainer" class="clarification-options-list" style="margin: 20px 0 10px 0; display: flex; flex-direction: column; gap: 10px;">
-          <!-- Options will be dynamically populated here -->
-        </div>
-        <div id="clarificationCountdownContainer" style="text-align: center; margin-top: 15px; color: #f59e0b; font-size: 13px; font-weight: 500; font-family: monospace;">
-          ⏱️ Auto-answering default option in <span id="clarificationCountdown">05:00</span>
-        </div>
+      <div id="clarificationCountdownContainer" style="text-align: center; margin-top: 12px; color: #f59e0b; font-size: 11px; font-weight: 500; font-family: monospace;">
+        ⏱️ Auto-answering in <span id="clarificationCountdown">05:00</span>
       </div>
-    </dialog>
+    </div>
 
     <div id="loginOverlay" class="login-overlay" style="display: none;">
       <div class="login-card">
