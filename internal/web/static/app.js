@@ -836,9 +836,16 @@ async function bootstrap() {
   applySidebarState();
   requestAnimationFrame(() => document.body.classList.remove("first-load"));
   await loadSessions();
-  if (state.activeSessionId) {
+  // Check if active session exists in the loaded sessions list
+  const sessionExists = state.sessions.some((s) => s.id === state.activeSessionId);
+  if (state.activeSessionId && sessionExists) {
     await loadSession(state.activeSessionId);
   } else {
+    // No active session or it doesn't exist anymore - create a new one
+    if (state.activeSessionId && !sessionExists) {
+      state.activeSessionId = null;
+      localStorage.removeItem("ollamabot.activeSessionId");
+    }
     await createSession();
   }
   startHealthCheck();
@@ -2862,7 +2869,17 @@ async function createSession(title = "New session") {
 async function loadSession(id) {
   try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`);
-    if (!response.ok) return;
+    if (!response.ok) {
+      // Session not found - clear state and create a new one
+      if (response.status === 404) {
+        state.activeSessionId = null;
+        localStorage.removeItem("ollamabot.activeSessionId");
+        state.messages = [];
+        state.attachments = [];
+        await createSession();
+      }
+      return;
+    }
     const sess = await response.json();
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
