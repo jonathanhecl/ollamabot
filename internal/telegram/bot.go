@@ -435,7 +435,15 @@ func (b *Bot) handleMessage(msg *Message) {
 	}
 
 	// Process message input asynchronously
-	go b.processMessageInput(msg, sessionID)
+	go func(m *Message, sid string) {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("[Telegram] panic processing message chat=%d: %v", chatID, r)
+				b.sendMessage(chatID, "❌ Internal error processing your message. Please try again.", 0, "")
+			}
+		}()
+		b.processMessageInput(m, sid)
+	}(msg, sessionID)
 }
 
 func (b *Bot) isAuthorized(fromID int64) bool {
@@ -1008,8 +1016,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 	_ = b.sendChatAction(chatID, "typing")
 
+	think := cache.SupportsCapability(snapshotPath(), b.cfg.OllamaDefaultModel, "thinking")
+	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
+
 	// 9. Execute agent multi-turn planning & tool calls loop
-	finalHistory, err := a.Run(ctx, b.cfg.OllamaDefaultModel, ollamaMessages, true, handler)
+	finalHistory, err := a.Run(ctx, b.cfg.OllamaDefaultModel, ollamaMessages, think, handler)
 	if err != nil {
 		log.Printf("[Telegram] Agent loop execution failed: %v", err)
 		b.sendMessage(chatID, "❌ Error during execution: "+err.Error(), 0, "")

@@ -93,6 +93,39 @@ func Checker(path string) func(model, capability string) bool {
 	}
 }
 
+// SupportsCapability reports whether a probed model has the given capability at
+// Confirmed or Inferred status. Unlike Checker, unknown models (not present in
+// the snapshot) return false so callers can safely disable optional features
+// such as thinking without triggering Ollama 400 errors.
+func SupportsCapability(path, model, capability string) bool {
+	snapshot, err := Load(path)
+	if err != nil || len(snapshot.Models) == 0 {
+		return false
+	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return false
+	}
+	for _, report := range snapshot.Models {
+		if !modelNamesMatch(report.Name, model) {
+			continue
+		}
+		status := report.Capabilities[capability]
+		return status == capabilities.Confirmed || status == capabilities.Inferred
+	}
+	return false
+}
+
+func modelNamesMatch(a, b string) bool {
+	if a == b {
+		return true
+	}
+	if a == b+":latest" || b == a+":latest" {
+		return true
+	}
+	return strings.TrimSuffix(a, ":latest") == strings.TrimSuffix(b, ":latest")
+}
+
 // SaveProbeRun loads the snapshot at path (if it exists), upserts the probe run
 // (keyed by name+model, keeping the most recent), and saves back. If the file
 // does not exist yet the run is saved in a minimal snapshot.
