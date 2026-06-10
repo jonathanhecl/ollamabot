@@ -108,13 +108,21 @@ func TestAttachmentExtractionAndRestore(t *testing.T) {
 		t.Fatalf("expected 1 attachment file, got %d", len(entries))
 	}
 
-	// Verify extracted binary matches original
+	// Verify extracted JSON matches original
 	diskData, err := os.ReadFile(filepath.Join(attDir, entries[0].Name()))
 	if err != nil {
 		t.Fatalf("ReadFile attachment failed: %v", err)
 	}
-	if string(diskData) != string(imageData) {
-		t.Fatalf("attachment content mismatch")
+	var storage attachmentStorage
+	if err := json.Unmarshal(diskData, &storage); err != nil {
+		t.Fatalf("Unmarshal attachment JSON failed: %v", err)
+	}
+	decoded, err := base64.StdEncoding.DecodeString(storage.Data)
+	if err != nil {
+		t.Fatalf("Decode base64 failed: %v", err)
+	}
+	if string(decoded) != string(imageData) {
+		t.Fatalf("attachment content mismatch: got %q, expected %q", string(decoded), string(imageData))
 	}
 
 	// Get should restore the base64 images
