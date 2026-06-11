@@ -608,7 +608,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// Inject uploaded-files context if session has uploads
 	if input.SessionID != "" {
-		log.Printf("[Web] Injecting uploads context for session=%q workspace=%q sessionsPath=%q", input.SessionID, cfg.Workspace, cfg.SessionsPath)
 		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
@@ -1150,14 +1149,8 @@ func detectMime(name string) string {
 // session has any, so the agent knows what files are available.
 func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []ollama.Message) []ollama.Message {
 	dir := uploadsDir(workspace, sessionsPath, sessionID)
-	log.Printf("[injectUploads] checking dir=%q", dir)
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		log.Printf("[injectUploads] ReadDir error: %v", err)
-		return messages
-	}
-	if len(entries) == 0 {
-		log.Printf("[injectUploads] dir is empty")
+	if err != nil || len(entries) == 0 {
 		return messages
 	}
 
@@ -1184,8 +1177,6 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 	if len(lines) == 0 {
 		return messages
 	}
-	log.Printf("[injectUploads] injecting %d file(s): %v", len(lines), lines)
-
 	note := "The user has uploaded the following files to this session. " +
 		"You can read text files with the read_file tool using the given path, " +
 		"or run shell commands on binary/video files with execute_command.\n\nUploaded files:\n" +
