@@ -1611,9 +1611,91 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+// sanitizeMath converts LaTeX math notation to plain readable text.
+// It handles block math ($$...$$, \[...\]) and inline math ($...$, \(...\)),
+// and replaces common LaTeX commands with Unicode equivalents.
+func sanitizeMath(text string) string {
+	// Block math: $$...$$ or \[...\]
+	reBlockDollar := regexp.MustCompile(`(?s)\$\$(.+?)\$\$`)
+	text = reBlockDollar.ReplaceAllStringFunc(text, func(m string) string {
+		inner := reBlockDollar.FindStringSubmatch(m)
+		if len(inner) > 1 {
+			return simplifyLatex(strings.TrimSpace(inner[1]))
+		}
+		return m
+	})
+	reBlockBracket := regexp.MustCompile(`(?s)\\\[(.+?)\\\]`)
+	text = reBlockBracket.ReplaceAllStringFunc(text, func(m string) string {
+		inner := reBlockBracket.FindStringSubmatch(m)
+		if len(inner) > 1 {
+			return simplifyLatex(strings.TrimSpace(inner[1]))
+		}
+		return m
+	})
+	// Inline math: $...$ (not $$) or \(...\)
+	reInlineDollar := regexp.MustCompile(`\$([^$\n]+?)\$`)
+	text = reInlineDollar.ReplaceAllStringFunc(text, func(m string) string {
+		inner := reInlineDollar.FindStringSubmatch(m)
+		if len(inner) > 1 {
+			return simplifyLatex(inner[1])
+		}
+		return m
+	})
+	reInlineParen := regexp.MustCompile(`\\\((.+?)\\\)`)
+	text = reInlineParen.ReplaceAllStringFunc(text, func(m string) string {
+		inner := reInlineParen.FindStringSubmatch(m)
+		if len(inner) > 1 {
+			return simplifyLatex(inner[1])
+		}
+		return m
+	})
+	return text
+}
+
+// simplifyLatex converts common LaTeX math commands to readable Unicode/text.
+func simplifyLatex(s string) string {
+	// \frac{a}{b} → a/b
+	reFrac := regexp.MustCompile(`\\frac\{([^}]+)\}\{([^}]+)\}`)
+	s = reFrac.ReplaceAllString(s, "$1/$2")
+	// \sqrt{x} → √x
+	reSqrt := regexp.MustCompile(`\\sqrt\{([^}]+)\}`)
+	s = reSqrt.ReplaceAllString(s, "√$1")
+	// \text{...} → unwrap
+	reText := regexp.MustCompile(`\\text\{([^}]+)\}`)
+	s = reText.ReplaceAllString(s, "$1")
+	// Remove remaining braces from commands like \cdot{} \left \right
+	s = strings.ReplaceAll(s, `\div`, "÷")
+	s = strings.ReplaceAll(s, `\times`, "×")
+	s = strings.ReplaceAll(s, `\cdot`, "·")
+	s = strings.ReplaceAll(s, `\pm`, "±")
+	s = strings.ReplaceAll(s, `\leq`, "≤")
+	s = strings.ReplaceAll(s, `\geq`, "≥")
+	s = strings.ReplaceAll(s, `\neq`, "≠")
+	s = strings.ReplaceAll(s, `\approx`, "≈")
+	s = strings.ReplaceAll(s, `\infty`, "∞")
+	s = strings.ReplaceAll(s, `\pi`, "π")
+	s = strings.ReplaceAll(s, `\alpha`, "α")
+	s = strings.ReplaceAll(s, `\beta`, "β")
+	s = strings.ReplaceAll(s, `\gamma`, "γ")
+	s = strings.ReplaceAll(s, `\delta`, "δ")
+	s = strings.ReplaceAll(s, `\sigma`, "σ")
+	s = strings.ReplaceAll(s, `\theta`, "θ")
+	s = strings.ReplaceAll(s, `\left`, "")
+	s = strings.ReplaceAll(s, `\right`, "")
+	// Remove remaining backslash-commands (e.g. \sum, \int, \lim)
+	reCmd := regexp.MustCompile(`\\[a-zA-Z]+`)
+	s = reCmd.ReplaceAllString(s, "")
+	// Strip leftover bare braces
+	s = strings.ReplaceAll(s, "{", "")
+	s = strings.ReplaceAll(s, "}", "")
+	return strings.TrimSpace(s)
+}
+
 // toTelegramHTML converts standard Markdown constructs to Telegram HTML format.
 func toTelegramHTML(text string) string {
 	log.Printf("[Telegram] toTelegramHTML input preview: %s", truncate(text, 120))
+	// 0. Convert LaTeX math to plain text before any HTML escaping
+	text = sanitizeMath(text)
 	// 1. Protect code blocks
 	var codeBlocks []string
 	reCodeBlock := regexp.MustCompile("(?s)```(?:\\w*)?\\n?(.*?)```")

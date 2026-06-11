@@ -2500,7 +2500,7 @@ function capBadges(caps = {}) {
 }
 
 function renderMarkdown(text) {
-  const escaped = escapeHtml(text);
+  const escaped = escapeHtml(sanitizeMath(text));
   const lines = escaped.split("\n");
   let inCode = false;
   const html = [];
@@ -2528,6 +2528,49 @@ function renderMarkdown(text) {
   }
   if (inCode) html.push("</code></pre></div>");
   return html.join("");
+}
+
+// simplifyLatex strips LaTeX command wrappers and replaces operators with Unicode.
+function simplifyLatex(s) {
+  return s
+    .replace(/\\frac\{([^}]+)\}\{([^}]+)\}/g, "$1/$2")
+    .replace(/\\sqrt\{([^}]+)\}/g, "√$1")
+    .replace(/\\text\{([^}]+)\}/g, "$1")
+    .replace(/\\div/g, "÷")
+    .replace(/\\times/g, "×")
+    .replace(/\\cdot/g, "·")
+    .replace(/\\pm/g, "±")
+    .replace(/\\leq/g, "≤")
+    .replace(/\\geq/g, "≥")
+    .replace(/\\neq/g, "≠")
+    .replace(/\\approx/g, "≈")
+    .replace(/\\infty/g, "∞")
+    .replace(/\\pi/g, "π")
+    .replace(/\\alpha/g, "α")
+    .replace(/\\beta/g, "β")
+    .replace(/\\gamma/g, "γ")
+    .replace(/\\delta/g, "δ")
+    .replace(/\\sigma/g, "σ")
+    .replace(/\\theta/g, "θ")
+    .replace(/\\left/g, "")
+    .replace(/\\right/g, "")
+    .replace(/\\[a-zA-Z]+/g, "")
+    .replace(/[{}]/g, "")
+    .trim();
+}
+
+// sanitizeMath converts LaTeX math delimiters ($...$, $$...$$, \[...\], \(...\))
+// to plain readable text so raw notation doesn't appear in the UI.
+function sanitizeMath(text) {
+  // Block: $$...$$ — must come before single $
+  text = text.replace(/\$\$([\s\S]+?)\$\$/g, (_, inner) => simplifyLatex(inner.trim()));
+  // Block: \[...\]
+  text = text.replace(/\\\[([\s\S]+?)\\\]/g, (_, inner) => simplifyLatex(inner.trim()));
+  // Inline: $...$ (single, no newline inside)
+  text = text.replace(/\$([^$\n]+?)\$/g, (_, inner) => simplifyLatex(inner));
+  // Inline: \(...\)
+  text = text.replace(/\\\((.+?)\\\)/g, (_, inner) => simplifyLatex(inner));
+  return text;
 }
 
 function inlineMd(text) {
