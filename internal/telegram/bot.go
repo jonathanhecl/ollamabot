@@ -808,6 +808,8 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	ctx := context.Background()
 
 	_ = b.sendChatAction(chatID, "typing")
+	stopTyping := b.startTypingKeepalive(chatID)
+	defer stopTyping()
 
 	var mediaBytes []byte
 	var mediaKind string // "audio" or "image"
@@ -827,7 +829,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		}
 	} else if msg.Voice != nil {
-		_ = b.sendChatAction(chatID, "record_voice")
 		fileInfo, err := b.getFile(msg.Voice.FileID)
 		if err == nil {
 			bytes, err := b.downloadFile(fileInfo.FilePath)
@@ -849,7 +850,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		}
 	} else if msg.Audio != nil {
-		_ = b.sendChatAction(chatID, "record_voice")
 		fileInfo, err := b.getFile(msg.Audio.FileID)
 		if err == nil {
 			bytes, err := b.downloadFile(fileInfo.FilePath)
@@ -1013,8 +1013,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		sessionID:   sessionID,
 		baseHistory: history,
 	}
-
-	_ = b.sendChatAction(chatID, "typing")
 
 	think := cache.SupportsCapability(snapshotPath(), b.cfg.OllamaDefaultModel, "thinking")
 	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
@@ -1275,6 +1273,26 @@ func (b *Bot) sendMessage(chatID int64, text string, replyToID int64, parseMode 
 	return 0, nil
 }
 
+// startTypingKeepalive sends "typing" to chatID every 4 seconds until the
+// returned stop function is called. This keeps the indicator visible for the
+// full duration of media pre-processing, LLM streaming, and tool execution.
+func (b *Bot) startTypingKeepalive(chatID int64) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(4 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				_ = b.sendChatAction(chatID, "typing")
+			case <-done:
+				return
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
 func (b *Bot) sendChatAction(chatID int64, action string) error {
 	type ChatActionRequest struct {
 		ChatID int64  `json:"chat_id"`
@@ -1393,7 +1411,6 @@ func (h *telegramStreamHandler) notifyUpdate(force bool) {
 }
 
 func (h *telegramStreamHandler) OnThinking(delta string) {
-	_ = h.bot.sendChatAction(h.chatID, "typing")
 	h.mu.Lock()
 	msg := h.getOrCreateAssistantMsg()
 	msg.Thinking += delta
@@ -1402,7 +1419,6 @@ func (h *telegramStreamHandler) OnThinking(delta string) {
 }
 
 func (h *telegramStreamHandler) OnContent(delta string) {
-	_ = h.bot.sendChatAction(h.chatID, "typing")
 	h.mu.Lock()
 	msg := h.getOrCreateAssistantMsg()
 	msg.Content += delta
@@ -1433,7 +1449,6 @@ func (h *telegramStreamHandler) OnToolCall(call ollama.ToolCall) {
 }
 
 func (h *telegramStreamHandler) OnToolStart(name string, args any) {
-	_ = h.bot.sendChatAction(h.chatID, "typing")
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", name), 0, "Markdown")
 }
 
@@ -1450,7 +1465,6 @@ func (h *telegramStreamHandler) OnToolResult(name string, result string) {
 }
 
 func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
-	_ = h.bot.sendChatAction(h.chatID, "typing")
 	h.mu.Lock()
 	h.activeMessages = append(h.activeMessages, rawMsg{
 		Role:      "assistant",
