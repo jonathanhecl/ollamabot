@@ -749,7 +749,14 @@ function startSessionPolling() {
         const newSessions = fetchedSessions.filter(s => !oldIds.has(s.id));
         
         if (changed) {
-          state.sessions = fetchedSessions;
+          // Preserve the active session if it's not in the server list yet
+          if (state.activeSessionId && !fetchedSessions.some((s) => s.id === state.activeSessionId)) {
+            const localCopy = (state.sessions || []).find((s) => s.id === state.activeSessionId);
+            const stub = localCopy || { id: state.activeSessionId, title: "New session", updated_at: new Date().toISOString() };
+            state.sessions = [stub, ...fetchedSessions.filter((s) => s.id !== state.activeSessionId)];
+          } else {
+            state.sessions = fetchedSessions;
+          }
           renderSessions();
           updateComposerUI();
         }
@@ -3036,21 +3043,18 @@ async function loadSessions() {
     const response = await fetch("/api/sessions");
     if (!response.ok) return;
     const serverSessions = (await response.json()) || [];
-    
-    // If we have an active session that's not in the server list, preserve it locally
+
+    // If the active session isn't on the server yet (e.g. new session still
+    // being processed), preserve it locally so it doesn't vanish from the
+    // sidebar. Build a stub from whatever the server or local state has.
     if (state.activeSessionId && !serverSessions.some((s) => s.id === state.activeSessionId)) {
-      // Find the active session in current local state
-      const activeSession = state.sessions.find((s) => s.id === state.activeSessionId);
-      if (activeSession) {
-        // Keep the active session in the list
-        state.sessions = [activeSession, ...serverSessions.filter((s) => s.id !== state.activeSessionId)];
-      } else {
-        state.sessions = serverSessions;
-      }
+      const localCopy = (state.sessions || []).find((s) => s.id === state.activeSessionId);
+      const stub = localCopy || { id: state.activeSessionId, title: "New session", updated_at: new Date().toISOString() };
+      state.sessions = [stub, ...serverSessions.filter((s) => s.id !== state.activeSessionId)];
     } else {
       state.sessions = serverSessions;
     }
-    
+
     renderSessions();
   } catch (e) {
     console.warn("loadSessions failed:", e);
@@ -3173,7 +3177,8 @@ async function saveSession() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages, model: state.activeModel }),
     });
-    await loadSessions();
+    // No loadSessions() here — the PUT triggers NotifyUpdate on the server,
+    // which fires an SSE session_updated event that reloads the list.
   } catch (e) {
     console.warn("saveSession failed:", e);
   }
