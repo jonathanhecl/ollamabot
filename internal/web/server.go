@@ -559,6 +559,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	cfg, client, _, _ := s.deps()
 
+	// Summarise the incoming request
+	lastMsg := input.Messages[len(input.Messages)-1]
+	imageCount := len(lastMsg.Images)
+	log.Printf("[Web] Chat request model=%q think=%v text_len=%d messages=%d images=%d",
+		input.Model, input.Think, len(lastMsg.Content), len(input.Messages), imageCount)
+
 	// Build a per-request media router: the main model is the one selected by
 	// the frontend (which may differ from the configured default), and routing
 	// decisions are based on real probed capabilities when available.
@@ -566,26 +572,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	rcfg.MainModel = input.Model
 	rcfg.HasCapability = cache.Checker(SnapshotPath(s.cachePath))
 	mr := router.New(client, rcfg)
-
-	// Log incoming request summary for debugging media routing
-	for i, msg := range input.Messages {
-		if len(msg.Images) > 0 {
-			dataLen := 0
-			if len(msg.Images) > 0 && msg.Images[0] != "" {
-				dataLen = len(msg.Images[0])
-			}
-			dataPreview := ""
-			if dataLen > 0 {
-				if dataLen > 50 {
-					dataPreview = msg.Images[0][:50] + "..."
-				} else {
-					dataPreview = msg.Images[0]
-				}
-			}
-			log.Printf("[handleChatStream] Message[%d]: role=%q, content_len=%d, images=%d, image_kinds=%v, first_image_data_len=%d, first_image_preview=%q",
-				i, msg.Role, len(msg.Content), len(msg.Images), msg.ImageKinds, dataLen, dataPreview)
-		}
-	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -615,12 +601,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher: flusher,
 	})
 
+	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, input.Think, len(ollamaMessages))
 	err = runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
+		log.Printf("[Web] Agent error: %v", err)
 		writeSSE(w, "error", err.Error())
 		if flusher != nil {
 			flusher.Flush()
 		}
+	} else {
+		log.Printf("[Web] Agent completed model=%q", input.Model)
 	}
 }
 
@@ -652,6 +642,7 @@ func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
 }
 
 func (h *sseStreamHandler) OnToolStart(name string, args any) {
+	log.Printf("[Web] Tool start: %s", name)
 	writeSSE(h.w, "tool_start", map[string]any{"name": name, "arguments": args})
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -659,6 +650,7 @@ func (h *sseStreamHandler) OnToolStart(name string, args any) {
 }
 
 func (h *sseStreamHandler) OnToolResult(name string, result string) {
+	log.Printf("[Web] Tool result: %s (len=%d)", name, len(result))
 	writeSSE(h.w, "tool_result", map[string]any{"name": name, "result": result})
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -666,6 +658,7 @@ func (h *sseStreamHandler) OnToolResult(name string, result string) {
 }
 
 func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
+	log.Printf("[Web] Media pre-processing (len=%d)", len(content))
 	writeSSE(h.w, "media_pre_processing", content)
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -673,6 +666,18 @@ func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
 }
 
 func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
+	if resp.TotalDuration > 0 {
+		tokensPerSec := 0.0
+		if resp.EvalDuration > 0 {
+			tokensPerSec = float64(resp.EvalCount) / (float64(resp.EvalDuration) / 1e9)
+		}
+		log.Printf("[Web] Done model=%q total=%.2fs eval=%d tokens (%.1f t/s) prompt=%d tokens",
+			h.model,
+			float64(resp.TotalDuration)/1e9,
+			resp.EvalCount, tokensPerSec,
+			resp.PromptEvalCount,
+		)
+	}
 	writeSSE(h.w, "done", map[string]any{
 		"total_duration":       resp.TotalDuration,
 		"load_duration":        resp.LoadDuration,
