@@ -200,6 +200,8 @@ const els = {
   // Memory DOM Elements
   openMemory: document.querySelector("#openMemory"),
   memoryDialog: document.querySelector("#memoryDialog"),
+  memoryTextDialog: document.querySelector("#memoryTextDialog"),
+  memoryTextDialogContent: document.querySelector("#memoryTextDialogContent"),
   memorySearch: document.querySelector("#memorySearch"),
   testSearchBtn: document.querySelector("#testSearchBtn"),
   reindexMemoryBtn: document.querySelector("#reindexMemoryBtn"),
@@ -523,6 +525,7 @@ setupBackdropClose(els.imageDialog);
 setupBackdropClose(els.modelsDialog);
 setupBackdropClose(els.settingsDialog);
 setupBackdropClose(els.memoryDialog);
+setupBackdropClose(els.memoryTextDialog);
 setupBackdropClose(els.projectsDialog);
 
 
@@ -3902,11 +3905,14 @@ async function loadAndRenderMemories(searchResults = null) {
         ? `<span class="score-badge" style="background: ${getScoreBg(scoreVal)}; color: #1e1e1e; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 11px;">${scoreVal.toFixed(4)}</span>`
         : `<span style="color: var(--muted);">-</span>`;
 
+      const preview = text.length > 100 ? text.slice(0, 100) + "…" : text;
       const tr = document.createElement("tr");
       tr.style.borderBottom = "1px solid var(--line)";
       tr.style.height = "36px";
       tr.innerHTML = `
-        <td style="padding: 8px 10px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(text)}">${escapeHtml(text)}</td>
+        <td style="padding: 8px 10px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+          <span class="memory-text-preview" data-full="${escapeAttr(text)}" style="cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px;" title="Click to read full text">${escapeHtml(preview)}</span>
+        </td>
         <td style="padding: 8px 10px; color: var(--muted);">${escapeHtml(source)}</td>
         <td style="padding: 8px 10px; color: var(--muted); font-size: 11.5px;">${createdAt}</td>
         <td style="padding: 8px 10px; text-align: center;">${scoreBadge}</td>
@@ -3915,6 +3921,14 @@ async function loadAndRenderMemories(searchResults = null) {
         </td>
       `;
       els.memoryListBody.appendChild(tr);
+    });
+
+    // Bind text preview click handlers
+    els.memoryListBody.querySelectorAll(".memory-text-preview").forEach(span => {
+      span.addEventListener("click", () => {
+        els.memoryTextDialogContent.textContent = span.dataset.full || "";
+        els.memoryTextDialog.showModal();
+      });
     });
 
     // Bind delete handlers
