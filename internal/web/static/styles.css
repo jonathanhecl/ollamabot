@@ -232,7 +232,7 @@ input {
 
 .app {
   display: grid;
-  grid-template-rows: auto auto auto 1fr auto auto auto;
+  grid-template-rows: auto auto auto 1fr auto auto;
   height: 100vh;
   overflow: hidden;
 }
@@ -242,8 +242,7 @@ input {
 .app > .capability-bar { grid-row: 3; }
 .app > .messages { grid-row: 4; }
 .app > .attachments { grid-row: 5; }
-.app > .session-uploads { grid-row: 6; }
-.app > .composer { grid-row: 7; }
+.app > .composer { grid-row: 6; }
 
 .app.drag-over {
   outline: 2px dashed var(--accent);
@@ -1003,65 +1002,6 @@ a.media-preview.file:hover .file-name {
   font-variant-numeric: tabular-nums;
 }
 
-.session-uploads {
-  padding: 4px 16px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.upload-header {
-  font-size: 10px;
-  text-transform: uppercase;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: var(--muted);
-  padding: 2px 0 4px;
-  border-bottom: 1px solid var(--line);
-  margin-bottom: 2px;
-}
-
-.upload-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 0;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  min-width: 0;
-}
-
-.upload-row:last-child {
-  border-bottom: none;
-}
-
-.upload-icon {
-  font-size: 14px;
-  flex-shrink: 0;
-  width: 18px;
-  text-align: center;
-}
-
-.upload-name {
-  flex: 1;
-  font-size: 12px;
-  color: var(--text);
-  text-decoration: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  min-width: 0;
-}
-
-.upload-name:hover {
-  color: var(--accent);
-  text-decoration: underline;
-}
-
-.upload-size {
-  font-size: 11px;
-  color: var(--muted);
-  flex-shrink: 0;
-}
 
 .stream-cursor {
   display: inline-block;

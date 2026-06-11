@@ -137,7 +137,6 @@ const els = {
   imageInput: document.querySelector("#imageInput"),
   audioInput: document.querySelector("#audioInput"),
   fileInput: document.querySelector("#fileInput"),
-  sessionUploads: document.querySelector("#sessionUploads"),
   capabilityBar: document.querySelector("#capabilityBar"),
   capabilityBadges: document.querySelector("#capabilityBadges"),
   attachments: document.querySelector("#attachments"),
@@ -1892,43 +1891,6 @@ function uploadFileWithProgress(att, sessionId) {
   });
 }
 
-async function loadSessionUploads() {
-  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
-    renderSessionUploads([]);
-    return;
-  }
-  try {
-    const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/uploads`);
-    if (!res.ok) { renderSessionUploads([]); return; }
-    const files = await res.json();
-    renderSessionUploads(files || []);
-  } catch {
-    renderSessionUploads([]);
-  }
-}
-
-function renderSessionUploads(files) {
-  if (!els.sessionUploads) return;
-  if (!files || files.length === 0) {
-    els.sessionUploads.style.display = "none";
-    els.sessionUploads.innerHTML = "";
-    return;
-  }
-  els.sessionUploads.style.display = "block";
-  const rows = files.map((f) => {
-    const icon = fileMimeIcon(f.mime || "");
-    const size = f.size ? formatFileSize(f.size) : "";
-    const name = escapeHtml(f.name);
-    const downloadPath = `/api/sessions/${encodeURIComponent(state.activeSessionId)}/uploads/${encodeURIComponent(f.name)}`;
-    return `<div class="upload-row">
-      <span class="upload-icon">${icon}</span>
-      <a class="upload-name" href="${downloadPath}" download="${escapeAttr(f.name)}" title="${name}">${name}</a>
-      <span class="upload-size">${size}</span>
-    </div>`;
-  }).join("");
-  els.sessionUploads.innerHTML = `<div class="upload-header"><span>📁 Session Files</span></div>${rows}`;
-}
-
 function handlePaste(event) {
   const files = [];
   for (const item of event.clipboardData?.items || []) {
@@ -2143,10 +2105,6 @@ async function processNextQueueItem() {
     }
     for (const att of pendingFiles) {
       await uploadFileWithProgress(att, state.activeSessionId);
-    }
-    const uploaded = pendingFiles.filter((f) => f.path);
-    if (uploaded.length) {
-      loadSessionUploads();
     }
     // Re-render messages so in-history pills switch from pending div to download link
     renderMessages();
@@ -3415,7 +3373,6 @@ async function loadSession(id) {
     if (sess.model) state.activeModel = sess.model;
     renderMessages();
     renderAttachments();
-    loadSessionUploads();
     updateContextBar();
     renderSessions();
     els.prompt.focus();
