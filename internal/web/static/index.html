@@ -488,19 +488,21 @@
     <dialog id="confirmDialog" class="modal compact">
       <form method="dialog" class="modal-head">
         <div>
-          <p class="eyebrow">Attention</p>
-          <h2>Delete Session?</h2>
+          <p class="eyebrow" id="confirmEyebrow">Attention</p>
+          <h2 id="confirmTitle">Confirm</h2>
         </div>
         <button class="ghost-button" value="close">×</button>
       </form>
       <div class="confirm-body">
-        <p>Are you sure you want to delete this chat session permanently? This action cannot be undone and all associated files will be deleted.</p>
+        <p id="confirmMessage"></p>
         <div class="confirm-actions">
           <button id="cancelConfirmBtn" class="ghost-button" type="button">Cancel</button>
-          <button id="okConfirmBtn" class="danger-button" type="button">Delete Session</button>
+          <button id="okConfirmBtn" class="danger-button" type="button">Confirm</button>
         </div>
       </div>
     </dialog>
+
+    <div id="toast" class="toast" role="alert" aria-live="polite"></div>
 
     <dialog id="approvalDialog" class="modal">
       <div class="modal-head">

@@ -181,8 +181,12 @@ const els = {
   contextBar: document.querySelector("#contextBar"),
   appLayout: document.querySelector(".app-layout"),
   confirmDialog: document.querySelector("#confirmDialog"),
+  confirmEyebrow: document.querySelector("#confirmEyebrow"),
+  confirmTitle: document.querySelector("#confirmTitle"),
+  confirmMessage: document.querySelector("#confirmMessage"),
   cancelConfirmBtn: document.querySelector("#cancelConfirmBtn"),
   okConfirmBtn: document.querySelector("#okConfirmBtn"),
+  toast: document.querySelector("#toast"),
   skipBtn: document.querySelector("#skipBtn"),
   sendBtn: document.querySelector("#sendBtn"),
   approvalDialog: document.querySelector("#approvalDialog"),
@@ -462,23 +466,64 @@ if (closeBtn) {
   });
 }
 
+// --- Reusable confirm dialog (replaces native confirm()) ---
+let _confirmResolve = null;
+
+function showConfirm({ title = "Confirm", message = "", eyebrow = "Attention", okLabel = "Confirm", danger = true } = {}) {
+  if (els.confirmTitle) els.confirmTitle.textContent = title;
+  if (els.confirmEyebrow) els.confirmEyebrow.textContent = eyebrow;
+  if (els.confirmMessage) els.confirmMessage.textContent = message;
+  if (els.okConfirmBtn) {
+    els.okConfirmBtn.textContent = okLabel;
+    els.okConfirmBtn.className = danger ? "danger-button" : "primary-button";
+  }
+  els.confirmDialog.showModal();
+  return new Promise((resolve) => {
+    _confirmResolve = resolve;
+  });
+}
+
+// --- Reusable toast notification (replaces native alert()) ---
+let _toastTimer = null;
+function showToast(message, type = "info", duration = 3500) {
+  if (!els.toast) return;
+  els.toast.textContent = message;
+  els.toast.className = "toast" + (type === "error" ? " toast-error" : type === "success" ? " toast-success" : "");
+  // force reflow so transition re-triggers on consecutive calls
+  void els.toast.offsetWidth;
+  els.toast.classList.add("visible");
+  if (_toastTimer) clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => {
+    els.toast.classList.remove("visible");
+  }, duration);
+}
+
 // Confirm dialog wiring
 if (els.cancelConfirmBtn) {
   els.cancelConfirmBtn.addEventListener("click", () => {
     els.confirmDialog.close();
+    if (_confirmResolve) { _confirmResolve(false); _confirmResolve = null; }
     state.sessionIdToDelete = null;
   });
 }
 
 if (els.okConfirmBtn) {
   els.okConfirmBtn.addEventListener("click", () => {
+    els.confirmDialog.close();
+    if (_confirmResolve) { _confirmResolve(true); _confirmResolve = null; }
+    // Legacy session-delete path (kept for direct session list usage)
     if (state.sessionIdToDelete) {
       deleteSession(state.sessionIdToDelete);
       state.sessionIdToDelete = null;
     }
-    els.confirmDialog.close();
   });
 }
+
+// Also resolve as cancelled when the dialog is closed via the × button or backdrop
+els.confirmDialog.addEventListener("close", () => {
+  if (_confirmResolve) { _confirmResolve(false); _confirmResolve = null; }
+  state.sessionIdToDelete = null;
+});
 
 if (els.approveToolBtn) {
   els.approveToolBtn.addEventListener("click", () => {
@@ -612,8 +657,14 @@ els.sessionList.addEventListener("click", (e) => {
     if (!item) return;
     const id = item.dataset.id;
     if (id) {
-      state.sessionIdToDelete = id;
-      els.confirmDialog.showModal();
+      showConfirm({
+        title: "Delete Session?",
+        message: "Are you sure you want to delete this chat session permanently? This action cannot be undone and all associated files will be deleted.",
+        okLabel: "Delete Session",
+        danger: true,
+      }).then((confirmed) => {
+        if (confirmed) deleteSession(id);
+      });
     }
     return;
   }
@@ -1317,11 +1368,17 @@ async function saveRoleModels() {
     state.settings = await response.json();
     if (changed && newModel) {
       setTimeout(() => {
-        if (confirm("The embedding model has changed. This can make existing memory entries unsearchable or inaccurate. It is highly recommended to re-index all memory entries now. Would you like to open the Memory Explorer to do so?")) {
+        showConfirm({
+          title: "Re-index Memory?",
+          message: "The embedding model has changed. This can make existing memory entries unsearchable or inaccurate. It is highly recommended to re-index all memory entries now. Would you like to open the Memory Explorer to do so?",
+          okLabel: "Open Memory Explorer",
+          danger: false,
+        }).then((confirmed) => {
+          if (!confirmed) return;
           // Close models dialog first if open
           els.modelsDialog.close();
           openMemoryExplorer();
-        }
+        });
       }, 300);
     }
   }
@@ -3754,7 +3811,7 @@ els.createProjectForm.addEventListener("submit", async (e) => {
     await loadProjects();
     selectProject(newProj.id);
   } catch (err) {
-    alert(`Could not create project: ${err.message}`);
+    showToast(`Could not create project: ${err.message}`, "error");
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = originalText;
@@ -3781,7 +3838,7 @@ els.addTodoForm.addEventListener("submit", async (e) => {
     // Reload details
     selectProject(state.activeProjectId);
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, "error");
   } finally {
     input.disabled = false;
     input.focus();
@@ -3819,7 +3876,7 @@ els.triggerTickBtn.addEventListener("click", async () => {
       }
     }
   } catch (err) {
-    alert(`Heartbeat tick failed: ${err.message}`);
+    showToast(`Heartbeat tick failed: ${err.message}`, "error");
     // Reload project status in case it changed
     await selectProject(state.activeProjectId);
   } finally {
@@ -3831,7 +3888,13 @@ els.triggerTickBtn.addEventListener("click", async () => {
 
 els.deleteProjectBtn.addEventListener("click", async () => {
   if (!state.activeProjectId) return;
-  if (!confirm("Are you sure you want to delete this autonomous project permanently? All code files in its workspace directory and all execution logs will be erased.")) return;
+  const okDelete = await showConfirm({
+    title: "Delete Project?",
+    message: "Are you sure you want to delete this autonomous project permanently? All code files in its workspace directory and all execution logs will be erased.",
+    okLabel: "Delete Project",
+    danger: true,
+  });
+  if (!okDelete) return;
   
   try {
     const res = await fetch(`/api/autonomous/projects/${state.activeProjectId}`, {
@@ -3843,7 +3906,7 @@ els.deleteProjectBtn.addEventListener("click", async () => {
     await loadProjects();
     switchProjectsState("welcome");
   } catch (err) {
-    alert(err.message);
+    showToast(err.message, "error");
   }
 });
 
@@ -3935,13 +3998,19 @@ async function loadAndRenderMemories(searchResults = null) {
     els.memoryListBody.querySelectorAll(".delete-memory-btn").forEach(btn => {
       btn.addEventListener("click", async () => {
         const id = btn.dataset.id;
-        if (!confirm("Are you sure you want to delete this memory entry?")) return;
+        const okDel = await showConfirm({
+          title: "Delete Memory Entry?",
+          message: "Are you sure you want to delete this memory entry? This action cannot be undone.",
+          okLabel: "Delete Entry",
+          danger: true,
+        });
+        if (!okDel) return;
         try {
           const res = await fetch(`/api/memory/${encodeURIComponent(id)}`, { method: "DELETE" });
           if (!res.ok) throw new Error("Could not delete memory entry");
           await loadAndRenderMemories();
         } catch (err) {
-          alert(`Error: ${err.message}`);
+          showToast(`Error: ${err.message}`, "error");
         }
       });
     });
@@ -3985,7 +4054,7 @@ els.testSearchBtn.addEventListener("click", async () => {
     const data = await res.json();
     await loadAndRenderMemories(data.results || []);
   } catch (err) {
-    alert(`RAG Search Error: ${err.message}`);
+    showToast(`RAG Search Error: ${err.message}`, "error");
   } finally {
     els.testSearchBtn.disabled = false;
     els.testSearchBtn.textContent = "Test RAG Search";
@@ -3994,7 +4063,13 @@ els.testSearchBtn.addEventListener("click", async () => {
 
 // Bind re-indexing manual action
 els.reindexMemoryBtn.addEventListener("click", async () => {
-  if (!confirm("This will re-index all memory entries using the current embedding model. Continue?")) return;
+  const okReindex = await showConfirm({
+    title: "Re-index Memory?",
+    message: "This will re-index all memory entries using the current embedding model. Continue?",
+    okLabel: "Re-index",
+    danger: false,
+  });
+  if (!okReindex) return;
   try {
     els.reindexMemoryBtn.disabled = true;
     els.reindexStatusArea.style.display = "block";
@@ -4004,10 +4079,10 @@ els.reindexMemoryBtn.addEventListener("click", async () => {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Reindexing failed");
 
-    alert(`Successfully re-indexed ${data.count} memory entries using model: ${data.model}`);
+    showToast(`Re-indexed ${data.count} memory entries using model: ${data.model}`, "success");
     await loadAndRenderMemories();
   } catch (err) {
-    alert(`Reindexing Error: ${err.message}`);
+    showToast(`Reindexing Error: ${err.message}`, "error");
   } finally {
     els.reindexStatusArea.style.display = "none";
     els.reindexMemoryBtn.disabled = false;
