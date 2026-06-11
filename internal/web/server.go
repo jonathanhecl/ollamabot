@@ -608,6 +608,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// Inject uploaded-files context if session has uploads
 	if input.SessionID != "" {
+		log.Printf("[Web] Injecting uploads context for session=%q workspace=%q sessionsPath=%q", input.SessionID, cfg.Workspace, cfg.SessionsPath)
 		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
@@ -924,8 +925,11 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadsDir returns the path to the per-session uploads directory.
+// Sessions are stored directly under sessionsPath, so uploads live at
+// sessionsPath/sessionID/uploads (workspace is not part of this path).
 func uploadsDir(workspace, sessionsPath, sessionID string) string {
-	return filepath.Join(workspace, sessionsPath, sessionID, "uploads")
+	_ = workspace // kept for signature compatibility; not used in path construction
+	return filepath.Join(sessionsPath, sessionID, "uploads")
 }
 
 // sanitizeUploadName returns a safe filename by stripping path separators and
@@ -1146,8 +1150,14 @@ func detectMime(name string) string {
 // session has any, so the agent knows what files are available.
 func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []ollama.Message) []ollama.Message {
 	dir := uploadsDir(workspace, sessionsPath, sessionID)
+	log.Printf("[injectUploads] checking dir=%q", dir)
 	entries, err := os.ReadDir(dir)
-	if err != nil || len(entries) == 0 {
+	if err != nil {
+		log.Printf("[injectUploads] ReadDir error: %v", err)
+		return messages
+	}
+	if len(entries) == 0 {
+		log.Printf("[injectUploads] dir is empty")
 		return messages
 	}
 
@@ -1156,9 +1166,15 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 		if e.IsDir() {
 			continue
 		}
-		// Always use forward slashes so read_file resolves the path correctly
-		// on any OS (including Windows where filepath.Join uses backslashes).
-		relPath := "sessions/" + sessionID + "/uploads/" + e.Name()
+		// Build the path the agent should use with read_file (relative to workspace).
+		// Use filepath.Rel so it works regardless of whether sessionsPath is absolute or relative.
+		absFile := filepath.Join(dir, e.Name())
+		relPath, relErr := filepath.Rel(workspace, absFile)
+		if relErr != nil {
+			relPath = absFile // fall back to absolute if Rel fails
+		}
+		// Always use forward slashes (read_file expects POSIX-style separators).
+		relPath = strings.ReplaceAll(relPath, "\\", "/")
 		sizeStr := ""
 		if info, err := e.Info(); err == nil {
 			sizeStr = fmt.Sprintf(" (%s)", humanSize(info.Size()))
@@ -1168,6 +1184,7 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 	if len(lines) == 0 {
 		return messages
 	}
+	log.Printf("[injectUploads] injecting %d file(s): %v", len(lines), lines)
 
 	note := "The user has uploaded the following files to this session. " +
 		"You can read text files with the read_file tool using the given path, " +
