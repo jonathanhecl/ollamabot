@@ -137,6 +137,7 @@ const els = {
   imageInput: document.querySelector("#imageInput"),
   audioInput: document.querySelector("#audioInput"),
   fileInput: document.querySelector("#fileInput"),
+  sessionUploads: document.querySelector("#sessionUploads"),
   capabilityBar: document.querySelector("#capabilityBar"),
   capabilityBadges: document.querySelector("#capabilityBadges"),
   attachments: document.querySelector("#attachments"),
@@ -1815,19 +1816,7 @@ async function addFiles(files, expectedKind = "") {
   renderAttachments();
 }
 
-async function addFileAttachments(files) {
-  // Ensure we have a real server-side session (not a client_ temp one)
-  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
-    await ensureActiveSession();
-  }
-  // If still no server session, bail out with a message
-  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
-    addSystemMessage("❌ Cannot upload files: no active server session. Please try again.");
-    renderMessages();
-    els.fileInput.value = "";
-    return;
-  }
-
+function addFileAttachments(files) {
   for (const file of files) {
     // Skip images and audio — those go through their dedicated flows
     if (file.type.startsWith("image/") || file.type.startsWith("audio/")) {
@@ -1835,50 +1824,57 @@ async function addFileAttachments(files) {
       renderMessages();
       continue;
     }
-
-    // Show a pending placeholder so the user sees immediate feedback
-    const placeholder = { name: file.name, mime: file.type || "application/octet-stream", kind: "file", path: "", size: file.size, data: "", url: "", uploading: true };
-    state.attachments.push(placeholder);
-    renderAttachments();
-
-    const formData = new FormData();
-    formData.append("file", file);
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/upload`, {
-        method: "POST",
-        body: formData,
-      });
-      // Remove placeholder
-      const idx = state.attachments.indexOf(placeholder);
-      if (idx !== -1) state.attachments.splice(idx, 1);
-
-      if (!res.ok) {
-        const errText = await res.text();
-        addSystemMessage(`❌ Upload failed for ${file.name}: ${errText}`);
-        renderMessages();
-        renderAttachments();
-        continue;
-      }
-      const info = await res.json();
-      state.attachments.push({
-        name: info.name,
-        mime: info.mime,
-        kind: "file",
-        path: info.path,
-        size: info.size,
-        data: "",
-        url: "",
-      });
-    } catch (err) {
-      const idx = state.attachments.indexOf(placeholder);
-      if (idx !== -1) state.attachments.splice(idx, 1);
-      addSystemMessage(`❌ Upload error for ${file.name}: ${err.message}`);
-      renderMessages();
-    }
-    renderAttachments();
+    // Store the File object locally; upload happens at send-time
+    state.attachments.push({
+      name: file.name,
+      mime: file.type || "application/octet-stream",
+      kind: "file",
+      path: "",
+      size: file.size,
+      data: "",
+      url: "",
+      _file: file,   // raw File object, not serialised
+    });
   }
   els.fileInput.value = "";
   renderAttachments();
+}
+
+async function loadSessionUploads() {
+  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+    renderSessionUploads([]);
+    return;
+  }
+  try {
+    const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/uploads`);
+    if (!res.ok) { renderSessionUploads([]); return; }
+    const files = await res.json();
+    renderSessionUploads(files || []);
+  } catch {
+    renderSessionUploads([]);
+  }
+}
+
+function renderSessionUploads(files) {
+  if (!els.sessionUploads) return;
+  if (!files || files.length === 0) {
+    els.sessionUploads.style.display = "none";
+    els.sessionUploads.innerHTML = "";
+    return;
+  }
+  els.sessionUploads.style.display = "block";
+  const rows = files.map((f) => {
+    const icon = fileMimeIcon(f.mime || "");
+    const size = f.size ? formatFileSize(f.size) : "";
+    const name = escapeHtml(f.name);
+    const downloadPath = `/api/sessions/${encodeURIComponent(state.activeSessionId)}/uploads/${encodeURIComponent(f.name)}`;
+    return `<div class="upload-row">
+      <span class="upload-icon">${icon}</span>
+      <a class="upload-name" href="${downloadPath}" download="${escapeAttr(f.name)}" title="${name}">${name}</a>
+      <span class="upload-size">${size}</span>
+    </div>`;
+  }).join("");
+  els.sessionUploads.innerHTML = `<div class="upload-header"><span>📁 Session Files</span></div>${rows}`;
 }
 
 function handlePaste(event) {
@@ -2017,9 +2013,6 @@ async function sendMessage(event) {
   if (mediaAttachments.length) {
     addSystemMessage(`Attached ${mediaAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
   }
-  if (fileAttachments.length) {
-    addSystemMessage(`📎 ${fileAttachments.length} file(s) saved to session: ${fileAttachments.map((f) => f.name).join(", ")}`);
-  }
 
   // Push user query to client-side sequential queue
   state.messageQueue.push(userMessage);
@@ -2099,6 +2092,46 @@ async function processNextQueueItem() {
     state.messages.push(assistant);
   }
   renderMessages();
+
+  // Upload any pending file attachments (staged locally until send)
+  const pendingFiles = nextItem.attachments?.filter((a) => a.kind === "file" && a._file) || [];
+  if (pendingFiles.length > 0) {
+    // Ensure server session exists
+    if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+      await ensureActiveSession();
+    }
+    for (const att of pendingFiles) {
+      const formData = new FormData();
+      formData.append("file", att._file);
+      try {
+        const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/upload`, {
+          method: "POST",
+          body: formData,
+        });
+        if (res.ok) {
+          const info = await res.json();
+          att.name = info.name;
+          att.mime = info.mime;
+          att.path = info.path;
+          att.size = info.size;
+        } else {
+          const errText = await res.text();
+          addSystemMessage(`❌ Upload failed for ${att.name}: ${errText}`);
+          renderMessages();
+        }
+      } catch (err) {
+        addSystemMessage(`❌ Upload error for ${att.name}: ${err.message}`);
+        renderMessages();
+      }
+      delete att._file;
+    }
+    const names = pendingFiles.map((f) => f.name).join(", ");
+    addSystemMessage(`📎 ${pendingFiles.length} file(s) saved to session: ${names}`);
+    renderMessages();
+    // Re-render so the pill loses the pending style
+    renderMessages();
+    loadSessionUploads();
+  }
 
   state.currentAbortController = new AbortController();
 
@@ -2735,9 +2768,10 @@ function attachmentPreview(attachment) {
     return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio>${transcriptionHtml}</div>`;
   }
   if (attachment.kind === "file") {
-    const mimeIcon = attachment.uploading ? "⏳" : fileMimeIcon(attachment.mime || "");
-    const sizeStr = attachment.uploading ? "uploading…" : (attachment.size ? formatFileSize(attachment.size) : "");
-    return `<div class="media-preview file${attachment.uploading ? " uploading" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${sizeStr}</span></div>`;
+    const pending = !!attachment._file;
+    const mimeIcon = fileMimeIcon(attachment.mime || "");
+    const sizeStr = attachment.size ? formatFileSize(attachment.size) : "";
+    return `<div class="media-preview file${pending ? " pending" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${sizeStr}</span></div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }
@@ -3344,6 +3378,7 @@ async function loadSession(id) {
     if (sess.model) state.activeModel = sess.model;
     renderMessages();
     renderAttachments();
+    loadSessionUploads();
     updateContextBar();
     renderSessions();
     els.prompt.focus();

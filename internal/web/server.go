@@ -171,6 +171,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
 	mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads", s.handleListSessionUploads)
+	mux.HandleFunc("GET /api/sessions/{id}/uploads/{filename}", s.handleDownloadSessionUpload)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
@@ -1047,6 +1048,37 @@ func (s *Server) handleListSessionUploads(w http.ResponseWriter, r *http.Request
 		files = []fileInfo{}
 	}
 	writeJSON(w, http.StatusOK, files)
+}
+
+// handleDownloadSessionUpload serves a single uploaded file for download.
+func (s *Server) handleDownloadSessionUpload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	filename := r.PathValue("filename")
+	cfg, _, _, _ := s.deps()
+
+	// Sanitize: only allow bare filenames with no path traversal
+	clean := filepath.Base(filename)
+	if clean == "." || clean == "" || strings.Contains(clean, "..") {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid filename"))
+		return
+	}
+
+	filePath := filepath.Join(uploadsDir(cfg.Workspace, cfg.SessionsPath, id), clean)
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer f.Close()
+
+	mime := detectMime(clean)
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+clean+`"`)
+	http.ServeContent(w, r, clean, time.Time{}, f)
 }
 
 // detectMime returns a basic MIME type based on the file extension.
