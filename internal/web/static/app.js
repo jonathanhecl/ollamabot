@@ -3440,6 +3440,8 @@ async function saveSession() {
         url: att.url || (att.data ? `data:${att.mime || (att.kind === "audio" ? "audio/wav" : "image/png")};base64,${att.data}` : ""),
         transcription: att.transcription || "",
         unreadable: !!att.unreadable,
+        path: att.path || "",
+        size: att.size || 0,
       })) : undefined,
       image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
       timestamp: msg.timestamp,
