@@ -1094,6 +1094,28 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}
 	}
 
+	// Attach accumulated metrics and steps to the last assistant message so
+	// that Telegram sessions are stored identically to web sessions.
+	if handler.metrics.TotalDuration > 0 || len(handler.steps) > 0 {
+		for i := len(newRawMessages) - 1; i >= 0; i-- {
+			var rm rawMsg
+			if err := json.Unmarshal(newRawMessages[i], &rm); err != nil || rm.Role != "assistant" {
+				continue
+			}
+			if handler.metrics.TotalDuration > 0 {
+				m := handler.metrics
+				rm.Metrics = &m
+			}
+			if len(handler.steps) > 0 {
+				rm.Steps = handler.steps
+			}
+			if updated, err := json.Marshal(rm); err == nil {
+				newRawMessages[i] = updated
+			}
+			break
+		}
+	}
+
 	sess.Messages = newRawMessages
 	_ = b.sessions.Save(sess)
 	sessions.NotifyUpdate(sessionID)
@@ -1364,6 +1386,8 @@ type telegramStreamHandler struct {
 	activeMessages []rawMsg
 	lastNotifyTime time.Time
 	mu             sync.Mutex
+	metrics        msgMetrics
+	steps          []msgStep
 }
 
 func (h *telegramStreamHandler) getOrCreateAssistantMsg() *rawMsg {
@@ -1449,11 +1473,21 @@ func (h *telegramStreamHandler) OnToolCall(call ollama.ToolCall) {
 }
 
 func (h *telegramStreamHandler) OnToolStart(name string, args any) {
+	h.mu.Lock()
+	h.steps = append(h.steps, msgStep{Type: "tool_exec", Name: name, Arguments: args, Status: "running"})
+	h.mu.Unlock()
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", name), 0, "Markdown")
 }
 
 func (h *telegramStreamHandler) OnToolResult(name string, result string) {
 	h.mu.Lock()
+	for i := len(h.steps) - 1; i >= 0; i-- {
+		if h.steps[i].Name == name && h.steps[i].Status == "running" {
+			h.steps[i].Result = result
+			h.steps[i].Status = "done"
+			break
+		}
+	}
 	h.activeMessages = append(h.activeMessages, rawMsg{
 		Role:      "tool",
 		Name:      name,
@@ -1474,7 +1508,37 @@ func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
 	h.mu.Unlock()
 	h.notifyUpdate(true)
 }
-func (h *telegramStreamHandler) OnDone(resp ollama.ChatResponse) {}
+func (h *telegramStreamHandler) OnDone(resp ollama.ChatResponse) {
+	if resp.TotalDuration > 0 {
+		h.mu.Lock()
+		h.metrics.TotalDuration += resp.TotalDuration
+		h.metrics.LoadDuration += resp.LoadDuration
+		h.metrics.PromptEvalCount += resp.PromptEvalCount
+		h.metrics.PromptEvalDuration += resp.PromptEvalDuration
+		h.metrics.EvalCount += resp.EvalCount
+		h.metrics.EvalDuration += resp.EvalDuration
+		h.mu.Unlock()
+	}
+}
+
+// msgMetrics mirrors the Ollama perf metrics stored by the web frontend.
+type msgMetrics struct {
+	TotalDuration      int64 `json:"total_duration"`
+	LoadDuration       int64 `json:"load_duration"`
+	PromptEvalCount    int   `json:"prompt_eval_count"`
+	PromptEvalDuration int64 `json:"prompt_eval_duration"`
+	EvalCount          int   `json:"eval_count"`
+	EvalDuration       int64 `json:"eval_duration"`
+}
+
+// msgStep mirrors the tool-execution step object stored by the web frontend.
+type msgStep struct {
+	Type      string `json:"type"`
+	Name      string `json:"name,omitempty"`
+	Arguments any    `json:"arguments,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Status    string `json:"status,omitempty"`
+}
 
 // Struct re-definitions to remain completely self-contained
 type rawMsg struct {
@@ -1489,6 +1553,8 @@ type rawMsg struct {
 	Attachments    []attachmentMeta  `json:"attachments,omitempty"`
 	ToolCalls      []json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults    []json.RawMessage `json:"tool_results,omitempty"`
+	Metrics        *msgMetrics       `json:"metrics,omitempty"`
+	Steps          []msgStep         `json:"steps,omitempty"`
 }
 
 type attachmentMeta struct {
