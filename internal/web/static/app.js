@@ -1840,6 +1840,58 @@ function addFileAttachments(files) {
   renderAttachments();
 }
 
+function uploadFileWithProgress(att, sessionId) {
+  return new Promise((resolve) => {
+    const formData = new FormData();
+    formData.append("file", att._file);
+
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/sessions/${encodeURIComponent(sessionId)}/upload`);
+
+    xhr.upload.addEventListener("progress", (e) => {
+      if (e.lengthComputable) {
+        att._uploading = Math.round((e.loaded / e.total) * 100);
+        renderAttachments();
+      }
+    });
+
+    xhr.addEventListener("load", () => {
+      delete att._uploading;
+      delete att._file;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const info = JSON.parse(xhr.responseText);
+          att.name = info.name;
+          att.mime = info.mime;
+          att.path = info.path;
+          att.size = info.size;
+        } catch {
+          addSystemMessage(`❌ Upload parse error for ${att.name}`);
+          renderMessages();
+        }
+      } else {
+        addSystemMessage(`❌ Upload failed for ${att.name}: ${xhr.responseText}`);
+        renderMessages();
+      }
+      renderAttachments();
+      resolve();
+    });
+
+    xhr.addEventListener("error", () => {
+      delete att._uploading;
+      delete att._file;
+      addSystemMessage(`❌ Upload error for ${att.name}: network error`);
+      renderMessages();
+      renderAttachments();
+      resolve();
+    });
+
+    att._uploading = 0;
+    renderAttachments();
+    xhr.send(formData);
+  });
+}
+
 async function loadSessionUploads() {
   if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
     renderSessionUploads([]);
@@ -2082,6 +2134,22 @@ async function processNextQueueItem() {
     }
   }
 
+  // Upload any pending file attachments BEFORE inserting the assistant bubble,
+  // so the staging-area pills are still live and show upload progress.
+  const pendingFiles = nextItem.attachments?.filter((a) => a.kind === "file" && a._file) || [];
+  if (pendingFiles.length > 0) {
+    if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+      await ensureActiveSession();
+    }
+    for (const att of pendingFiles) {
+      await uploadFileWithProgress(att, state.activeSessionId);
+    }
+    const uploaded = pendingFiles.filter((f) => f.path);
+    if (uploaded.length) {
+      loadSessionUploads();
+    }
+  }
+
   const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true, metrics: null };
   
   // Insert assistant response directly after the current user query in the messages list
@@ -2092,46 +2160,6 @@ async function processNextQueueItem() {
     state.messages.push(assistant);
   }
   renderMessages();
-
-  // Upload any pending file attachments (staged locally until send)
-  const pendingFiles = nextItem.attachments?.filter((a) => a.kind === "file" && a._file) || [];
-  if (pendingFiles.length > 0) {
-    // Ensure server session exists
-    if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
-      await ensureActiveSession();
-    }
-    for (const att of pendingFiles) {
-      const formData = new FormData();
-      formData.append("file", att._file);
-      try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/upload`, {
-          method: "POST",
-          body: formData,
-        });
-        if (res.ok) {
-          const info = await res.json();
-          att.name = info.name;
-          att.mime = info.mime;
-          att.path = info.path;
-          att.size = info.size;
-        } else {
-          const errText = await res.text();
-          addSystemMessage(`❌ Upload failed for ${att.name}: ${errText}`);
-          renderMessages();
-        }
-      } catch (err) {
-        addSystemMessage(`❌ Upload error for ${att.name}: ${err.message}`);
-        renderMessages();
-      }
-      delete att._file;
-    }
-    const names = pendingFiles.map((f) => f.name).join(", ");
-    addSystemMessage(`📎 ${pendingFiles.length} file(s) saved to session: ${names}`);
-    renderMessages();
-    // Re-render so the pill loses the pending style
-    renderMessages();
-    loadSessionUploads();
-  }
 
   state.currentAbortController = new AbortController();
 
@@ -2768,10 +2796,12 @@ function attachmentPreview(attachment) {
     return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio>${transcriptionHtml}</div>`;
   }
   if (attachment.kind === "file") {
-    const pending = !!attachment._file;
+    const uploading = attachment._uploading;
     const mimeIcon = fileMimeIcon(attachment.mime || "");
     const sizeStr = attachment.size ? formatFileSize(attachment.size) : "";
-    return `<div class="media-preview file${pending ? " pending" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${sizeStr}</span></div>`;
+    const statusStr = uploading != null ? `${uploading}%` : sizeStr;
+    const hasPending = !!attachment._file;
+    return `<div class="media-preview file${hasPending ? " pending" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${statusStr}</span></div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }

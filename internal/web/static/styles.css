@@ -980,8 +980,12 @@ pre {
 }
 
 .media-preview.file.pending {
-  opacity: 0.75;
-  border-style: dashed;
+  opacity: 0.8;
+}
+
+.media-preview.file.pending .file-size {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }
 
 .session-uploads {
