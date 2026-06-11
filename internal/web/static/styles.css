@@ -979,6 +979,21 @@ pre {
   flex-shrink: 0;
 }
 
+a.media-preview.file {
+  cursor: pointer;
+  text-decoration: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+a.media-preview.file:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, #12150f);
+}
+
+a.media-preview.file:hover .file-name {
+  color: var(--accent);
+}
+
 .media-preview.file.pending {
   opacity: 0.8;
 }

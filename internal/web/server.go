@@ -1081,7 +1081,18 @@ func (s *Server) handleDownloadSessionUpload(w http.ResponseWriter, r *http.Requ
 	http.ServeContent(w, r, clean, time.Time{}, f)
 }
 
-// detectMime returns a basic MIME type based on the file extension.
+func humanSize(b int64) string {
+	const kb, mb = 1024, 1024 * 1024
+	switch {
+	case b >= mb:
+		return fmt.Sprintf("%.1f MB", float64(b)/mb)
+	case b >= kb:
+		return fmt.Sprintf("%.1f KB", float64(b)/kb)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 func detectMime(name string) string {
 	switch strings.ToLower(filepath.Ext(name)) {
 	case ".pdf":
@@ -1145,8 +1156,14 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 		if e.IsDir() {
 			continue
 		}
-		relPath := filepath.Join("sessions", sessionID, "uploads", e.Name())
-		lines = append(lines, fmt.Sprintf("- %s  (path: %s)", e.Name(), relPath))
+		// Always use forward slashes so read_file resolves the path correctly
+		// on any OS (including Windows where filepath.Join uses backslashes).
+		relPath := "sessions/" + sessionID + "/uploads/" + e.Name()
+		sizeStr := ""
+		if info, err := e.Info(); err == nil {
+			sizeStr = fmt.Sprintf(" (%s)", humanSize(info.Size()))
+		}
+		lines = append(lines, fmt.Sprintf("- %s%s  (path: %s)", e.Name(), sizeStr, relPath))
 	}
 	if len(lines) == 0 {
 		return messages

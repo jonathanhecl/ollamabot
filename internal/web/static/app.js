@@ -2148,6 +2148,8 @@ async function processNextQueueItem() {
     if (uploaded.length) {
       loadSessionUploads();
     }
+    // Re-render messages so in-history pills switch from pending div to download link
+    renderMessages();
   }
 
   const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true, metrics: null };
@@ -2801,7 +2803,12 @@ function attachmentPreview(attachment) {
     const sizeStr = attachment.size ? formatFileSize(attachment.size) : "";
     const statusStr = uploading != null ? `${uploading}%` : sizeStr;
     const hasPending = !!attachment._file;
-    return `<div class="media-preview file${hasPending ? " pending" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${statusStr}</span></div>`;
+    const inner = `<span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${statusStr}</span>`;
+    if (!hasPending && attachment.path) {
+      const href = `/api/sessions/${encodeURIComponent(state.activeSessionId || "")}/uploads/${encodeURIComponent(attachment.name)}`;
+      return `<a class="media-preview file" href="${escapeAttr(href)}" download="${escapeAttr(attachment.name)}" title="Download ${label}">${inner}</a>`;
+    }
+    return `<div class="media-preview file${hasPending ? " pending" : ""}">${inner}</div>`;
   }
   return `<div class="media-preview"><span>${label}</span></div>`;
 }
