@@ -146,6 +146,121 @@ func TestAttachmentExtractionAndRestore(t *testing.T) {
 	}
 }
 
+func TestAudioAttachmentRoundtrip(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	audioData := []byte("fake wav audio bytes for testing")
+	b64 := base64.StdEncoding.EncodeToString(audioData)
+	dataURL := "data:audio/wav;base64," + b64
+
+	msg := map[string]any{
+		"role":    "user",
+		"content": "",
+		"attachments": []map[string]any{
+			{
+				"name":          "mic_record.wav",
+				"mime":          "audio/wav",
+				"kind":          "audio",
+				"data":          b64,
+				"url":           dataURL,
+				"transcription": "hello world transcription",
+				"unreadable":    false,
+			},
+		},
+	}
+	raw, _ := json.Marshal(msg)
+
+	sess := Session{
+		ID:       GenerateID(),
+		Title:    "Audio Test",
+		Model:    "test-model",
+		Messages: []json.RawMessage{raw},
+	}
+
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+	if len(got.Messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(got.Messages))
+	}
+
+	var restored RawMsg
+	if err := json.Unmarshal(got.Messages[0], &restored); err != nil {
+		t.Fatalf("Unmarshal restored message: %v", err)
+	}
+	if len(restored.Attachments) != 1 {
+		t.Fatalf("expected 1 restored attachment, got %d", len(restored.Attachments))
+	}
+	att := restored.Attachments[0]
+	if att.Kind != "audio" {
+		t.Errorf("expected kind=audio, got %q", att.Kind)
+	}
+	if att.Data != b64 {
+		t.Errorf("audio base64 data mismatch after roundtrip")
+	}
+	if att.Transcription != "hello world transcription" {
+		t.Errorf("transcription mismatch: got %q", att.Transcription)
+	}
+	if att.Mime != "audio/wav" {
+		t.Errorf("mime mismatch: got %q", att.Mime)
+	}
+}
+
+func TestAssistantMetricsPreserved(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	metrics := map[string]any{
+		"total_duration":       int64(5_000_000_000),
+		"eval_count":           int64(200),
+		"eval_duration":        int64(4_000_000_000),
+		"prompt_eval_count":    int64(50),
+		"prompt_eval_duration": int64(500_000_000),
+		"load_duration":        int64(100_000_000),
+	}
+	assistantMsg := map[string]any{
+		"role":      "assistant",
+		"content":   "I'm ready when you are!",
+		"timestamp": "2024-01-01T12:00:00Z",
+		"metrics":   metrics,
+	}
+	raw, _ := json.Marshal(assistantMsg)
+
+	sess := Session{
+		ID:       GenerateID(),
+		Title:    "Metrics Test",
+		Model:    "test-model",
+		Messages: []json.RawMessage{raw},
+	}
+
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	got, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("Get failed: %v", err)
+	}
+
+	var restored map[string]any
+	if err := json.Unmarshal(got.Messages[0], &restored); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	restoredMetrics, ok := restored["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics not preserved after save/load, got: %T %v", restored["metrics"], restored["metrics"])
+	}
+	if restoredMetrics["total_duration"] == nil {
+		t.Errorf("total_duration missing from restored metrics")
+	}
+}
+
 func TestGenerateIDUniqueness(t *testing.T) {
 	const n = 1000
 	ids := make(map[string]struct{}, n)

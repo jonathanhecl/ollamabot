@@ -2953,7 +2953,7 @@ function normalizeRawMessages(rawMessages) {
       streaming: false,
       waiting: false,
       timestamp: msg.timestamp || "",
-      metrics: msg.metrics || null
+      metrics: msg.metrics && msg.metrics.total_duration ? msg.metrics : null
     };
   });
 }
@@ -3155,9 +3155,18 @@ async function saveSession() {
       content: msg.content || "",
       steps: msg.steps || [],
       images: msg.images || undefined,
-      attachments: msg.attachments || undefined,
+      attachments: (msg.attachments || []).length ? msg.attachments.map((att) => ({
+        name: att.name || "",
+        mime: att.mime || "",
+        kind: att.kind || "",
+        data: att.data || "",
+        url: att.url || (att.data ? `data:${att.mime || (att.kind === "audio" ? "audio/wav" : "image/png")};base64,${att.data}` : ""),
+        transcription: att.transcription || "",
+        unreadable: !!att.unreadable,
+      })) : undefined,
       image_kinds: msg.attachments?.map((a) => a.kind) || undefined,
       timestamp: msg.timestamp,
+      metrics: msg.metrics || undefined,
     }));
     await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
       method: "PUT",
