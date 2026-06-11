@@ -946,6 +946,42 @@ pre {
   overflow-wrap: anywhere;
 }
 
+.media-preview.file {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  min-width: 180px;
+  max-width: 320px;
+  padding: 8px 12px;
+}
+
+.media-preview.file .file-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.media-preview.file .file-name {
+  flex: 1;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.media-preview.file .file-size {
+  color: var(--muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.media-preview.file.uploading {
+  opacity: 0.6;
+}
+
 .stream-cursor {
   display: inline-block;
   width: 8px;

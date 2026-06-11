@@ -84,6 +84,8 @@ type AttachmentMeta struct {
 	URL           string `json:"url,omitempty"`
 	Transcription string `json:"transcription,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
+	Path          string `json:"path,omitempty"`
+	Size          int64  `json:"size,omitempty"`
 }
 
 var (

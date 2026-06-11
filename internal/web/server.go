@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -113,9 +114,10 @@ type SettingsResponse struct {
 type MediaMessage = router.MediaMessage
 
 type ChatRequest struct {
-	Model    string         `json:"model"`
-	Messages []MediaMessage `json:"messages"`
-	Think    bool           `json:"think"`
+	Model     string         `json:"model"`
+	Messages  []MediaMessage `json:"messages"`
+	Think     bool           `json:"think"`
+	SessionID string         `json:"session_id,omitempty"`
 }
 
 func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
@@ -167,6 +169,8 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
+	mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
+	mux.HandleFunc("GET /api/sessions/{id}/uploads", s.handleListSessionUploads)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
@@ -601,6 +605,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher: flusher,
 	})
 
+	// Inject uploaded-files context if session has uploads
+	if input.SessionID != "" {
+		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
+	}
+
 	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, input.Think, len(ollamaMessages))
 	err = runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
 	if err != nil {
@@ -911,6 +920,220 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions.NotifyUpdate(id)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// uploadsDir returns the path to the per-session uploads directory.
+func uploadsDir(workspace, sessionsPath, sessionID string) string {
+	return filepath.Join(workspace, sessionsPath, sessionID, "uploads")
+}
+
+// sanitizeUploadName returns a safe filename by stripping path separators and
+// limiting length. The original extension is preserved.
+func sanitizeUploadName(raw string) string {
+	base := filepath.Base(raw)
+	if base == "." || base == "" {
+		base = "file"
+	}
+	// Replace any remaining path separator chars.
+	base = strings.ReplaceAll(base, "/", "_")
+	base = strings.ReplaceAll(base, "\\", "_")
+	if len(base) > 200 {
+		ext := filepath.Ext(base)
+		base = base[:200-len(ext)] + ext
+	}
+	return base
+}
+
+// handleSessionUpload accepts a multipart file upload and saves it to the
+// session's uploads directory within the workspace.
+func (s *Server) handleSessionUpload(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cfg, _, _, _ := s.deps()
+
+	// 64 MiB max upload
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid multipart: %w", err))
+		return
+	}
+
+	file, header, err := r.FormFile("file")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("missing file field: %w", err))
+		return
+	}
+	defer file.Close()
+
+	dir := uploadsDir(cfg.Workspace, cfg.SessionsPath, id)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	name := sanitizeUploadName(header.Filename)
+	// Avoid collisions by appending a timestamp if file already exists.
+	destPath := filepath.Join(dir, name)
+	if _, statErr := os.Stat(destPath); statErr == nil {
+		ext := filepath.Ext(name)
+		noExt := strings.TrimSuffix(name, ext)
+		name = fmt.Sprintf("%s_%d%s", noExt, time.Now().UnixMilli(), ext)
+		destPath = filepath.Join(dir, name)
+	}
+
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	if err := os.WriteFile(destPath, data, 0o644); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	mime := header.Header.Get("Content-Type")
+	if mime == "" || mime == "application/octet-stream" {
+		mime = detectMime(name)
+	}
+	relPath := filepath.Join("sessions", id, "uploads", name)
+
+	log.Printf("[Web] Upload session=%s file=%q mime=%s size=%d", id, name, mime, len(data))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"name": name,
+		"path": relPath,
+		"mime": mime,
+		"size": len(data),
+	})
+}
+
+// handleListSessionUploads returns a list of files in the session uploads dir.
+func (s *Server) handleListSessionUploads(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	cfg, _, _, _ := s.deps()
+
+	dir := uploadsDir(cfg.Workspace, cfg.SessionsPath, id)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, []any{})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	type fileInfo struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+		Mime string `json:"mime"`
+		Size int64  `json:"size"`
+	}
+	var files []fileInfo
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		name := e.Name()
+		files = append(files, fileInfo{
+			Name: name,
+			Path: filepath.Join("sessions", id, "uploads", name),
+			Mime: detectMime(name),
+			Size: info.Size(),
+		})
+	}
+	if files == nil {
+		files = []fileInfo{}
+	}
+	writeJSON(w, http.StatusOK, files)
+}
+
+// detectMime returns a basic MIME type based on the file extension.
+func detectMime(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".pdf":
+		return "application/pdf"
+	case ".txt", ".md", ".csv", ".log":
+		return "text/plain"
+	case ".json":
+		return "application/json"
+	case ".html", ".htm":
+		return "text/html"
+	case ".xml":
+		return "application/xml"
+	case ".zip":
+		return "application/zip"
+	case ".mp4":
+		return "video/mp4"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".avi":
+		return "video/x-msvideo"
+	case ".mov":
+		return "video/quicktime"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".py":
+		return "text/x-python"
+	case ".go":
+		return "text/x-go"
+	case ".js":
+		return "text/javascript"
+	case ".ts":
+		return "text/typescript"
+	case ".rs":
+		return "text/x-rust"
+	case ".c", ".h":
+		return "text/x-c"
+	case ".cpp", ".hpp":
+		return "text/x-c++"
+	case ".java":
+		return "text/x-java"
+	case ".sh", ".bash":
+		return "text/x-shellscript"
+	default:
+		return "application/octet-stream"
+	}
+}
+
+// injectUploadsContext prepends a system message listing uploaded files if the
+// session has any, so the agent knows what files are available.
+func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []ollama.Message) []ollama.Message {
+	dir := uploadsDir(workspace, sessionsPath, sessionID)
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return messages
+	}
+
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		relPath := filepath.Join("sessions", sessionID, "uploads", e.Name())
+		lines = append(lines, fmt.Sprintf("- %s  (path: %s)", e.Name(), relPath))
+	}
+	if len(lines) == 0 {
+		return messages
+	}
+
+	note := "The user has uploaded the following files to this session. " +
+		"You can read text files with the read_file tool using the given path, " +
+		"or run shell commands on binary/video files with execute_command.\n\nUploaded files:\n" +
+		strings.Join(lines, "\n")
+
+	// Find existing system message and append to it, or prepend a new one.
+	for i, msg := range messages {
+		if msg.Role == "system" {
+			messages[i].Content = messages[i].Content + "\n\n" + note
+			return messages
+		}
+	}
+	sys := ollama.Message{Role: "system", Content: note}
+	return append([]ollama.Message{sys}, messages...)
 }
 
 func (s *Server) handleSessionFeedback(w http.ResponseWriter, r *http.Request) {

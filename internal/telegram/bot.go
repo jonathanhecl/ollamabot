@@ -79,6 +79,14 @@ type User struct {
 	Username  string `json:"username,omitempty"`
 }
 
+type Document struct {
+	FileID       string `json:"file_id"`
+	FileUniqueID string `json:"file_unique_id"`
+	FileName     string `json:"file_name,omitempty"`
+	MimeType     string `json:"mime_type,omitempty"`
+	FileSize     int64  `json:"file_size,omitempty"`
+}
+
 type Message struct {
 	MessageID int64       `json:"message_id"`
 	From      *User       `json:"from,omitempty"`
@@ -88,6 +96,7 @@ type Message struct {
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Voice     *Voice      `json:"voice,omitempty"`
 	Audio     *Audio      `json:"audio,omitempty"`
+	Document  *Document   `json:"document,omitempty"`
 }
 
 type Chat struct {
@@ -870,6 +879,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				mediaKind = "audio"
 			}
 		}
+	} else if msg.Document != nil {
+		b.handleDocumentUpload(chatID, msg, sessionID)
+		return
 	}
 
 	// 1. Load session and messages
@@ -1013,6 +1025,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		sessionID:   sessionID,
 		baseHistory: history,
 	}
+
+	// Inject uploaded-files context if any files have been uploaded to this session
+	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
 
 	think := cache.SupportsCapability(snapshotPath(), b.cfg.OllamaDefaultModel, "thinking")
 	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
@@ -1375,6 +1390,110 @@ func (b *Bot) downloadFile(filePath string) ([]byte, error) {
 	}
 
 	return io.ReadAll(resp.Body)
+}
+
+// handleDocumentUpload saves a Telegram Document to the session uploads folder,
+// notifies the user, and then continues processing the message with the user's text.
+func (b *Bot) handleDocumentUpload(chatID int64, msg *Message, sessionID string) {
+	doc := msg.Document
+	fileInfo, err := b.getFile(doc.FileID)
+	if err != nil {
+		log.Printf("[Telegram] Document getFile error: %v", err)
+		b.sendMessage(chatID, "❌ Could not retrieve the file from Telegram.", msg.MessageID, "")
+		return
+	}
+
+	data, err := b.downloadFile(fileInfo.FilePath)
+	if err != nil {
+		log.Printf("[Telegram] Document download error: %v", err)
+		b.sendMessage(chatID, "❌ Could not download the file.", msg.MessageID, "")
+		return
+	}
+
+	// Determine file name
+	name := doc.FileName
+	if name == "" {
+		name = filepath.Base(fileInfo.FilePath)
+	}
+	// Sanitize
+	name = filepath.Base(name)
+	if name == "." || name == "" {
+		name = "file"
+	}
+
+	dir := filepath.Join(b.cfg.Workspace, b.cfg.SessionsPath, sessionID, "uploads")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		log.Printf("[Telegram] Document mkdir error: %v", err)
+		b.sendMessage(chatID, "❌ Could not save the file.", msg.MessageID, "")
+		return
+	}
+
+	destPath := filepath.Join(dir, name)
+	if _, statErr := os.Stat(destPath); statErr == nil {
+		ext := filepath.Ext(name)
+		noExt := strings.TrimSuffix(name, ext)
+		name = fmt.Sprintf("%s_%d%s", noExt, time.Now().UnixMilli(), ext)
+		destPath = filepath.Join(dir, name)
+	}
+
+	if err := os.WriteFile(destPath, data, 0o644); err != nil {
+		log.Printf("[Telegram] Document write error: %v", err)
+		b.sendMessage(chatID, "❌ Could not save the file.", msg.MessageID, "")
+		return
+	}
+
+	relPath := filepath.Join("sessions", sessionID, "uploads", name)
+	mime := doc.MimeType
+	log.Printf("[Telegram] Document saved session=%s file=%q mime=%s size=%d", sessionID, name, mime, len(data))
+
+	// Confirm to user and forward the message (with text caption if any) to agent
+	b.sendMessage(chatID, fmt.Sprintf("📎 *File received:* `%s` (%d bytes)\nSaved to session. You can now ask me to read or process it.", name, len(data)), msg.MessageID, "Markdown")
+
+	// Inject a synthetic user message with text context and continue to agent
+	msg.Text = strings.TrimSpace(msg.Text)
+	if msg.Text == "" {
+		msg.Text = fmt.Sprintf("[Attached file: %s (%s), saved to %s]", name, mime, relPath)
+	} else {
+		msg.Text = fmt.Sprintf("[Attached file: %s (%s), saved to %s]\n\n%s", name, mime, relPath, msg.Text)
+	}
+	// Clear the document so processMessageInput doesn't loop
+	msg.Document = nil
+	b.processMessageInput(msg, sessionID)
+}
+
+// injectTelegramUploadsContext prepends a system note listing uploaded files, so
+// the agent is aware of them without the user needing to repeat themselves.
+func (b *Bot) injectTelegramUploadsContext(sessionID string, messages []ollama.Message) []ollama.Message {
+	dir := filepath.Join(b.cfg.Workspace, b.cfg.SessionsPath, sessionID, "uploads")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return messages
+	}
+
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		relPath := filepath.Join("sessions", sessionID, "uploads", e.Name())
+		lines = append(lines, fmt.Sprintf("- %s  (path: %s)", e.Name(), relPath))
+	}
+	if len(lines) == 0 {
+		return messages
+	}
+
+	note := "The user has uploaded the following files to this session. " +
+		"You can read text files with the read_file tool using the given path, " +
+		"or run shell commands on binary/video files with execute_command.\n\nUploaded files:\n" +
+		strings.Join(lines, "\n")
+
+	for i, m := range messages {
+		if m.Role == "system" {
+			messages[i].Content = messages[i].Content + "\n\n" + note
+			return messages
+		}
+	}
+	return append([]ollama.Message{{Role: "system", Content: note}}, messages...)
 }
 
 // Custom StreamHandler for Telegram bot

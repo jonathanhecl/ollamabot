@@ -415,6 +415,32 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["execute_command"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "execute_command",
+			Description: "Run a shell command (e.g. ffmpeg, ffprobe, pandoc, python3) inside the workspace directory. Use this to process binary files, extract frames from video, convert formats, etc. Always requires user approval before execution.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"command": map[string]any{
+						"type":        "string",
+						"description": fmt.Sprintf("The executable to run. Allowed: %s", strings.Join(allowedList(), ", ")),
+					},
+					"args": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "List of arguments to pass to the command.",
+					},
+				},
+				"required": []string{"command"},
+			},
+		},
+	})
+
 	r.enabled["ask_clarification"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
@@ -476,8 +502,8 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Risks check: write/edit operations require approval if a handler is configured
-	if r.approvalHandler != nil && (name == "Write" || name == "Edit") {
+	// Risks check: write/edit/execute operations require approval if a handler is configured
+	if r.approvalHandler != nil && (name == "Write" || name == "Edit" || name == "execute_command") {
 		filePath, _ := args["file_path"].(string)
 		isSafe := false
 		if filePath != "" {
@@ -494,8 +520,13 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			}
 		}
 
+		// execute_command always requires approval regardless of path
+		if name == "execute_command" {
+			isSafe = false
+		}
+
 		if !isSafe {
-			log.Printf("[tool] Intercepting risky tool %q outside safe workspace. Requesting user approval...", name)
+			log.Printf("[tool] Intercepting risky tool %q. Requesting user approval...", name)
 			approved, err := r.approvalHandler.RequestApproval(ctx, name, args)
 			if err != nil {
 				log.Printf("[tool] Approval error for %q: %v", name, err)
@@ -725,6 +756,19 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", err
 		}
 		return fmt.Sprintf("Skill '%s' deleted successfully.", skillName), nil
+	case "execute_command":
+		command, _ := args["command"].(string)
+		if command == "" {
+			return "", fmt.Errorf("missing command")
+		}
+		var cmdArgs []string
+		if v, ok := args["args"]; ok {
+			argBytes, err := json.Marshal(v)
+			if err == nil {
+				_ = json.Unmarshal(argBytes, &cmdArgs)
+			}
+		}
+		return executeCommand(ctx, r.workspace, command, cmdArgs)
 	case "ask_clarification":
 		question, _ := args["question"].(string)
 		optionsVal := args["options"]

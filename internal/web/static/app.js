@@ -133,8 +133,10 @@ const els = {
   thinkControl: document.querySelector("#thinkControl"),
   imageControl: document.querySelector("#imageControl"),
   audioControl: document.querySelector("#audioControl"),
+  fileControl: document.querySelector("#fileControl"),
   imageInput: document.querySelector("#imageInput"),
   audioInput: document.querySelector("#audioInput"),
+  fileInput: document.querySelector("#fileInput"),
   capabilityBar: document.querySelector("#capabilityBar"),
   capabilityBadges: document.querySelector("#capabilityBadges"),
   attachments: document.querySelector("#attachments"),
@@ -374,6 +376,7 @@ if (els.sleepModeToggle) {
 els.form.addEventListener("submit", sendMessage);
 els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.files], "image"));
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
+els.fileInput.addEventListener("change", () => addFileAttachments([...els.fileInput.files]));
 els.recordControl.addEventListener("click", toggleRecording);
 if (els.logoutBtn) {
   els.logoutBtn.addEventListener("click", () => {
@@ -1471,7 +1474,7 @@ function setCapabilityVisibility() {
   els.audioControl.hidden = !canAudio;
   els.recordControl.hidden = !canAudio;
   if (!canThink) els.think.checked = false;
-  state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
+  state.attachments = state.attachments.filter((attachment) => attachment.kind === "file" || capabilityFor(attachment.kind));
   renderAttachments();
 }
 
@@ -1812,6 +1815,72 @@ async function addFiles(files, expectedKind = "") {
   renderAttachments();
 }
 
+async function addFileAttachments(files) {
+  // Ensure we have a real server-side session (not a client_ temp one)
+  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+    await ensureActiveSession();
+  }
+  // If still no server session, bail out with a message
+  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+    addSystemMessage("❌ Cannot upload files: no active server session. Please try again.");
+    renderMessages();
+    els.fileInput.value = "";
+    return;
+  }
+
+  for (const file of files) {
+    // Skip images and audio — those go through their dedicated flows
+    if (file.type.startsWith("image/") || file.type.startsWith("audio/")) {
+      addSystemMessage(`Use the Image or Audio button for ${file.name}.`);
+      renderMessages();
+      continue;
+    }
+
+    // Show a pending placeholder so the user sees immediate feedback
+    const placeholder = { name: file.name, mime: file.type || "application/octet-stream", kind: "file", path: "", size: file.size, data: "", url: "", uploading: true };
+    state.attachments.push(placeholder);
+    renderAttachments();
+
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/upload`, {
+        method: "POST",
+        body: formData,
+      });
+      // Remove placeholder
+      const idx = state.attachments.indexOf(placeholder);
+      if (idx !== -1) state.attachments.splice(idx, 1);
+
+      if (!res.ok) {
+        const errText = await res.text();
+        addSystemMessage(`❌ Upload failed for ${file.name}: ${errText}`);
+        renderMessages();
+        renderAttachments();
+        continue;
+      }
+      const info = await res.json();
+      state.attachments.push({
+        name: info.name,
+        mime: info.mime,
+        kind: "file",
+        path: info.path,
+        size: info.size,
+        data: "",
+        url: "",
+      });
+    } catch (err) {
+      const idx = state.attachments.indexOf(placeholder);
+      if (idx !== -1) state.attachments.splice(idx, 1);
+      addSystemMessage(`❌ Upload error for ${file.name}: ${err.message}`);
+      renderMessages();
+    }
+    renderAttachments();
+  }
+  els.fileInput.value = "";
+  renderAttachments();
+}
+
 function handlePaste(event) {
   const files = [];
   for (const item of event.clipboardData?.items || []) {
@@ -1926,10 +1995,13 @@ async function sendMessage(event) {
   }
 
   const beforeFilterCount = state.attachments.length;
-  state.attachments = state.attachments.filter((attachment) => capabilityFor(attachment.kind));
-  console.log(`[sendMessage] After capabilityFor filter: ${state.attachments.length}/${beforeFilterCount} attachments remain`);
-  const images = state.attachments.map((attachment) => attachment.data);
-  const visibleAttachments = [...state.attachments];
+  // File-kind attachments are already saved server-side; keep them in the
+  // visible record but do not pass them through capabilityFor.
+  const fileAttachments = state.attachments.filter((a) => a.kind === "file");
+  const mediaAttachments = state.attachments.filter((a) => a.kind !== "file" && capabilityFor(a.kind));
+  console.log(`[sendMessage] After filter: ${mediaAttachments.length} media + ${fileAttachments.length} file attachments (from ${beforeFilterCount})`);
+  const images = mediaAttachments.map((attachment) => attachment.data);
+  const visibleAttachments = [...mediaAttachments, ...fileAttachments];
   console.log("[sendMessage] images array length:", images.length, "first image data length:", images[0]?.length || 0);
   
   // Push the message with processed = false to state
@@ -1942,8 +2014,11 @@ async function sendMessage(event) {
   renderAttachments();
   renderMessages();
   updateContextBar();
-  if (visibleAttachments.length) {
-    addSystemMessage(`Attached ${visibleAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
+  if (mediaAttachments.length) {
+    addSystemMessage(`Attached ${mediaAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
+  }
+  if (fileAttachments.length) {
+    addSystemMessage(`📎 ${fileAttachments.length} file(s) saved to session: ${fileAttachments.map((f) => f.name).join(", ")}`);
   }
 
   // Push user query to client-side sequential queue
@@ -2051,6 +2126,7 @@ async function processNextQueueItem() {
         model: state.activeModel,
         messages: outboundMessages,
         think: els.think.checked,
+        session_id: state.activeSessionId || "",
       }),
       signal: state.currentAbortController.signal,
     });
@@ -2658,7 +2734,27 @@ function attachmentPreview(attachment) {
     }
     return `<div class="media-preview audio" ${stopAll}><span>${label}</span><audio controls preload="metadata" src="${escapeAttr(attachment.url)}" ${stopAll}></audio>${transcriptionHtml}</div>`;
   }
+  if (attachment.kind === "file") {
+    const mimeIcon = attachment.uploading ? "⏳" : fileMimeIcon(attachment.mime || "");
+    const sizeStr = attachment.uploading ? "uploading…" : (attachment.size ? formatFileSize(attachment.size) : "");
+    return `<div class="media-preview file${attachment.uploading ? " uploading" : ""}"><span class="file-icon">${mimeIcon}</span><span class="file-name">${label}</span><span class="file-size">${sizeStr}</span></div>`;
+  }
   return `<div class="media-preview"><span>${label}</span></div>`;
+}
+
+function formatFileSize(bytes) {
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
+  return (bytes / (1024 * 1024)).toFixed(1) + " MB";
+}
+
+function fileMimeIcon(mime) {
+  if (mime.includes("pdf")) return "📄";
+  if (mime.includes("video")) return "🎥";
+  if (mime.includes("zip") || mime.includes("archive") || mime.includes("compressed")) return "🗃️";
+  if (mime.includes("json") || mime.includes("xml")) return "{ }";
+  if (mime.startsWith("text/")) return "📝";
+  return "📁";
 }
 
 function fileToDataURL(file) {
@@ -3057,7 +3153,9 @@ function normalizeRawMessages(rawMessages) {
           data: att.data || "",
           url: url || "",
           transcription: att.transcription || "",
-          unreadable: !!att.unreadable
+          unreadable: !!att.unreadable,
+          size: att.size || 0,
+          path: att.path || "",
         };
       }),
       streaming: false,
