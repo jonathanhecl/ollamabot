@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1315,6 +1316,51 @@ func (b *Bot) sendMessage(chatID int64, text string, replyToID int64, parseMode 
 	return 0, nil
 }
 
+// sendPhoto sends a photo file to a Telegram chat.
+func (b *Bot) sendPhoto(chatID int64, photoPath string, replyToID int64) error {
+	file, err := os.Open(photoPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
+	if replyToID != 0 {
+		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
+	}
+
+	part, err := writer.CreateFormFile("photo", filepath.Base(photoPath))
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return err
+	}
+	writer.Close()
+
+	url := b.apiBase + "/sendPhoto"
+	resp, err := b.httpClient.Post(url, writer.FormDataContentType(), &body)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return err
+	}
+	if !apiResp.OK {
+		return fmt.Errorf("telegram api error: %s", apiResp.Description)
+	}
+	return nil
+}
+
 // startTypingKeepalive sends "typing" to chatID every 4 seconds until the
 // returned stop function is called. This keeps the indicator visible for the
 // full duration of media pre-processing, LLM streaming, and tool execution.
@@ -2081,8 +2127,10 @@ func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total
 func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string) {
 	// Edit message to show completion
 	if msgID, exists := h.msgIDs[genID]; exists {
-		text := "✅ *Image generated successfully!*\n📁 Saved to: " + filepath.Base(imagePath)
+		text := "Image generated!"
 		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
+		// Send the actual image file
+		_ = h.bot.sendPhoto(h.chatID, imagePath, msgID)
 	}
 }
 

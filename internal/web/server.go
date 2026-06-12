@@ -174,6 +174,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads", s.handleListSessionUploads)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads/{filename}", s.handleDownloadSessionUpload)
+	mux.HandleFunc("GET /api/sessions/{id}/generations/{filename}", s.handleDownloadGeneration)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
@@ -615,9 +616,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher: flusher,
 	})
 	registry.SetImageProgressHandler(&webImageProgressHandler{
-		w:       w,
-		flusher: flusher,
+		server:    s,
+		sessionID: input.SessionID,
+		w:         w,
+		flusher:   flusher,
 	})
+	registry.SetSessionID(input.SessionID)
 
 	// Inject uploaded-files context if session has uploads
 	if input.SessionID != "" {
@@ -928,6 +932,26 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	cfg := s.config()
+
+	// Delete session uploads directory
+	uploadsDirPath := filepath.Join(cfg.SessionsPath, id, "uploads")
+	if err := os.RemoveAll(uploadsDirPath); err != nil {
+		log.Printf("[Web] Failed to delete uploads for session %s: %v", id, err)
+	}
+
+	// Delete session generations directory
+	gensDirPath := filepath.Join(cfg.Workspace, "sessions", id, "generations")
+	if err := os.RemoveAll(gensDirPath); err != nil {
+		log.Printf("[Web] Failed to delete generations for session %s: %v", id, err)
+	}
+
+	// Delete session directory itself if empty
+	sessionDirPath := filepath.Join(cfg.SessionsPath, id)
+	if err := os.Remove(sessionDirPath); err != nil {
+		log.Printf("[Web] Failed to delete session dir %s: %v", id, err)
+	}
+
 	if err := s.sessionStore.Delete(id); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -1094,6 +1118,36 @@ func (s *Server) handleDownloadSessionUpload(w http.ResponseWriter, r *http.Requ
 	mime := detectMime(clean)
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+clean+`"`)
+	http.ServeContent(w, r, clean, time.Time{}, f)
+}
+
+// handleDownloadGeneration serves a generated image for a session.
+func (s *Server) handleDownloadGeneration(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	filename := r.PathValue("filename")
+	cfg := s.config()
+
+	// Sanitize: only allow bare filenames with no path traversal
+	clean := filepath.Base(filename)
+	if clean == "." || clean == "" || strings.Contains(clean, "..") {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("invalid filename"))
+		return
+	}
+
+	filePath := filepath.Join(cfg.Workspace, "sessions", id, "generations", clean)
+	f, err := os.Open(filePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.NotFound(w, r)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer f.Close()
+
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	http.ServeContent(w, r, clean, time.Time{}, f)
 }
 
@@ -1791,8 +1845,10 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 
 // webImageProgressHandler handles image generation progress updates for Web UI via SSE
 type webImageProgressHandler struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
+	server    *Server
+	sessionID string
+	w         http.ResponseWriter
+	flusher   http.Flusher
 }
 
 func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
@@ -1808,8 +1864,16 @@ func (h *webImageProgressHandler) OnProgress(genID string, completed, total int,
 }
 
 func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
+	// Convert filesystem path to API URL
+	baseName := filepath.Base(imagePath)
+	var apiURL string
+	if strings.TrimSpace(h.sessionID) != "" {
+		apiURL = fmt.Sprintf("/api/sessions/%s/generations/%s", h.sessionID, baseName)
+	} else {
+		apiURL = fmt.Sprintf("/generations/%s", baseName)
+	}
 	writeSSE(h.w, "image_complete", map[string]any{
-		"path":   imagePath,
+		"path":   apiURL,
 		"gen_id": genID,
 	})
 	if h.flusher != nil {

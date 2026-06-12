@@ -41,6 +41,7 @@ type Registry struct {
 	imageModel           string
 	imageSteps           int
 	imageProgressHandler ImageProgressHandler
+	sessionID            string
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -78,6 +79,11 @@ func (r *Registry) SetImageSteps(steps int) {
 // SetImageProgressHandler assigns a callback handler for image generation progress updates.
 func (r *Registry) SetImageProgressHandler(h ImageProgressHandler) {
 	r.imageProgressHandler = h
+}
+
+// SetSessionID sets the current session ID for organizing generated files.
+func (r *Registry) SetSessionID(id string) {
+	r.sessionID = id
 }
 
 // NewRegistry creates a registry with the given feature toggles.
@@ -895,8 +901,13 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		// Generate unique ID for this generation
 		genID := fmt.Sprintf("gen_%d", time.Now().UnixNano())
 
-		// Create generations directory if not exists
-		genDir := filepath.Join(r.workspace, "generations")
+		// Create session-specific generations directory
+		var genDir string
+		if strings.TrimSpace(r.sessionID) != "" {
+			genDir = filepath.Join(r.workspace, "sessions", r.sessionID, "generations")
+		} else {
+			genDir = filepath.Join(r.workspace, "generations")
+		}
 		if err := os.MkdirAll(genDir, 0755); err != nil {
 			return "", fmt.Errorf("failed to create generations directory: %w", err)
 		}
@@ -904,7 +915,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		// Generate unique filename
 		timestamp := time.Now().Format("20060102_150405")
 		filename := fmt.Sprintf("generated_%s_%dx%d.png", timestamp, width, height)
-		filepath := filepath.Join(genDir, filename)
+		filePath := filepath.Join(genDir, filename)
 
 		// Call image generation via client
 		req := ollama.GenerateRequest{
@@ -965,16 +976,16 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("failed to decode image data: %w", err)
 		}
 
-		if err := os.WriteFile(filepath, imageBytes, 0644); err != nil {
+		if err := os.WriteFile(filePath, imageBytes, 0644); err != nil {
 			return "", fmt.Errorf("failed to save image: %w", err)
 		}
 
-		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filepath, len(imageBytes))
-		// Call completion handler if set
+		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filePath, len(imageBytes))
+		// Call completion handler if set - pass real filesystem path
 		if r.imageProgressHandler != nil {
-			r.imageProgressHandler.OnComplete(genID, filepath)
+			r.imageProgressHandler.OnComplete(genID, filePath)
 		}
-		return fmt.Sprintf("Image generated successfully: %s", filepath), nil
+		return fmt.Sprintf("Image generated: %s", filepath.Base(filePath)), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

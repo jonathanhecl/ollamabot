@@ -2290,10 +2290,11 @@ async function processNextQueueItem() {
         const genID = value.gen_id || "unknown";
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (step && step.status !== "error") {
-          step.content = `Image generated!\n📁 ${value.path}`;
+          step.content = `Image generated!`;
+          step.imageURL = value.path;
           step.status = "done";
         } else if (!step) {
-          assistant.steps.push({ type: "image_progress", genID: genID, content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
+          assistant.steps.push({ type: "image_progress", genID: genID, content: `Image generated!`, imageURL: value.path, status: "done" });
         }
         renderMessages();
       },
@@ -2673,8 +2674,12 @@ function renderStep(step) {
     }
     case "image_progress": {
       const statusClass = step.status === "done" ? "done" : step.status === "error" ? "error" : "running";
-      const icon = step.status === "done" ? "✅" : step.status === "error" ? "❌" : "🎨";
-      return `<div class="step step-image-progress ${statusClass}"><pre>${icon} ${escapeHtml(step.content || "")}</pre></div>`;
+      const icon = step.status === "done" ? "" : step.status === "error" ? "❌ " : "🎨 ";
+      let inner = `<pre>${icon}${escapeHtml(step.content || "")}</pre>`;
+      if (step.imageURL) {
+        inner += `<img src="${escapeHtml(step.imageURL)}" alt="Generated image" class="generated-image" />`;
+      }
+      return `<div class="step step-image-progress ${statusClass}">${inner}</div>`;
     }
     default:
       return "";
