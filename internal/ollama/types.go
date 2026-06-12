@@ -132,7 +132,8 @@ type GenerateRequest struct {
 type GenerateResponse struct {
 	Model           string   `json:"model"`
 	Response        string   `json:"response,omitempty"` // Text response if any
-	Images          []string `json:"images,omitempty"`   // Generated image data (base64)
+	Image           string   `json:"image,omitempty"`    // Generated image data (base64) - single image from /api/generate
+	Images          []string `json:"images,omitempty"`   // Generated image data (base64) - array variant
 	Done            bool     `json:"done"`
 	DoneReason      string   `json:"done_reason,omitempty"`
 	Completed       int      `json:"completed,omitempty"` // Progress step

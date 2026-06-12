@@ -935,23 +935,10 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 					r.imageProgressHandler.OnProgress(genID, chunk.Completed, chunk.Total, "generating")
 				}
 			}
-			// Debug logging for done chunk
-			if chunk.Done {
-				log.Printf("[generate_image] Chunk done: Response len=%d, Images len=%d, Done=%v", len(chunk.Response), len(chunk.Images), chunk.Done)
-			}
-			// Accumulate image data from Response field (may come across multiple chunks)
-			if chunk.Response != "" {
-				imageData += chunk.Response
-				if chunk.Done {
-					log.Printf("[generate_image] Accumulated Response: %.50s...", imageData)
-				}
-			}
-			// Also accumulate from Images field if present
-			if len(chunk.Images) > 0 && chunk.Images[0] != "" {
-				imageData += chunk.Images[0]
-				if chunk.Done {
-					log.Printf("[generate_image] Accumulated from Images field")
-				}
+			// Image data comes in Image field on the final done chunk
+			if chunk.Done && chunk.Image != "" {
+				imageData = chunk.Image
+				log.Printf("[generate_image] Got image data: %d bytes", len(imageData))
 			}
 			_ = progressMsgID // may be used by handler
 			return nil
