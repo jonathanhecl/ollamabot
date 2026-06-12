@@ -1033,6 +1033,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		sessionID: sessionID,
 		onStep:    handler.addOrUpdateImageStep,
 	})
+	registry.SetSessionID(sessionID)
 
 	// Inject uploaded-files context if any files have been uploaded to this session
 	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
