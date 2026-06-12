@@ -2272,7 +2272,7 @@ async function processNextQueueItem() {
         const filled = "█".repeat(value.completed);
         const empty = "░".repeat(value.total - value.completed);
         const percent = Math.round((value.completed / value.total) * 100);
-        const text = `🎨 Generating image... [${filled}${empty}] ${percent}% (${value.completed}/${value.total})`;
+        const text = `Generating image... [${filled}${empty}] ${percent}% (${value.completed}/${value.total})`;
 
         // Find step by generation ID to update existing or create new
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
@@ -2290,7 +2290,7 @@ async function processNextQueueItem() {
         const genID = value.gen_id || "unknown";
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (step && step.status !== "error") {
-          step.content = `✅ Image generated!\n📁 ${value.path}`;
+          step.content = `Image generated!\n📁 ${value.path}`;
           step.status = "done";
         } else if (!step) {
           assistant.steps.push({ type: "image_progress", genID: genID, content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
@@ -2302,7 +2302,7 @@ async function processNextQueueItem() {
         const genID = value.gen_id || "unknown";
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (step) {
-          step.content = `❌ Image generation failed\n${value.error}`;
+          step.content = `Image generation failed\n${value.error}`;
           step.status = "error";
         } else {
           assistant.steps.push({ type: "image_progress", genID: genID, content: `❌ Image generation failed\n${value.error}`, status: "error" });
