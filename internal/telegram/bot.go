@@ -1019,11 +1019,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		bot:    b,
 		chatID: chatID,
 	})
-	registry.SetImageProgressHandler(&telegramImageProgressHandler{
-		bot:    b,
-		chatID: chatID,
-		msgIDs: make(map[string]int64),
-	})
 	a := agent.NewAgent(b.cfg, b.client, registry)
 	handler := &telegramStreamHandler{
 		bot:         b,
@@ -1031,6 +1026,13 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		sessionID:   sessionID,
 		baseHistory: history,
 	}
+	registry.SetImageProgressHandler(&telegramImageProgressHandler{
+		bot:       b,
+		chatID:    chatID,
+		msgIDs:    make(map[string]int64),
+		sessionID: sessionID,
+		onStep:    handler.addOrUpdateImageStep,
+	})
 
 	// Inject uploaded-files context if any files have been uploaded to this session
 	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
@@ -1678,6 +1680,22 @@ func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
 	h.mu.Unlock()
 	h.notifyUpdate(true)
 }
+func (h *telegramStreamHandler) addOrUpdateImageStep(step msgStep) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i := range h.steps {
+		if h.steps[i].Type == "image_progress" && h.steps[i].GenID == step.GenID {
+			if h.steps[i].Status == "running" {
+				h.steps[i].Content = step.Content
+				h.steps[i].ImageURL = step.ImageURL
+				h.steps[i].Status = step.Status
+			}
+			return
+		}
+	}
+	h.steps = append(h.steps, step)
+}
+
 func (h *telegramStreamHandler) OnDone(resp ollama.ChatResponse) {
 	if resp.TotalDuration > 0 {
 		h.mu.Lock()
@@ -1705,6 +1723,9 @@ type msgMetrics struct {
 type msgStep struct {
 	Type      string `json:"type"`
 	Name      string `json:"name,omitempty"`
+	GenID     string `json:"genID,omitempty"`
+	Content   string `json:"content,omitempty"`
+	ImageURL  string `json:"imageURL,omitempty"`
 	Arguments any    `json:"arguments,omitempty"`
 	Result    string `json:"result,omitempty"`
 	Status    string `json:"status,omitempty"`
@@ -2098,9 +2119,11 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 
 // telegramImageProgressHandler handles image generation progress updates for Telegram
 type telegramImageProgressHandler struct {
-	bot    *Bot
-	chatID int64
-	msgIDs map[string]int64 // genID -> messageID
+	bot       *Bot
+	chatID    int64
+	msgIDs    map[string]int64 // genID -> messageID
+	sessionID string
+	onStep    func(step msgStep) // callback to update stream handler steps
 }
 
 func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
@@ -2122,6 +2145,12 @@ func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total
 		// Update existing message for this generation
 		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
 	}
+
+	// Track step for web UI persistence
+	if h.onStep != nil {
+		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
+		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: stepText, Status: "running"})
+	}
 }
 
 func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string) {
@@ -2132,6 +2161,18 @@ func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string
 		// Send the actual image file
 		_ = h.bot.sendPhoto(h.chatID, imagePath, msgID)
 	}
+
+	// Track step for web UI persistence - convert filesystem path to API URL
+	if h.onStep != nil {
+		baseName := filepath.Base(imagePath)
+		var apiURL string
+		if strings.TrimSpace(h.sessionID) != "" {
+			apiURL = fmt.Sprintf("/api/sessions/%s/generations/%s", h.sessionID, baseName)
+		} else {
+			apiURL = fmt.Sprintf("/generations/%s", baseName)
+		}
+		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: "Image generated!", ImageURL: apiURL, Status: "done"})
+	}
 }
 
 func (h *telegramImageProgressHandler) OnError(genID string, err error) {
@@ -2139,6 +2180,11 @@ func (h *telegramImageProgressHandler) OnError(genID string, err error) {
 	if msgID, exists := h.msgIDs[genID]; exists {
 		text := "❌ *Image generation failed*\n" + err.Error()
 		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
+	}
+
+	// Track step for web UI persistence
+	if h.onStep != nil {
+		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: "Image generation failed: " + err.Error(), Status: "error"})
 	}
 }
 
