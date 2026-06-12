@@ -614,6 +614,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		w:       w,
 		flusher: flusher,
 	})
+	registry.SetImageProgressHandler(&webImageProgressHandler{
+		w:       w,
+		flusher: flusher,
+	})
 
 	// Inject uploaded-files context if session has uploads
 	if input.SessionID != "" {
@@ -1782,6 +1786,32 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 			log.Printf("[Web] Clarification timed out. Auto-selected default option: %q", chosen)
 			return chosen, nil
 		}
+	}
+}
+
+// webImageProgressHandler handles image generation progress updates for Web UI via SSE
+type webImageProgressHandler struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (h *webImageProgressHandler) OnProgress(completed, total int, status string) {
+	writeSSE(h.w, "image_progress", map[string]any{
+		"completed": completed,
+		"total":     total,
+		"status":    status,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
+func (h *webImageProgressHandler) OnComplete(imagePath string) {
+	writeSSE(h.w, "image_complete", map[string]any{
+		"path": imagePath,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
 	}
 }
 

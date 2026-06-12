@@ -130,13 +130,13 @@ type GenerateRequest struct {
 
 // GenerateResponse is the response from image generation models
 type GenerateResponse struct {
-	Model           string `json:"model"`
-	Response        string `json:"response,omitempty"` // Text response if any
-	Images          []byte `json:"images,omitempty"`   // Generated image data
-	Done            bool   `json:"done"`
-	DoneReason      string `json:"done_reason,omitempty"`
-	Completed       int    `json:"completed,omitempty"` // Progress step
-	Total           int    `json:"total,omitempty"`     // Total steps
-	PromptEvalCount int    `json:"prompt_eval_count,omitempty"`
-	EvalCount       int    `json:"eval_count,omitempty"`
+	Model           string   `json:"model"`
+	Response        string   `json:"response,omitempty"` // Text response if any
+	Images          []string `json:"images,omitempty"`   // Generated image data (base64)
+	Done            bool     `json:"done"`
+	DoneReason      string   `json:"done_reason,omitempty"`
+	Completed       int      `json:"completed,omitempty"` // Progress step
+	Total           int      `json:"total,omitempty"`     // Total steps
+	PromptEvalCount int      `json:"prompt_eval_count,omitempty"`
+	EvalCount       int      `json:"eval_count,omitempty"`
 }

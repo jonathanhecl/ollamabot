@@ -40,6 +40,7 @@ type Registry struct {
 	searchCfg            SearchConfig
 	imageModel           string
 	imageSteps           int
+	imageProgressHandler ImageProgressHandler
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -71,6 +72,11 @@ func (r *Registry) SetImageModel(model string) {
 // SetImageSteps assigns the image generation steps.
 func (r *Registry) SetImageSteps(steps int) {
 	r.imageSteps = steps
+}
+
+// SetImageProgressHandler assigns a callback handler for image generation progress updates.
+func (r *Registry) SetImageProgressHandler(h ImageProgressHandler) {
+	r.imageProgressHandler = h
 }
 
 // NewRegistry creates a registry with the given feature toggles.
@@ -914,14 +920,22 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			steps = 4
 		}
 
+		// Track progress message ID for editing
+		var progressMsgID int
+
 		err := r.client.GenerateStream(ctx, req, func(chunk ollama.GenerateResponse) error {
 			if chunk.Total > 0 {
-				// Progress is handled by the handler, we just collect data
 				log.Printf("[generate_image] Progress: %d/%d", chunk.Completed, chunk.Total)
+				// Call progress handler if set (e.g., for Telegram/Web UI updates)
+				if r.imageProgressHandler != nil {
+					r.imageProgressHandler.OnProgress(chunk.Completed, chunk.Total, "generating")
+				}
 			}
+			// Image data comes in Response field (base64 encoded PNG)
 			if chunk.Done && chunk.Response != "" {
 				imageData = chunk.Response
 			}
+			_ = progressMsgID // may be used by handler
 			return nil
 		})
 
@@ -944,6 +958,10 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 
 		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filepath, len(imageBytes))
+		// Call completion handler if set
+		if r.imageProgressHandler != nil {
+			r.imageProgressHandler.OnComplete(filepath)
+		}
 		return fmt.Sprintf("Image generated successfully: %s", filepath), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)

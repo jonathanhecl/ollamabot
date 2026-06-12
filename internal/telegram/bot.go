@@ -1018,6 +1018,10 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		bot:    b,
 		chatID: chatID,
 	})
+	registry.SetImageProgressHandler(&telegramImageProgressHandler{
+		bot:    b,
+		chatID: chatID,
+	})
 	a := agent.NewAgent(b.cfg, b.client, registry)
 	handler := &telegramStreamHandler{
 		bot:         b,
@@ -2042,6 +2046,46 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 		statusText := fmt.Sprintf("⚠️ *Timed out:* auto-selected option: %s", chosen)
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return chosen, nil
+	}
+}
+
+// telegramImageProgressHandler handles image generation progress updates for Telegram
+type telegramImageProgressHandler struct {
+	bot       *Bot
+	chatID    int64
+	messageID int64
+}
+
+func (h *telegramImageProgressHandler) OnProgress(completed, total int, status string) {
+	// Build progress bar with emojis
+	progress := ""
+	for i := 0; i < total; i++ {
+		if i < completed {
+			progress += "✨"
+		} else {
+			progress += "◻️"
+		}
+	}
+
+	text := fmt.Sprintf("🎨 *Generating image...*\n\n%s [%d/%d] ⏳", progress, completed, total)
+
+	if h.messageID == 0 {
+		// First time: send new message
+		msgID, err := h.bot.sendMessage(h.chatID, text, 0, "Markdown")
+		if err == nil {
+			h.messageID = msgID
+		}
+	} else {
+		// Update existing message
+		_ = h.bot.editMessageText(h.chatID, h.messageID, text, "Markdown", nil)
+	}
+}
+
+func (h *telegramImageProgressHandler) OnComplete(imagePath string) {
+	// Edit message to show completion
+	if h.messageID != 0 {
+		text := "✅ *Image generated successfully!*\n📁 Saved to: " + filepath.Base(imagePath)
+		_ = h.bot.editMessageText(h.chatID, h.messageID, text, "Markdown", nil)
 	}
 }
 

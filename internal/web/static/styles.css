@@ -680,6 +680,34 @@ h2 {
   border: 1px solid rgba(214, 255, 95, 0.25);
 }
 
+/* --- Image generation progress step --- */
+.step-image-progress {
+  border: 1px dashed var(--line);
+  padding: 8px;
+  background: #1a1510;
+  border-radius: 6px;
+  margin: 4px 0;
+}
+
+.step-image-progress.running {
+  border-color: #ff9f40;
+  animation: pulse-glow 1.6s ease-in-out infinite;
+}
+
+.step-image-progress.done {
+  border-color: rgba(214, 255, 95, 0.4);
+  background: rgba(214, 255, 95, 0.05);
+}
+
+.step-image-progress pre {
+  margin: 0;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  color: var(--text);
+  font-family: inherit;
+}
+
 .step-tool-args {
   margin: 8px 0 4px;
   overflow: auto;

@@ -2265,6 +2265,31 @@ async function processNextQueueItem() {
         }
         renderMessages();
       },
+      image_progress: (value) => {
+        // Show image generation progress
+        const progress = "✨".repeat(value.completed) + "◻️".repeat(value.total - value.completed);
+        const text = `🎨 Generating image...\n${progress} [${value.completed}/${value.total}] ⏳`;
+        
+        let step = assistant.steps.find(s => s.type === "image_progress");
+        if (!step) {
+          step = { type: "image_progress", content: text, status: "running" };
+          assistant.steps.push(step);
+        } else {
+          step.content = text;
+        }
+        renderMessages();
+      },
+      image_complete: (value) => {
+        // Image generation completed
+        let step = assistant.steps.find(s => s.type === "image_progress");
+        if (step) {
+          step.content = `✅ Image generated!\n📁 ${value.path}`;
+          step.status = "done";
+        } else {
+          assistant.steps.push({ type: "image_progress", content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
+        }
+        renderMessages();
+      },
       tool_result: (value) => {
         assistant.waiting = true; // Keep loading spinner active until next round chunks arrive
         for (let i = assistant.steps.length - 1; i >= 0; i--) {
@@ -2626,6 +2651,11 @@ function renderStep(step) {
         </details>
       ` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
+    }
+    case "image_progress": {
+      const statusClass = step.status === "done" ? "done" : "running";
+      const icon = step.status === "done" ? "✅" : "🎨";
+      return `<div class="step step-image-progress ${statusClass}"><pre>${icon} ${escapeHtml(step.content || "")}</pre></div>`;
     }
     default:
       return "";

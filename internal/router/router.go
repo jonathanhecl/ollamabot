@@ -148,7 +148,7 @@ func (r *Router) GenerateImage(ctx context.Context, prompt string, width, height
 		if chunk.Total > 0 && onProgress != nil {
 			onProgress(chunk.Completed, chunk.Total, "generating")
 		}
-		// Final response contains the image
+		// Final response contains the image in Response field (base64 encoded PNG)
 		if chunk.Done && chunk.Response != "" {
 			finalImage = chunk.Response
 		}
