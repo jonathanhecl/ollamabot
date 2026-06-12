@@ -729,6 +729,15 @@ h2 {
   display: block;
 }
 
+.generated-image-inline {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  display: block;
+  margin: 8px 0;
+}
+
 .step-tool-args {
   margin: 8px 0 4px;
   overflow: auto;

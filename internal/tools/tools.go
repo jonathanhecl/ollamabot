@@ -985,7 +985,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if r.imageProgressHandler != nil {
 			r.imageProgressHandler.OnComplete(genID, filePath)
 		}
-		return fmt.Sprintf("Image generated: %s", filepath.Base(filePath)), nil
+		return "Image generated successfully.", nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

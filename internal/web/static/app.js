@@ -2296,6 +2296,10 @@ async function processNextQueueItem() {
         } else if (!step) {
           assistant.steps.push({ type: "image_progress", genID: genID, content: `Image generated!`, imageURL: value.path, status: "done" });
         }
+        // Inject the generated image directly into the assistant message content
+        if (value.path && !assistant.content.includes(value.path)) {
+          assistant.content += `\n\n<img src="${value.path}" alt="Generated image" class="generated-image-inline" />\n\n`;
+        }
         renderMessages();
       },
       image_error: (value) => {
