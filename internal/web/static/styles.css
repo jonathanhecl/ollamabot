@@ -577,6 +577,18 @@ h2 {
   color: var(--muted);
 }
 
+/* Smooth expand/collapse for thinking details */
+.step-thinking pre {
+  transition: max-height 0.3s ease, opacity 0.25s ease;
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+}
+.step-thinking[open] pre {
+  max-height: 500px;
+  opacity: 1;
+}
+
 /* --- Tool call step (model decides to call) --- */
 .step-tool-call {
   border: 1px solid rgba(214, 255, 95, 0.2);

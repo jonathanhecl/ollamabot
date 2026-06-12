@@ -647,6 +647,49 @@ if (els.messages) {
       }
       return;
     }
+
+    // Smooth animated expand/collapse for thinking blocks
+    const thinkingSummary = e.target.closest(".step-thinking summary");
+    if (thinkingSummary) {
+      const details = thinkingSummary.closest("details");
+      if (!details) return;
+      const pre = details.querySelector("pre");
+      if (!pre) return;
+
+      e.preventDefault();
+      if (details.open) {
+        // Closing
+        pre.style.maxHeight = pre.scrollHeight + "px";
+        pre.style.opacity = "1";
+        requestAnimationFrame(() => {
+          pre.style.transition = "max-height 0.3s ease, opacity 0.25s ease";
+          pre.style.maxHeight = "0";
+          pre.style.opacity = "0";
+        });
+        setTimeout(() => {
+          details.open = false;
+          pre.style.transition = "";
+          pre.style.maxHeight = "";
+          pre.style.opacity = "";
+        }, 300);
+      } else {
+        // Opening
+        details.open = true;
+        pre.style.maxHeight = "0";
+        pre.style.opacity = "0";
+        requestAnimationFrame(() => {
+          pre.style.transition = "max-height 0.3s ease, opacity 0.25s ease";
+          pre.style.maxHeight = pre.scrollHeight + "px";
+          pre.style.opacity = "1";
+        });
+        setTimeout(() => {
+          pre.style.transition = "";
+          pre.style.maxHeight = "";
+          pre.style.opacity = "";
+        }, 300);
+      }
+      return;
+    }
   });
 }
 els.toggleSidebar.addEventListener("click", () => {
@@ -2579,7 +2622,11 @@ function renderMessages() {
     const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
 
     // Build steps HTML (interleaved thinking / tool blocks).
-    const stepsHtml = (message.steps || []).map((s) => renderStep(s, effectiveStreaming)).join("");
+    const steps = message.steps || [];
+    const stepsHtml = steps.map((s, idx) => {
+      const isLastStep = idx === steps.length - 1;
+      return renderStep(s, effectiveStreaming, isLastStep);
+    }).join("");
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
     let legacyHtml = "";
     if (!message.steps?.length) {
@@ -2630,23 +2677,18 @@ function renderMessages() {
       </div>
     `;
     div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
-    // Auto-expand thinking while streaming so the user sees reasoning tokens
-    // flowing in real-time. When streaming ends the <details> renders without
-    // the `open` attribute and stays collapsed.
-    if (effectiveStreaming) {
-      const thinkingDetails = div.querySelector("details.step-thinking");
-      if (thinkingDetails) thinkingDetails.open = true;
-    }
     els.messages.appendChild(div);
     msgIdx++;
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function renderStep(step, isLive = false) {
+function renderStep(step, isLive = false, isLastStep = false) {
   switch (step.type) {
-    case "thinking":
-      return `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
+    case "thinking": {
+      const isOpen = isLive && isLastStep;
+      return `<details class="step step-thinking" ${isOpen ? "open" : ""}><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
+    }
     case "tool_call": {
       const fn = step.call?.function || {};
       const name = fn.name || "unknown";
