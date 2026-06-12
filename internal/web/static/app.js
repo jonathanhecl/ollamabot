@@ -2614,7 +2614,7 @@ function renderMessages() {
     const isLastMsg = message === grouped[grouped.length - 1];
     const isRemoteProcessing = lastAssistantInProgress && isLastMsg;
     const effectiveWaiting = message.waiting || isRemoteProcessing;
-    const effectiveStreaming = message.streaming;
+    const effectiveStreaming = message.streaming || isRemoteProcessing;
 
     div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
     const pending = effectiveWaiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
@@ -3286,15 +3286,14 @@ function normalizeRawMessages(rawMessages) {
     if (msg.thinking) {
       steps = [{ type: "thinking", content: msg.thinking }, ...steps];
     }
-    if (!steps.length) {
-      const tc = msg.toolCalls || msg.tool_calls || [];
-      const tr = msg.toolResults || msg.tool_results || [];
-      for (const call of tc) {
-        steps.push({ type: "tool_call", call });
-      }
-      for (const res of tr) {
-        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
-      }
+    // Always convert legacy tool_calls / tool_results if present
+    const tc = msg.toolCalls || msg.tool_calls || [];
+    const tr = msg.toolResults || msg.tool_results || [];
+    for (const call of tc) {
+      steps.push({ type: "tool_call", call });
+    }
+    for (const res of tr) {
+      steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
     }
     return {
       role: msg.role || "user",

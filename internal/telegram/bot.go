@@ -1637,12 +1637,23 @@ func (h *telegramStreamHandler) notifyUpdate(force bool) {
 		return
 	}
 
+	// Build snapshot: inject current-turn steps into the active assistant message
+	// so the web UI sees them during live streaming.
+	snapMessages := make([]rawMsg, len(h.activeMessages))
+	copy(snapMessages, h.activeMessages)
+	if len(snapMessages) > 0 {
+		lastIdx := len(snapMessages) - 1
+		if snapMessages[lastIdx].Role == "assistant" {
+			snapMessages[lastIdx].Steps = h.currentTurn.steps
+		}
+	}
+
 	var allMessages []json.RawMessage
 	for _, m := range h.baseHistory {
 		rawBytes, _ := json.Marshal(m)
 		allMessages = append(allMessages, rawBytes)
 	}
-	for _, m := range h.activeMessages {
+	for _, m := range snapMessages {
 		rawBytes, _ := json.Marshal(m)
 		allMessages = append(allMessages, rawBytes)
 	}
