@@ -1817,6 +1817,16 @@ func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
 	}
 }
 
+func (h *webImageProgressHandler) OnError(genID string, err error) {
+	writeSSE(h.w, "image_error", map[string]any{
+		"error":  err.Error(),
+		"gen_id": genID,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
 func selectDefaultOption(options []string) string {
 	if len(options) == 0 {
 		return ""

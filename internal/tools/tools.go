@@ -47,6 +47,7 @@ type Registry struct {
 type ImageProgressHandler interface {
 	OnProgress(genID string, completed, total int, message string)
 	OnComplete(genID string, imagePath string)
+	OnError(genID string, err error)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -957,11 +958,18 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		})
 
 		if err != nil {
+			if r.imageProgressHandler != nil {
+				r.imageProgressHandler.OnError(genID, err)
+			}
 			return "", fmt.Errorf("image generation failed: %w", err)
 		}
 
 		if imageData == "" {
-			return "", fmt.Errorf("no image data received from model")
+			noImageErr := fmt.Errorf("no image data received from model")
+			if r.imageProgressHandler != nil {
+				r.imageProgressHandler.OnError(genID, noImageErr)
+			}
+			return "", noImageErr
 		}
 
 		// Decode base64 and save

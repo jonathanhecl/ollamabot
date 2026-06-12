@@ -2279,7 +2279,8 @@ async function processNextQueueItem() {
         if (!step) {
           step = { type: "image_progress", genID: genID, content: text, status: "running" };
           assistant.steps.push(step);
-        } else {
+        } else if (step.status === "running") {
+          // Only update if still running - don't reactivate done/error bars
           step.content = text;
         }
         renderMessages();
@@ -2288,11 +2289,23 @@ async function processNextQueueItem() {
         // Image generation completed - find by genID
         const genID = value.gen_id || "unknown";
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
-        if (step) {
+        if (step && step.status !== "error") {
           step.content = `✅ Image generated!\n📁 ${value.path}`;
           step.status = "done";
-        } else {
+        } else if (!step) {
           assistant.steps.push({ type: "image_progress", genID: genID, content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
+        }
+        renderMessages();
+      },
+      image_error: (value) => {
+        // Image generation failed - find by genID
+        const genID = value.gen_id || "unknown";
+        let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
+        if (step) {
+          step.content = `❌ Image generation failed\n${value.error}`;
+          step.status = "error";
+        } else {
+          assistant.steps.push({ type: "image_progress", genID: genID, content: `❌ Image generation failed\n${value.error}`, status: "error" });
         }
         renderMessages();
       },
@@ -2659,8 +2672,8 @@ function renderStep(step) {
       return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
     }
     case "image_progress": {
-      const statusClass = step.status === "done" ? "done" : "running";
-      const icon = step.status === "done" ? "✅" : "🎨";
+      const statusClass = step.status === "done" ? "done" : step.status === "error" ? "error" : "running";
+      const icon = step.status === "done" ? "✅" : step.status === "error" ? "❌" : "🎨";
       return `<div class="step step-image-progress ${statusClass}"><pre>${icon} ${escapeHtml(step.content || "")}</pre></div>`;
     }
     default:

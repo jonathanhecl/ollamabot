@@ -2086,6 +2086,14 @@ func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string
 	}
 }
 
+func (h *telegramImageProgressHandler) OnError(genID string, err error) {
+	// Edit message to show error
+	if msgID, exists := h.msgIDs[genID]; exists {
+		text := "❌ *Image generation failed*\n" + err.Error()
+		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
+	}
+}
+
 type telegramApprovalHandler struct {
 	bot    *Bot
 	chatID int64
