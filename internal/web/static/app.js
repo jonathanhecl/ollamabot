@@ -2540,15 +2540,6 @@ function renderPreProcessingContent(content) {
 }
 
 function renderMessages() {
-  // Save open thinking states before clearing so user-opened blocks stay open
-  const openThinkingIndices = new Set();
-  const oldArticles = els.messages.querySelectorAll("article");
-  oldArticles.forEach((article, idx) => {
-    if (article.querySelector("details.step-thinking[open]")) {
-      openThinkingIndices.add(idx);
-    }
-  });
-
   els.messages.innerHTML = "";
   const grouped = groupMessagesAndTools(state.messages);
 
@@ -2639,13 +2630,9 @@ function renderMessages() {
       </div>
     `;
     div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
-    // Restore user-opened thinking blocks.
-    if (openThinkingIndices.has(msgIdx)) {
-      const thinkingDetails = div.querySelector("details.step-thinking");
-      if (thinkingDetails) thinkingDetails.open = true;
-    }
     // Auto-expand thinking while streaming so the user sees reasoning tokens
-    // flowing in real-time without clicking.
+    // flowing in real-time. When streaming ends the <details> renders without
+    // the `open` attribute and stays collapsed.
     if (effectiveStreaming) {
       const thinkingDetails = div.querySelector("details.step-thinking");
       if (thinkingDetails) thinkingDetails.open = true;
