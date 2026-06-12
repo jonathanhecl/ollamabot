@@ -2571,7 +2571,7 @@ function renderMessages() {
     const isLastMsg = message === grouped[grouped.length - 1];
     const isRemoteProcessing = lastAssistantInProgress && isLastMsg;
     const effectiveWaiting = message.waiting || isRemoteProcessing;
-    const effectiveStreaming = message.streaming || isRemoteProcessing;
+    const effectiveStreaming = message.streaming;
 
     div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
     const pending = effectiveWaiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
