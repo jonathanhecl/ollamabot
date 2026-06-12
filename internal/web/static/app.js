@@ -2288,17 +2288,15 @@ async function processNextQueueItem() {
       image_complete: (value) => {
         // Image generation completed - find by genID
         const genID = value.gen_id || "unknown";
+        // Convert relative path to absolute URL using current page origin
+        const absURL = value.path ? new URL(value.path, window.location.origin).href : "";
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (step && step.status !== "error") {
           step.content = `Image generated!`;
-          step.imageURL = value.path;
+          step.imageURL = absURL;
           step.status = "done";
         } else if (!step) {
-          assistant.steps.push({ type: "image_progress", genID: genID, content: `Image generated!`, imageURL: value.path, status: "done" });
-        }
-        // Inject the generated image directly into the assistant message content
-        if (value.path && !assistant.content.includes(value.path)) {
-          assistant.content += `\n\n<img src="${value.path}" alt="Generated image" class="generated-image-inline" />\n\n`;
+          assistant.steps.push({ type: "image_progress", genID: genID, content: `Image generated!`, imageURL: absURL, status: "done" });
         }
         renderMessages();
       },
