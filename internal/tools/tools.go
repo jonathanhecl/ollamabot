@@ -934,21 +934,23 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 					r.imageProgressHandler.OnProgress(genID, chunk.Completed, chunk.Total, "generating")
 				}
 			}
-			// Debug logging
+			// Debug logging for done chunk
 			if chunk.Done {
-				log.Printf("[generate_image] Chunk done: Response len=%d, Images len=%d", len(chunk.Response), len(chunk.Images))
-				if chunk.Response != "" {
-					log.Printf("[generate_image] Response starts with: %.50s...", chunk.Response)
+				log.Printf("[generate_image] Chunk done: Response len=%d, Images len=%d, Done=%v", len(chunk.Response), len(chunk.Images), chunk.Done)
+			}
+			// Accumulate image data from Response field (may come across multiple chunks)
+			if chunk.Response != "" {
+				imageData += chunk.Response
+				if chunk.Done {
+					log.Printf("[generate_image] Accumulated Response: %.50s...", imageData)
 				}
 			}
-			// Image data comes in Response field (base64 encoded PNG)
-			if chunk.Done && chunk.Response != "" {
-				imageData = chunk.Response
-			}
-			// Also check Images field as fallback
-			if chunk.Done && imageData == "" && len(chunk.Images) > 0 && chunk.Images[0] != "" {
-				imageData = chunk.Images[0]
-				log.Printf("[generate_image] Got image from Images field instead")
+			// Also accumulate from Images field if present
+			if len(chunk.Images) > 0 && chunk.Images[0] != "" {
+				imageData += chunk.Images[0]
+				if chunk.Done {
+					log.Printf("[generate_image] Accumulated from Images field")
+				}
 			}
 			_ = progressMsgID // may be used by handler
 			return nil
