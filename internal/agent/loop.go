@@ -38,6 +38,11 @@ type Agent struct {
 }
 
 func NewAgent(cfg config.Config, client *ollama.Client, registry *tools.Registry) *Agent {
+	// Configure image generation model in registry if available
+	if registry != nil {
+		registry.SetImageModel(cfg.OllamaModelImage)
+		registry.SetImageSteps(cfg.OllamaImageSteps)
+	}
 	return &Agent{
 		cfg:      cfg,
 		client:   client,
@@ -132,6 +137,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.",
+			})
+		}
+
+		// Inject image generation capability instruction
+		if strings.TrimSpace(a.cfg.OllamaModelImage) != "" {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for square images, 1024x512 for landscape/wide shots, 512x1024 for portrait/tall images, or 768x768 for medium size. The tool will generate the image and return the file path.",
 			})
 		}
 

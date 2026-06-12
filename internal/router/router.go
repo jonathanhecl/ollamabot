@@ -22,6 +22,8 @@ type Config struct {
 	MainModel   string
 	VisionModel string
 	AudioModel  string
+	ImageModel  string
+	ImageSteps  int
 	// HasCapability reports whether a model supports a capability ("audio" or
 	// "vision"), based on probed/confirmed data. Nil means capabilities are
 	// unknown and routing falls back to config-equality heuristics.
@@ -96,6 +98,70 @@ func (r *Router) audioModel() string {
 		return r.cfg.AudioModel
 	}
 	return r.cfg.MainModel
+}
+
+// imageModel returns the effective model to use for image generation.
+func (r *Router) imageModel() string {
+	if strings.TrimSpace(r.cfg.ImageModel) != "" {
+		return r.cfg.ImageModel
+	}
+	return r.cfg.MainModel
+}
+
+// imageSteps returns the number of steps for image generation.
+func (r *Router) imageSteps() int {
+	if r.cfg.ImageSteps > 0 {
+		return r.cfg.ImageSteps
+	}
+	return 4
+}
+
+// ImageProgressCallback is called during image generation with progress updates
+type ImageProgressCallback func(completed, total int, status string)
+
+// GenerateImage generates an image using the configured image model with streaming progress.
+// Returns the base64-encoded image data.
+func (r *Router) GenerateImage(ctx context.Context, prompt string, width, height, seed int, onProgress ImageProgressCallback) (string, error) {
+	model := r.imageModel()
+	steps := r.imageSteps()
+
+	if strings.TrimSpace(model) == "" {
+		return "", fmt.Errorf("no image model configured")
+	}
+
+	log.Printf("[Router] GenerateImage: model=%q, prompt_len=%d, size=%dx%d, steps=%d", model, len(prompt), width, height, steps)
+
+	req := ollama.GenerateRequest{
+		Model:  model,
+		Prompt: prompt,
+		Options: map[string]any{
+			"width":  width,
+			"height": height,
+			"steps":  steps,
+			"seed":   seed,
+		},
+	}
+
+	var finalImage string
+	err := r.client.GenerateStream(ctx, req, func(chunk ollama.GenerateResponse) error {
+		// Progress update
+		if chunk.Total > 0 && onProgress != nil {
+			onProgress(chunk.Completed, chunk.Total, "generating")
+		}
+		// Final response contains the image
+		if chunk.Done && chunk.Response != "" {
+			finalImage = chunk.Response
+		}
+		return nil
+	})
+
+	if err != nil {
+		log.Printf("[Router] GenerateImage FAILED: %v", err)
+		return "", fmt.Errorf("image generation (%s): %w", model, err)
+	}
+
+	log.Printf("[Router] GenerateImage OK: result_len=%d", len(finalImage))
+	return finalImage, nil
 }
 
 // Decide reports how attachments of the given kind ("image" or "audio") must

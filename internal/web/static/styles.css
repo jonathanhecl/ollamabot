@@ -1441,6 +1441,12 @@ textarea {
   box-shadow: 0 0 8px rgba(99, 210, 255, 0.4);
 }
 
+.active-role-pill.image {
+  background: #ff9f40;
+  color: #180a13;
+  box-shadow: 0 0 8px rgba(255, 159, 64, 0.4);
+}
+
 .model-loaded-badge {
   display: inline-flex;
   align-items: center;
@@ -1641,6 +1647,14 @@ textarea {
   border-color: var(--accent-2);
   opacity: 1;
   box-shadow: 0 0 8px rgba(99, 210, 255, 0.35);
+}
+
+.role-btn.active[data-role="image"] {
+  background: #ff9f40;
+  color: #180a13;
+  border-color: #ff9f40;
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(255, 159, 64, 0.35);
 }
 
 .role-badge {

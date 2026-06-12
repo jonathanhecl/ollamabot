@@ -18,6 +18,8 @@ type Config struct {
 	OllamaModelVision            string
 	OllamaModelAudio             string
 	OllamaModelEmbed             string
+	OllamaModelImage             string
+	OllamaImageSteps             int
 	TelegramBotToken             string
 	TelegramAuthorizedIDs        []string
 	TelegramSessionExpiryMin     int
@@ -98,6 +100,15 @@ func Load(path string) (Config, error) {
 	cfg.OllamaModelVision = apply("OLLAMA_MODEL_VISION")
 	cfg.OllamaModelAudio = apply("OLLAMA_MODEL_AUDIO")
 	cfg.OllamaModelEmbed = apply("OLLAMA_MODEL_EMBED")
+	cfg.OllamaModelImage = apply("OLLAMA_MODEL_IMAGE")
+	if value := apply("OLLAMA_IMAGE_STEPS"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil {
+			cfg.OllamaImageSteps = val
+		}
+	}
+	if cfg.OllamaImageSteps <= 0 {
+		cfg.OllamaImageSteps = 4
+	}
 	cfg.TelegramBotToken = apply("TELEGRAM_BOT_TOKEN")
 	cfg.TelegramAuthorizedIDs = splitCSV(apply("TELEGRAM_AUTHORIZED_IDS"))
 	if value := apply("TELEGRAM_SESSION_EXPIRY_MIN"); value != "" {
@@ -215,7 +226,7 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 func SaveBasic(path string, cfg Config) error {
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nTELEGRAM_STARTUP_NOTIFICATION=%t\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nSERVER_PASSWORD=%s\n",
+		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nOLLAMA_MODEL_IMAGE=%s\nOLLAMA_IMAGE_STEPS=%d\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nTELEGRAM_STARTUP_NOTIFICATION=%t\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nSERVER_PASSWORD=%s\n",
 		cfg.OllamaBaseURL,
 		cfg.ServerEnabled,
 		cfg.ServerPort,
@@ -227,6 +238,8 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.OllamaModelVision,
 		cfg.OllamaModelAudio,
 		cfg.OllamaModelEmbed,
+		cfg.OllamaModelImage,
+		cfg.OllamaImageSteps,
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		cfg.TelegramSessionExpiryMin,

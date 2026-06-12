@@ -2,9 +2,11 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -36,6 +38,14 @@ type Registry struct {
 	clarificationHandler ClarificationHandler
 	skillsPath           string
 	searchCfg            SearchConfig
+	imageModel           string
+	imageSteps           int
+}
+
+// ImageProgressHandler is called during image generation with progress updates
+type ImageProgressHandler interface {
+	OnProgress(completed, total int, message string)
+	OnComplete(imagePath string)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -51,6 +61,16 @@ func (r *Registry) SetClarificationHandler(h ClarificationHandler) {
 // SetSkillsPath assigns the skills directory path.
 func (r *Registry) SetSkillsPath(p string) {
 	r.skillsPath = p
+}
+
+// SetImageModel assigns the image generation model.
+func (r *Registry) SetImageModel(model string) {
+	r.imageModel = model
+}
+
+// SetImageSteps assigns the image generation steps.
+func (r *Registry) SetImageSteps(steps int) {
+	r.imageSteps = steps
 }
 
 // NewRegistry creates a registry with the given feature toggles.
@@ -467,6 +487,43 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	// Register Generate Image Tool (enabled when image model is configured)
+	r.enabled["generate_image"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "generate_image",
+			Description: "Generate an image using a diffusion model (Flux, etc.). Use this when the user explicitly or implicitly requests image generation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'). The agent should choose appropriate resolution: 512x512 for square/portrait, 1024x512 for landscape, 512x1024 for tall/portrait. Returns the path to the generated image file.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"prompt": map[string]any{
+						"type":        "string",
+						"description": "Detailed description of the image to generate. Be specific about subject, style, lighting, mood, colors.",
+					},
+					"width": map[string]any{
+						"type":        "integer",
+						"description": "Image width in pixels. Options: 512 (default), 768, 1024.",
+						"enum":        []int{512, 768, 1024},
+						"default":     512,
+					},
+					"height": map[string]any{
+						"type":        "integer",
+						"description": "Image height in pixels. Options: 512 (default), 768, 1024. Choose based on desired aspect ratio: 1024x512 for landscape, 512x1024 for portrait, 512x512 for square.",
+						"enum":        []int{512, 768, 1024},
+						"default":     512,
+					},
+					"seed": map[string]any{
+						"type":        "integer",
+						"description": "Random seed for reproducibility. Use 0 for random (default).",
+						"default":     0,
+					},
+				},
+				"required": []string{"prompt"},
+			},
+		},
+	})
+
 	return r
 }
 
@@ -790,6 +847,104 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("no clarification handler configured")
 		}
 		return r.clarificationHandler.RequestClarification(ctx, question, options)
+	case "generate_image":
+		prompt, _ := args["prompt"].(string)
+		if prompt == "" {
+			return "", fmt.Errorf("missing prompt")
+		}
+		width := 512
+		height := 512
+		seed := 0
+		if v, ok := args["width"]; ok {
+			switch n := v.(type) {
+			case float64:
+				width = int(n)
+			case int:
+				width = n
+			}
+		}
+		if v, ok := args["height"]; ok {
+			switch n := v.(type) {
+			case float64:
+				height = int(n)
+			case int:
+				height = n
+			}
+		}
+		if v, ok := args["seed"]; ok {
+			switch n := v.(type) {
+			case float64:
+				seed = int(n)
+			case int:
+				seed = n
+			}
+		}
+
+		// Check if image model is configured
+		if strings.TrimSpace(r.imageModel) == "" {
+			return "", fmt.Errorf("no image generation model configured - please set OLLAMA_MODEL_IMAGE in settings")
+		}
+
+		// Create generations directory if not exists
+		genDir := filepath.Join(r.workspace, "generations")
+		if err := os.MkdirAll(genDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create generations directory: %w", err)
+		}
+
+		// Generate unique filename
+		timestamp := time.Now().Format("20060102_150405")
+		filename := fmt.Sprintf("generated_%s_%dx%d.png", timestamp, width, height)
+		filepath := filepath.Join(genDir, filename)
+
+		// Call image generation via client
+		req := ollama.GenerateRequest{
+			Model:  r.imageModel,
+			Prompt: prompt,
+			Options: map[string]any{
+				"width":  width,
+				"height": height,
+				"steps":  r.imageSteps,
+				"seed":   seed,
+			},
+		}
+
+		var imageData string
+		steps := r.imageSteps
+		if steps <= 0 {
+			steps = 4
+		}
+
+		err := r.client.GenerateStream(ctx, req, func(chunk ollama.GenerateResponse) error {
+			if chunk.Total > 0 {
+				// Progress is handled by the handler, we just collect data
+				log.Printf("[generate_image] Progress: %d/%d", chunk.Completed, chunk.Total)
+			}
+			if chunk.Done && chunk.Response != "" {
+				imageData = chunk.Response
+			}
+			return nil
+		})
+
+		if err != nil {
+			return "", fmt.Errorf("image generation failed: %w", err)
+		}
+
+		if imageData == "" {
+			return "", fmt.Errorf("no image data received from model")
+		}
+
+		// Decode base64 and save
+		imageBytes, err := base64.StdEncoding.DecodeString(imageData)
+		if err != nil {
+			return "", fmt.Errorf("failed to decode image data: %w", err)
+		}
+
+		if err := os.WriteFile(filepath, imageBytes, 0644); err != nil {
+			return "", fmt.Errorf("failed to save image: %w", err)
+		}
+
+		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filepath, len(imageBytes))
+		return fmt.Sprintf("Image generated successfully: %s", filepath), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

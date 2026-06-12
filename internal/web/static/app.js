@@ -89,6 +89,8 @@ const state = {
   visionModel: localStorage.getItem("ollamabot.visionModel") || "",
   audioModel: localStorage.getItem("ollamabot.audioModel") || "",
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
+  imageModel: localStorage.getItem("ollamabot.imageModel") || "",
+  imageSteps: parseInt(localStorage.getItem("ollamabot.imageSteps"), 10) || 4,
   learningModel: localStorage.getItem("ollamabot.learningModel") || "",
   subagentModel: localStorage.getItem("ollamabot.subagentModel") || "",
   messages: [],
@@ -1258,9 +1260,13 @@ async function loadSettings() {
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
+  if (state.settings.model_image) state.imageModel = state.settings.model_image;
+  if (state.settings.image_steps) state.imageSteps = state.settings.image_steps;
   localStorage.setItem("ollamabot.visionModel", state.visionModel);
   localStorage.setItem("ollamabot.audioModel", state.audioModel);
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
+  localStorage.setItem("ollamabot.imageModel", state.imageModel);
+  localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
 }
 
 async function saveSettings(event) {
@@ -1296,6 +1302,8 @@ async function saveSettings(event) {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
+      model_image: state.imageModel,
+      image_steps: state.imageSteps || 4,
       web_search_enabled: webSearchEnabled,
       search_providers: searchProvidersCsv,
       brave_search_api_key: braveKey,
@@ -1350,6 +1358,8 @@ async function saveRoleModels() {
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
+      model_image: state.imageModel,
+      image_steps: state.imageSteps || 4,
       web_search_enabled: state.settings.web_search_enabled || false,
       search_providers: state.settings.search_providers || "ddg",
       brave_search_api_key: state.settings.brave_search_api_key || "",
@@ -1575,6 +1585,7 @@ function renderModels() {
     const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
     const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
     const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
+    const canImage = model.capabilities?.image === "comprobado" || model.capabilities?.image === "inferido";
 
     const isMain = model.name === state.activeModel;
     const isLearning = model.name === state.learningModel;
@@ -1582,7 +1593,8 @@ function renderModels() {
     const isVision = model.name === state.visionModel || (isMain && !state.visionModel && canVision);
     const isAudio = model.name === state.audioModel || (isMain && !state.audioModel && canAudio);
     const isEmbed = model.name === state.embeddingsModel;
-    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !isLearning && !isSubagent;
+    const isImage = model.name === state.imageModel;
+    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !canImage && !isLearning && !isSubagent;
 
     const card = document.createElement("article");
     card.className = `model-card ${isMain ? "selected" : ""} ${isUseless ? "useless" : ""}`;
@@ -1611,6 +1623,7 @@ function renderModels() {
     if (isVision) activeRolesHtml += `<span class="active-role-pill vision" title="This model is assigned to the VISION role">Vision</span>`;
     if (isAudio) activeRolesHtml += `<span class="active-role-pill audio" title="This model is assigned to the AUDIO role">Audio</span>`;
     if (isEmbed) activeRolesHtml += `<span class="active-role-pill embed" title="This model is assigned to the EMBEDDINGS role">Embed</span>`;
+    if (isImage) activeRolesHtml += `<span class="active-role-pill image" title="This model is assigned to the IMAGE GENERATION role" style="background:#ff9f40;color:#180a13;box-shadow:0 0 8px rgba(255,159,64,0.4);">Image</span>`;
     const activeRolesContainer = activeRolesHtml ? `<div class="active-roles-container">${activeRolesHtml}</div>` : "";
 
     const statusBadgeHtml = model.loaded ?
@@ -1631,6 +1644,9 @@ function renderModels() {
     }
     if (canEmbed) {
       roleButtonsHtml += `<button class="choose role-btn ${isEmbed ? "active" : ""}" data-role="embeddings" data-model="${escapeAttr(model.name)}">🔗 Embed</button>`;
+    }
+    if (canImage) {
+      roleButtonsHtml += `<button class="choose role-btn ${isImage ? "active" : ""}" data-role="image" data-model="${escapeAttr(model.name)}">🎨 Image</button>`;
     }
 
     const roleButtonsContainer = roleButtonsHtml ? `
@@ -1678,8 +1694,8 @@ function renderModels() {
         renderActive();
         renderModels();
       } else {
-        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : "embeddingsModel";
-        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : "ollamabot.embeddingsModel";
+        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : "embeddingsModel";
+        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : "ollamabot.embeddingsModel";
         if (state[stateKey] === model) {
           state[stateKey] = "";
           localStorage.setItem(lsKey, "");
@@ -1748,6 +1764,14 @@ function renderRoleAssignments() {
       value: state.embeddingsModel,
       required: false,
       fallback: "disabled"
+    },
+    {
+      id: "image",
+      name: "🎨 Image",
+      desc: "Generates images using diffusion models (Flux, etc.). Requires IMAGE capability.",
+      value: state.imageModel,
+      required: false,
+      fallback: "disabled"
     }
   ];
 
@@ -1783,8 +1807,8 @@ function renderRoleAssignments() {
   container.querySelectorAll(".role-unassign-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const role = btn.dataset.role;
-      const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : "embeddingsModel";
-      const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : "ollamabot.embeddingsModel";
+      const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : "embeddingsModel";
+      const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : "ollamabot.embeddingsModel";
 
       state[stateKey] = "";
       localStorage.setItem(lsKey, "");

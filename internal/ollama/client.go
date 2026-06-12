@@ -100,6 +100,53 @@ func (c *Client) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, er
 	return out, err
 }
 
+// Generate calls /api/generate for image generation models (non-streaming)
+func (c *Client) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
+	req.Stream = boolPtr(false)
+	var out GenerateResponse
+	err := c.do(ctx, http.MethodPost, "/api/generate", req, &out)
+	return out, err
+}
+
+// GenerateStream calls /api/generate with streaming for image generation models
+func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChunk func(GenerateResponse) error) error {
+	req.Stream = boolPtr(true)
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/generate", bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ollama POST /api/generate failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	decoder := json.NewDecoder(resp.Body)
+	for {
+		var chunk GenerateResponse
+		if err := decoder.Decode(&chunk); err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if err := onChunk(chunk); err != nil {
+			return err
+		}
+		if chunk.Done {
+			return nil
+		}
+	}
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
 	if body != nil {

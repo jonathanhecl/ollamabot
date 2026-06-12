@@ -89,6 +89,8 @@ type SettingsResponse struct {
 	ModelVision                  string `json:"model_vision"`
 	ModelAudio                   string `json:"model_audio"`
 	ModelEmbeddings              string `json:"model_embeddings"`
+	ModelImage                   string `json:"model_image"`
+	ImageSteps                   int    `json:"image_steps"`
 	Workspace                    string `json:"workspace"`
 	SessionsPath                 string `json:"sessions_path"`
 	MemoryPath                   string `json:"memory_path"`
@@ -341,6 +343,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
 	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
+	s.cfg.OllamaModelImage = strings.TrimSpace(input.ModelImage)
+	s.cfg.OllamaImageSteps = input.ImageSteps
+	if s.cfg.OllamaImageSteps <= 0 {
+		s.cfg.OllamaImageSteps = 4
+	}
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
 	s.cfg.SessionAutoName = input.SessionAutoName
@@ -536,6 +543,8 @@ func routerConfig(cfg config.Config) router.Config {
 		MainModel:   cfg.OllamaDefaultModel,
 		VisionModel: cfg.OllamaModelVision,
 		AudioModel:  cfg.OllamaModelAudio,
+		ImageModel:  cfg.OllamaModelImage,
+		ImageSteps:  cfg.OllamaImageSteps,
 	}
 }
 
@@ -1402,6 +1411,8 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelVision:                  cfg.OllamaModelVision,
 		ModelAudio:                   cfg.OllamaModelAudio,
 		ModelEmbeddings:              cfg.OllamaModelEmbed,
+		ModelImage:                   cfg.OllamaModelImage,
+		ImageSteps:                   cfg.OllamaImageSteps,
 		Workspace:                    cfg.Workspace,
 		SessionsPath:                 cfg.SessionsPath,
 		MemoryPath:                   cfg.MemoryPath,

@@ -16,7 +16,7 @@ const (
 	Pending   Status = "pendiente"
 )
 
-var Known = []string{"completion", "tools", "thinking", "vision", "embedding", "audio", "video"}
+var Known = []string{"completion", "tools", "thinking", "vision", "embedding", "audio", "video", "image"}
 
 type ModelReport struct {
 	Name             string
