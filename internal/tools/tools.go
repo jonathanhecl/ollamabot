@@ -45,9 +45,8 @@ type Registry struct {
 
 // ImageProgressHandler is called during image generation with progress updates
 type ImageProgressHandler interface {
-	OnProgress(completed, total int, message string)
-	OnComplete(imagePath string)
-	SetGenerationID(id string)
+	OnProgress(genID string, completed, total int, message string)
+	OnComplete(genID string, imagePath string)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -894,9 +893,6 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 
 		// Generate unique ID for this generation
 		genID := fmt.Sprintf("gen_%d", time.Now().UnixNano())
-		if r.imageProgressHandler != nil {
-			r.imageProgressHandler.SetGenerationID(genID)
-		}
 
 		// Create generations directory if not exists
 		genDir := filepath.Join(r.workspace, "generations")
@@ -935,7 +931,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				log.Printf("[generate_image] Progress: %d/%d", chunk.Completed, chunk.Total)
 				// Call progress handler if set (e.g., for Telegram/Web UI updates)
 				if r.imageProgressHandler != nil {
-					r.imageProgressHandler.OnProgress(chunk.Completed, chunk.Total, "generating")
+					r.imageProgressHandler.OnProgress(genID, chunk.Completed, chunk.Total, "generating")
 				}
 			}
 			// Debug logging
@@ -979,7 +975,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filepath, len(imageBytes))
 		// Call completion handler if set
 		if r.imageProgressHandler != nil {
-			r.imageProgressHandler.OnComplete(filepath)
+			r.imageProgressHandler.OnComplete(genID, filepath)
 		}
 		return fmt.Sprintf("Image generated successfully: %s", filepath), nil
 	default:

@@ -1793,29 +1793,24 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 type webImageProgressHandler struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
-	genID   string
 }
 
-func (h *webImageProgressHandler) SetGenerationID(id string) {
-	h.genID = id
-}
-
-func (h *webImageProgressHandler) OnProgress(completed, total int, status string) {
+func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
 	writeSSE(h.w, "image_progress", map[string]any{
 		"completed": completed,
 		"total":     total,
 		"status":    status,
-		"gen_id":    h.genID,
+		"gen_id":    genID,
 	})
 	if h.flusher != nil {
 		h.flusher.Flush()
 	}
 }
 
-func (h *webImageProgressHandler) OnComplete(imagePath string) {
+func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
 	writeSSE(h.w, "image_complete", map[string]any{
 		"path":   imagePath,
-		"gen_id": h.genID,
+		"gen_id": genID,
 	})
 	if h.flusher != nil {
 		h.flusher.Flush()

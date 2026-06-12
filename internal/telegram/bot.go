@@ -1021,6 +1021,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	registry.SetImageProgressHandler(&telegramImageProgressHandler{
 		bot:    b,
 		chatID: chatID,
+		msgIDs: make(map[string]int64),
 	})
 	a := agent.NewAgent(b.cfg, b.client, registry)
 	handler := &telegramStreamHandler{
@@ -2051,18 +2052,12 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 
 // telegramImageProgressHandler handles image generation progress updates for Telegram
 type telegramImageProgressHandler struct {
-	bot       *Bot
-	chatID    int64
-	messageID int64
-	genID     string
+	bot    *Bot
+	chatID int64
+	msgIDs map[string]int64 // genID -> messageID
 }
 
-func (h *telegramImageProgressHandler) SetGenerationID(id string) {
-	h.genID = id
-	h.messageID = 0 // Reset for new generation
-}
-
-func (h *telegramImageProgressHandler) OnProgress(completed, total int, status string) {
+func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
 	// Build fixed-width progress bar
 	filled := strings.Repeat("█", completed)
 	empty := strings.Repeat("░", total-completed)
@@ -2070,23 +2065,24 @@ func (h *telegramImageProgressHandler) OnProgress(completed, total int, status s
 
 	text := fmt.Sprintf("🎨 *Generating image...*\n`[%s%s]` %d%% (%d/%d)", filled, empty, percent, completed, total)
 
-	if h.messageID == 0 {
-		// First time: send new message
-		msgID, err := h.bot.sendMessage(h.chatID, text, 0, "Markdown")
+	msgID, exists := h.msgIDs[genID]
+	if !exists {
+		// First time for this generation: send new message
+		newMsgID, err := h.bot.sendMessage(h.chatID, text, 0, "Markdown")
 		if err == nil {
-			h.messageID = msgID
+			h.msgIDs[genID] = newMsgID
 		}
 	} else {
-		// Update existing message
-		_ = h.bot.editMessageText(h.chatID, h.messageID, text, "Markdown", nil)
+		// Update existing message for this generation
+		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
 	}
 }
 
-func (h *telegramImageProgressHandler) OnComplete(imagePath string) {
+func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string) {
 	// Edit message to show completion
-	if h.messageID != 0 {
+	if msgID, exists := h.msgIDs[genID]; exists {
 		text := "✅ *Image generated successfully!*\n📁 Saved to: " + filepath.Base(imagePath)
-		_ = h.bot.editMessageText(h.chatID, h.messageID, text, "Markdown", nil)
+		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
 	}
 }
 
