@@ -637,6 +637,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var recorder *sessions.Recorder
+	if strings.TrimSpace(input.SessionID) != "" {
+		baseHistory := loadSessionRawMessages(s.sessionStore, input.SessionID)
+		recorder = sessions.NewRecorder(s.sessionStore, input.SessionID, baseHistory, input.Model, "web")
+	}
+
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    cfg.SearchProviders,
 		BraveAPIKey:  cfg.BraveSearchAPIKey,
@@ -657,6 +663,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		sessionID: input.SessionID,
 		w:         w,
 		flusher:   flusher,
+		recorder:  recorder,
 	})
 	registry.SetSessionID(input.SessionID)
 
@@ -665,17 +672,43 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
-	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, input.Think, len(ollamaMessages))
-	err = runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, input.Think, registry, w, flusher)
+	think := agent.ShouldThink(input.Model, input.Think, SnapshotPath(s.cachePath))
+	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, think, len(ollamaMessages))
+	finalHistory, err := runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, think, registry, w, flusher, recorder)
 	if err != nil {
 		log.Printf("[Web] Agent error: %v", err)
+		if recorder != nil {
+			if _, saveErr := recorder.SnapshotAndSave(); saveErr != nil {
+				log.Printf("[Web] Failed to persist partial session snapshot: %v", saveErr)
+			}
+		}
 		writeSSE(w, "error", err.Error())
 		if flusher != nil {
 			flusher.Flush()
 		}
 	} else {
+		if recorder != nil {
+			if _, saveErr := recorder.FinalizeAndSave(finalHistory); saveErr != nil {
+				log.Printf("[Web] Failed to persist final session snapshot: %v", saveErr)
+			}
+		}
 		log.Printf("[Web] Agent completed model=%q", input.Model)
 	}
+}
+
+func loadSessionRawMessages(store *sessions.Store, sessionID string) []sessions.RawMsg {
+	sess, err := store.Get(sessionID)
+	if err != nil {
+		return nil
+	}
+	out := make([]sessions.RawMsg, 0, len(sess.Messages))
+	for _, raw := range sess.Messages {
+		var msg sessions.RawMsg
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			out = append(out, msg)
+		}
+	}
+	return out
 }
 
 type sseStreamHandler struct {
@@ -683,6 +716,7 @@ type sseStreamHandler struct {
 	flusher   http.Flusher
 	model     string
 	turnEnded bool
+	recorder  *sessions.Recorder
 }
 
 func (h *sseStreamHandler) startTurnIfNeeded() {
@@ -696,6 +730,9 @@ func (h *sseStreamHandler) startTurnIfNeeded() {
 }
 
 func (h *sseStreamHandler) OnThinking(delta string) {
+	if h.recorder != nil {
+		h.recorder.OnThinking(delta)
+	}
 	h.startTurnIfNeeded()
 	writeSSE(h.w, "thinking", delta)
 	if h.flusher != nil {
@@ -704,6 +741,9 @@ func (h *sseStreamHandler) OnThinking(delta string) {
 }
 
 func (h *sseStreamHandler) OnContent(delta string) {
+	if h.recorder != nil {
+		h.recorder.OnContent(delta)
+	}
 	h.startTurnIfNeeded()
 	writeSSE(h.w, "content", delta)
 	if h.flusher != nil {
@@ -712,6 +752,9 @@ func (h *sseStreamHandler) OnContent(delta string) {
 }
 
 func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
+	if h.recorder != nil {
+		h.recorder.OnToolCall(call)
+	}
 	h.startTurnIfNeeded()
 	writeSSE(h.w, "tool_call", call)
 	if h.flusher != nil {
@@ -720,6 +763,9 @@ func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
 }
 
 func (h *sseStreamHandler) OnToolStart(name string, args any) {
+	if h.recorder != nil {
+		h.recorder.OnToolStart(name, args)
+	}
 	log.Printf("[Web] Tool start: %s", name)
 	writeSSE(h.w, "tool_start", map[string]any{"name": name, "arguments": args})
 	if h.flusher != nil {
@@ -728,6 +774,9 @@ func (h *sseStreamHandler) OnToolStart(name string, args any) {
 }
 
 func (h *sseStreamHandler) OnToolResult(name string, result string) {
+	if h.recorder != nil {
+		h.recorder.OnToolResult(name, result)
+	}
 	log.Printf("[Web] Tool result: %s (len=%d)", name, len(result))
 	writeSSE(h.w, "tool_result", map[string]any{"name": name, "result": result})
 	if h.flusher != nil {
@@ -736,6 +785,9 @@ func (h *sseStreamHandler) OnToolResult(name string, result string) {
 }
 
 func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
+	if h.recorder != nil {
+		h.recorder.OnMediaPreProcessing(content)
+	}
 	log.Printf("[Web] Media pre-processing (len=%d)", len(content))
 	writeSSE(h.w, "media_pre_processing", content)
 	if h.flusher != nil {
@@ -744,6 +796,9 @@ func (h *sseStreamHandler) OnMediaPreProcessing(content string) {
 }
 
 func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
+	if h.recorder != nil {
+		h.recorder.OnDone(resp)
+	}
 	if resp.TotalDuration > 0 {
 		tokensPerSec := 0.0
 		if resp.EvalDuration > 0 {
@@ -771,13 +826,13 @@ func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
 }
 
 // runChatStream handles the chat streaming loop by delegating to the iterative agent.
-func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher) error {
+func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher, recorder *sessions.Recorder) ([]ollama.Message, error) {
 	a := agent.NewAgent(cfg, client, registry)
-	handler := &sseStreamHandler{w: w, flusher: flusher, model: model}
+	handler := &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
 
-	_, err := a.Run(ctx, model, messages, think, handler)
+	finalHistory, err := a.Run(ctx, model, messages, think, handler)
 	if err != nil {
-		return err
+		return finalHistory, err
 	}
 
 	// Send final done chunk to signal completion to frontend
@@ -788,7 +843,7 @@ func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client
 	if flusher != nil {
 		flusher.Flush()
 	}
-	return nil
+	return finalHistory, nil
 }
 
 // resolveMedia pre-processes the latest user message's attachments with the
@@ -1901,9 +1956,20 @@ type webImageProgressHandler struct {
 	sessionID string
 	w         http.ResponseWriter
 	flusher   http.Flusher
+	recorder  *sessions.Recorder
 }
 
 func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
+	if h.recorder != nil {
+		filled := strings.Repeat("█", completed)
+		empty := strings.Repeat("░", total-completed)
+		percent := 0
+		if total > 0 {
+			percent = (completed * 100) / total
+		}
+		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
+		h.recorder.AddOrUpdateImageStep(sessions.Step{Type: "image_progress", GenID: genID, Content: stepText, Status: "running"})
+	}
 	writeSSE(h.w, "image_progress", map[string]any{
 		"completed": completed,
 		"total":     total,
@@ -1924,6 +1990,9 @@ func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
 	} else {
 		apiURL = fmt.Sprintf("/generations/%s", baseName)
 	}
+	if h.recorder != nil {
+		h.recorder.AddOrUpdateImageStep(sessions.Step{Type: "image_progress", GenID: genID, Content: "Image generated!", ImageURL: apiURL, Status: "done"})
+	}
 	writeSSE(h.w, "image_complete", map[string]any{
 		"path":   apiURL,
 		"gen_id": genID,
@@ -1934,6 +2003,9 @@ func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
 }
 
 func (h *webImageProgressHandler) OnError(genID string, err error) {
+	if h.recorder != nil {
+		h.recorder.AddOrUpdateImageStep(sessions.Step{Type: "image_progress", GenID: genID, Content: "Image generation failed: " + err.Error(), Status: "error"})
+	}
 	writeSSE(h.w, "image_error", map[string]any{
 		"error":  err.Error(),
 		"gen_id": genID,

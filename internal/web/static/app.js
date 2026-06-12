@@ -2177,6 +2177,11 @@ async function processNextQueueItem() {
     renderMessages();
   }
 
+  if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
+    await ensureActiveSession();
+  }
+  await saveSession();
+
   let assistant = { role: "assistant", model: state.activeModel || "", channel: "web", content: "", steps: [], streaming: true, waiting: true, metrics: null };
 
   // Insert assistant response directly after the current user query in the messages list
@@ -2431,7 +2436,7 @@ async function processNextQueueItem() {
     // hack is needed here. Audio base64 is filtered out of outbound history
     // per-attachment; attachments keep their data for playback/persistence.
 
-    await saveSession();
+    await loadSession(state.activeSessionId);
     await loadModels();
 
     // Auto-generate session title if enabled and it's still a default title
@@ -3283,7 +3288,7 @@ function normalizeRawMessages(rawMessages) {
       return rest;
     });
     // Prepend thinking step if present, even when steps already exist from backend
-    if (msg.thinking) {
+    if (msg.thinking && !steps.some((s) => s.type === "thinking")) {
       steps = [{ type: "thinking", content: msg.thinking }, ...steps];
     }
     // Always convert legacy tool_calls / tool_results if present
