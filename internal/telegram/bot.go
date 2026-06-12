@@ -984,25 +984,25 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 	ollamaMessages := mediaRes.Messages
 
-	// Persist transcriptions on the just-sent user message attachments so the
-	// web UI can render them below the audio player (Telegram itself does not
-	// echo the transcription back to the user).
+	// Persist media pre-processing metadata on the just-sent user message
+	// attachments so the session records which model processed each file.
 	if len(mediaRes.Attachments) > 0 && len(history) > 0 {
 		lastMsg := &history[len(history)-1]
-		audioResults := make([]router.AttachmentResult, 0, len(mediaRes.Attachments))
+		now := time.Now().Format(time.RFC3339)
 		for _, ar := range mediaRes.Attachments {
-			if ar.Kind == "audio" {
-				audioResults = append(audioResults, ar)
-			}
-		}
-		audioIdx := 0
-		for i := range lastMsg.Attachments {
-			if lastMsg.Attachments[i].Kind != "audio" || audioIdx >= len(audioResults) {
+			if ar.Index < 0 || ar.Index >= len(lastMsg.Attachments) {
 				continue
 			}
-			lastMsg.Attachments[i].Transcription = audioResults[audioIdx].Transcription
-			lastMsg.Attachments[i].Unreadable = audioResults[audioIdx].Unreadable
-			audioIdx++
+			att := &lastMsg.Attachments[ar.Index]
+			att.ProcessedBy = ar.Model
+			att.ProcessedAt = now
+			if ar.Kind == "audio" {
+				att.Transcription = ar.Transcription
+				att.Unreadable = ar.Unreadable
+			}
+			if ar.Kind == "image" {
+				att.Description = ar.Description
+			}
 		}
 	}
 	// 8. Instantiate agent registry and loop
@@ -1117,25 +1117,51 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}
 	}
 
-	// Attach accumulated metrics and steps to the last assistant message so
-	// that Telegram sessions are stored identically to web sessions.
-	if handler.metrics.TotalDuration > 0 || len(handler.steps) > 0 {
-		for i := len(newRawMessages) - 1; i >= 0; i-- {
-			var rm rawMsg
-			if err := json.Unmarshal(newRawMessages[i], &rm); err != nil || rm.Role != "assistant" {
-				continue
+	// Count existing assistant messages in the pre-request history so we only
+	// attach per-turn steps/metrics to the newly generated assistant messages.
+	baseAssistantCount := 0
+	for _, m := range history {
+		if m.Role == "assistant" {
+			baseAssistantCount++
+		}
+	}
+
+	// Distribute per-turn steps and metrics across new assistant messages in
+	// chronological order. Each turn snapshot maps to one assistant message.
+	turnIdx := 0
+	allTurns := append(handler.turns, handler.currentTurn)
+	for i := range newRawMessages {
+		var rm rawMsg
+		if err := json.Unmarshal(newRawMessages[i], &rm); err != nil || rm.Role != "assistant" {
+			continue
+		}
+		baseAssistantCount--
+		if baseAssistantCount >= 0 {
+			continue // skip pre-existing assistants
+		}
+		if turnIdx < len(allTurns) {
+			snap := allTurns[turnIdx]
+			if len(snap.steps) > 0 {
+				// Strip ephemeral Status before persisting; it is a real-time UI
+				// state that does not belong in the session record.
+				stripped := make([]msgStep, len(snap.steps))
+				for i, s := range snap.steps {
+					stripped[i] = s
+					stripped[i].Status = ""
+				}
+				rm.Steps = stripped
 			}
-			if handler.metrics.TotalDuration > 0 {
-				m := handler.metrics
+			if snap.metrics.TotalDuration > 0 {
+				m := snap.metrics
 				rm.Metrics = &m
 			}
-			if len(handler.steps) > 0 {
-				rm.Steps = handler.steps
-			}
-			if updated, err := json.Marshal(rm); err == nil {
-				newRawMessages[i] = updated
-			}
-			break
+			turnIdx++
+		}
+		// Tag every assistant with the model and channel for the session record.
+		rm.Model = b.cfg.OllamaDefaultModel
+		rm.Channel = "telegram"
+		if updated, err := json.Marshal(rm); err == nil {
+			newRawMessages[i] = updated
 		}
 	}
 
@@ -1549,6 +1575,12 @@ func (b *Bot) injectTelegramUploadsContext(sessionID string, messages []ollama.M
 	return append([]ollama.Message{{Role: "system", Content: note}}, messages...)
 }
 
+// turnSnapshot holds the steps and metrics for a single agent turn.
+type turnSnapshot struct {
+	steps   []msgStep
+	metrics msgMetrics
+}
+
 // Custom StreamHandler for Telegram bot
 type telegramStreamHandler struct {
 	bot            *Bot
@@ -1558,11 +1590,26 @@ type telegramStreamHandler struct {
 	activeMessages []rawMsg
 	lastNotifyTime time.Time
 	mu             sync.Mutex
-	metrics        msgMetrics
-	steps          []msgStep
+	turnEnded      bool
+	currentTurn    turnSnapshot
+	turns          []turnSnapshot
+}
+
+func (h *telegramStreamHandler) startNewTurnIfNeeded() {
+	if h.turnEnded {
+		// Finalize the previous turn and start a fresh assistant bubble.
+		h.turns = append(h.turns, h.currentTurn)
+		h.currentTurn = turnSnapshot{}
+		h.turnEnded = false
+		h.activeMessages = append(h.activeMessages, rawMsg{
+			Role:      "assistant",
+			Timestamp: time.Now().Format(time.RFC3339),
+		})
+	}
 }
 
 func (h *telegramStreamHandler) getOrCreateAssistantMsg() *rawMsg {
+	h.startNewTurnIfNeeded()
 	if len(h.activeMessages) == 0 || h.activeMessages[len(h.activeMessages)-1].Role != "assistant" {
 		h.activeMessages = append(h.activeMessages, rawMsg{
 			Role:      "assistant",
@@ -1646,65 +1693,55 @@ func (h *telegramStreamHandler) OnToolCall(call ollama.ToolCall) {
 
 func (h *telegramStreamHandler) OnToolStart(name string, args any) {
 	h.mu.Lock()
-	h.steps = append(h.steps, msgStep{Type: "tool_exec", Name: name, Arguments: args, Status: "running"})
+	h.currentTurn.steps = append(h.currentTurn.steps, msgStep{Type: "tool_exec", Name: name, Arguments: args, Status: "running"})
 	h.mu.Unlock()
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", name), 0, "Markdown")
 }
 
 func (h *telegramStreamHandler) OnToolResult(name string, result string) {
 	h.mu.Lock()
-	for i := len(h.steps) - 1; i >= 0; i-- {
-		if h.steps[i].Name == name && h.steps[i].Status == "running" {
-			h.steps[i].Result = result
-			h.steps[i].Status = "done"
+	for i := len(h.currentTurn.steps) - 1; i >= 0; i-- {
+		if h.currentTurn.steps[i].Name == name && h.currentTurn.steps[i].Status == "running" {
+			h.currentTurn.steps[i].Result = result
+			h.currentTurn.steps[i].Status = "done"
 			break
 		}
 	}
-	h.activeMessages = append(h.activeMessages, rawMsg{
-		Role:      "tool",
-		Name:      name,
-		Content:   result,
-		Timestamp: time.Now().Format(time.RFC3339),
-	})
 	h.mu.Unlock()
 	h.notifyUpdate(true)
 }
 
 func (h *telegramStreamHandler) OnMediaPreProcessing(content string) {
-	h.mu.Lock()
-	h.activeMessages = append(h.activeMessages, rawMsg{
-		Role:      "assistant",
-		Content:   content,
-		Timestamp: time.Now().Format(time.RFC3339),
-	})
-	h.mu.Unlock()
-	h.notifyUpdate(true)
+	// Media pre-processing metadata is stored in the user message attachments.
+	// Do NOT inject a synthetic assistant message into the session timeline.
 }
+
 func (h *telegramStreamHandler) addOrUpdateImageStep(step msgStep) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	for i := range h.steps {
-		if h.steps[i].Type == "image_progress" && h.steps[i].GenID == step.GenID {
-			if h.steps[i].Status == "running" {
-				h.steps[i].Content = step.Content
-				h.steps[i].ImageURL = step.ImageURL
-				h.steps[i].Status = step.Status
+	for i := range h.currentTurn.steps {
+		if h.currentTurn.steps[i].Type == "image_progress" && h.currentTurn.steps[i].GenID == step.GenID {
+			if h.currentTurn.steps[i].Status == "running" {
+				h.currentTurn.steps[i].Content = step.Content
+				h.currentTurn.steps[i].ImageURL = step.ImageURL
+				h.currentTurn.steps[i].Status = step.Status
 			}
 			return
 		}
 	}
-	h.steps = append(h.steps, step)
+	h.currentTurn.steps = append(h.currentTurn.steps, step)
 }
 
 func (h *telegramStreamHandler) OnDone(resp ollama.ChatResponse) {
 	if resp.TotalDuration > 0 {
 		h.mu.Lock()
-		h.metrics.TotalDuration += resp.TotalDuration
-		h.metrics.LoadDuration += resp.LoadDuration
-		h.metrics.PromptEvalCount += resp.PromptEvalCount
-		h.metrics.PromptEvalDuration += resp.PromptEvalDuration
-		h.metrics.EvalCount += resp.EvalCount
-		h.metrics.EvalDuration += resp.EvalDuration
+		h.currentTurn.metrics.TotalDuration += resp.TotalDuration
+		h.currentTurn.metrics.LoadDuration += resp.LoadDuration
+		h.currentTurn.metrics.PromptEvalCount += resp.PromptEvalCount
+		h.currentTurn.metrics.PromptEvalDuration += resp.PromptEvalDuration
+		h.currentTurn.metrics.EvalCount += resp.EvalCount
+		h.currentTurn.metrics.EvalDuration += resp.EvalDuration
+		h.turnEnded = true
 		h.mu.Unlock()
 	}
 }
@@ -1738,6 +1775,9 @@ type rawMsg struct {
 	Thinking       string            `json:"thinking,omitempty"`
 	Name           string            `json:"name,omitempty"`
 	Timestamp      string            `json:"timestamp,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	Channel        string            `json:"channel,omitempty"`
+	Type           string            `json:"type,omitempty"`
 	Images         []string          `json:"images,omitempty"`
 	AttachmentRefs []string          `json:"attachment_refs,omitempty"`
 	ImageKinds     []string          `json:"image_kinds,omitempty"`
@@ -1755,6 +1795,9 @@ type attachmentMeta struct {
 	Data          string `json:"data,omitempty"`
 	URL           string `json:"url,omitempty"`
 	Transcription string `json:"transcription,omitempty"`
+	Description   string `json:"description,omitempty"`
+	ProcessedBy   string `json:"processed_by,omitempty"`
+	ProcessedAt   string `json:"processed_at,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 

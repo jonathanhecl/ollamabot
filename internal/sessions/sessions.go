@@ -61,6 +61,29 @@ func IsDefaultTitle(title string) bool {
 	return false
 }
 
+// Step represents a single step inside an assistant turn (thinking, tool call, tool result, image progress).
+type Step struct {
+	Type      string `json:"type"`
+	Name      string `json:"name,omitempty"`
+	GenID     string `json:"genID,omitempty"`
+	Content   string `json:"content,omitempty"`
+	ImageURL  string `json:"imageURL,omitempty"`
+	Arguments any    `json:"arguments,omitempty"`
+	Result    string `json:"result,omitempty"`
+	Status    string `json:"status,omitempty"`
+	Call      any    `json:"call,omitempty"` // for tool_call steps with full call object
+}
+
+// Metrics mirrors Ollama performance metrics stored per assistant turn.
+type Metrics struct {
+	TotalDuration      int64 `json:"total_duration"`
+	LoadDuration       int64 `json:"load_duration"`
+	PromptEvalCount    int   `json:"prompt_eval_count"`
+	PromptEvalDuration int64 `json:"prompt_eval_duration"`
+	EvalCount          int   `json:"eval_count"`
+	EvalDuration       int64 `json:"eval_duration"`
+}
+
 // RawMsg is the shape of messages as received from/sent to the frontend.
 type RawMsg struct {
 	Role           string            `json:"role"`
@@ -68,12 +91,17 @@ type RawMsg struct {
 	Thinking       string            `json:"thinking,omitempty"`
 	Name           string            `json:"name,omitempty"`
 	Timestamp      string            `json:"timestamp,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	Channel        string            `json:"channel,omitempty"`
+	Type           string            `json:"type,omitempty"`
 	Images         []string          `json:"images,omitempty"`
 	AttachmentRefs []string          `json:"attachment_refs,omitempty"`
 	ImageKinds     []string          `json:"image_kinds,omitempty"`
 	Attachments    []AttachmentMeta  `json:"attachments,omitempty"`
 	ToolCalls      []json.RawMessage `json:"tool_calls,omitempty"`
 	ToolResults    []json.RawMessage `json:"tool_results,omitempty"`
+	Steps          []Step            `json:"steps,omitempty"`
+	Metrics        *Metrics          `json:"metrics,omitempty"`
 }
 
 type AttachmentMeta struct {
@@ -83,6 +111,9 @@ type AttachmentMeta struct {
 	Data          string `json:"data,omitempty"`
 	URL           string `json:"url,omitempty"`
 	Transcription string `json:"transcription,omitempty"`
+	Description   string `json:"description,omitempty"`
+	ProcessedBy   string `json:"processed_by,omitempty"`
+	ProcessedAt   string `json:"processed_at,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
 	Path          string `json:"path,omitempty"`
 	Size          int64  `json:"size,omitempty"`
@@ -357,6 +388,9 @@ type attachmentStorage struct {
 	Kind          string `json:"kind"`
 	Data          string `json:"data"` // base64 encoded
 	Transcription string `json:"transcription,omitempty"`
+	Description   string `json:"description,omitempty"`
+	ProcessedBy   string `json:"processed_by,omitempty"`
+	ProcessedAt   string `json:"processed_at,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
 }
 
@@ -395,6 +429,9 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 				Kind:          att.Kind,
 				Data:          att.Data,
 				Transcription: att.Transcription,
+				Description:   att.Description,
+				ProcessedBy:   att.ProcessedBy,
+				ProcessedAt:   att.ProcessedAt,
 				Unreadable:    att.Unreadable,
 			}
 			storageData, err := json.Marshal(storage)
@@ -500,6 +537,9 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 					Data:          storage.Data,
 					URL:           "",
 					Transcription: storage.Transcription,
+					Description:   storage.Description,
+					ProcessedBy:   storage.ProcessedBy,
+					ProcessedAt:   storage.ProcessedAt,
 					Unreadable:    storage.Unreadable,
 				})
 			} else {

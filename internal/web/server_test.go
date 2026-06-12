@@ -50,7 +50,7 @@ func TestResolveMedia_SplitsIntoAssistantAndUser(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestResolveMedia_EmptyUserText(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestResolveMedia_NoRoutingNeeded(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestResolveMedia_PassthroughMixedWithAnalysis(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -281,7 +281,7 @@ func TestResolveMedia_OnlyLatestUserMessageAnalyzed(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 		},
 	}
 
-	out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
+	_, out, err := resolveMedia(context.Background(), mr, messages, nil, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

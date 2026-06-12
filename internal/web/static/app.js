@@ -2134,8 +2134,8 @@ async function processNextQueueItem() {
     renderMessages();
   }
 
-  const assistant = { role: "assistant", content: "", steps: [], streaming: true, waiting: true, metrics: null };
-  
+  let assistant = { role: "assistant", model: state.activeModel || "", channel: "web", content: "", steps: [], streaming: true, waiting: true, metrics: null };
+
   // Insert assistant response directly after the current user query in the messages list
   const idx = state.messages.indexOf(nextItem);
   if (idx !== -1) {
@@ -2199,6 +2199,7 @@ async function processNextQueueItem() {
         // Map per-attachment results onto the active user message attachments.
         if (nextItem && results.length) {
           const atts = nextItem.attachments || [];
+          const now = new Date().toISOString();
           for (const r of results) {
             const att = atts[r.index];
             if (!att || att.kind !== r.kind) continue;
@@ -2206,25 +2207,36 @@ async function processNextQueueItem() {
               att.transcription = r.transcription || "";
               att.unreadable = !!r.unreadable;
             }
+            if (r.kind === "image") {
+              att.description = r.description || "";
+            }
+            att.processed_by = r.model || "";
+            att.processed_at = now;
             att.routed = r.action === "transcribed" || r.action === "described";
           }
         }
 
-        if (data.summary) {
-          const mediaRouterMsg = {
-            role: "assistant",
-            content: data.summary,
-            streaming: false,
-            waiting: false
-          };
-          const idx = state.messages.indexOf(assistant);
-          if (idx !== -1) {
-            state.messages.splice(idx, 0, mediaRouterMsg);
-          } else {
-            state.messages.unshift(mediaRouterMsg);
-          }
+        renderMessages();
+      },
+      assistant_turn: (value) => {
+        // Finalize the current assistant bubble and start a new one for the next agent turn.
+        assistant.streaming = false;
+        assistant.waiting = false;
+        if (!assistant.timestamp) {
+          assistant.timestamp = new Date().toISOString();
         }
-
+        const newAssistant = {
+          role: "assistant",
+          model: value?.model || state.activeModel || "",
+          channel: "web",
+          content: "",
+          steps: [],
+          streaming: true,
+          waiting: true,
+          metrics: null
+        };
+        state.messages.push(newAssistant);
+        assistant = newAssistant;
         renderMessages();
       },
       thinking: (value) => {
@@ -2350,6 +2362,7 @@ async function processNextQueueItem() {
           assistant.metrics.eval_count += (value.eval_count || 0);
           assistant.metrics.eval_duration += (value.eval_duration || 0);
         }
+        assistant.streaming = false;
         const hasRunningTools = assistant.steps.some(s => s.type === "tool_exec" && s.status === "running");
         if (hasRunningTools) {
           assistant.waiting = true;
@@ -2575,7 +2588,7 @@ function renderMessages() {
     const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
 
     // Build steps HTML (interleaved thinking / tool blocks).
-    const stepsHtml = (message.steps || []).map(renderStep).join("");
+    const stepsHtml = (message.steps || []).map((s) => renderStep(s, effectiveStreaming)).join("");
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
     let legacyHtml = "";
     if (!message.steps?.length) {
@@ -2626,7 +2639,14 @@ function renderMessages() {
       </div>
     `;
     div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
+    // Restore user-opened thinking blocks.
     if (openThinkingIndices.has(msgIdx)) {
+      const thinkingDetails = div.querySelector("details.step-thinking");
+      if (thinkingDetails) thinkingDetails.open = true;
+    }
+    // Auto-expand thinking while streaming so the user sees reasoning tokens
+    // flowing in real-time without clicking.
+    if (effectiveStreaming) {
       const thinkingDetails = div.querySelector("details.step-thinking");
       if (thinkingDetails) thinkingDetails.open = true;
     }
@@ -2636,7 +2656,7 @@ function renderMessages() {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
-function renderStep(step) {
+function renderStep(step, isLive = false) {
   switch (step.type) {
     case "thinking":
       return `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
@@ -2653,8 +2673,9 @@ function renderStep(step) {
       return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(name)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
     }
     case "tool_exec": {
-      const statusLabel = step.status === "running" ? "running..." : "done";
-      const statusClass = step.status === "running" ? "running" : "done";
+      const showRunning = isLive && step.status === "running";
+      const statusLabel = showRunning ? "running..." : "";
+      const statusClass = showRunning ? "running" : "";
       let argsText = "";
       if (step.arguments) {
         try {
@@ -2671,8 +2692,9 @@ function renderStep(step) {
           <summary>📄 Show tool response (${formatBytes(resultText.length)})</summary>
           <pre class="step-tool-result-text">${resultText}</pre>
         </details>
-      ` : (step.status === "running" ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
-      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")} <span class="step-tool-status ${statusClass}">${statusLabel}</span></summary>${argsHtml}${resultHtml}</details>`;
+      ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
+      const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
+      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "image_progress": {
       const statusClass = step.status === "done" ? "done" : step.status === "error" ? "error" : "running";
@@ -3227,7 +3249,10 @@ async function respondToClarification(id, option) {
 function normalizeRawMessages(rawMessages) {
   return (rawMessages || []).map((m) => {
     const msg = typeof m === "string" ? JSON.parse(m) : m;
-    let steps = msg.steps || [];
+    let steps = (msg.steps || []).map((s) => {
+      const { status, ...rest } = s;
+      return rest;
+    });
     // Prepend thinking step if present, even when steps already exist from backend
     if (msg.thinking) {
       steps = [{ type: "thinking", content: msg.thinking }, ...steps];
@@ -3239,13 +3264,16 @@ function normalizeRawMessages(rawMessages) {
         steps.push({ type: "tool_call", call });
       }
       for (const res of tr) {
-        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result, status: res.status || "done" });
+        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
       }
     }
     return {
       role: msg.role || "user",
       name: msg.name || undefined,
       content: msg.content || "",
+      model: msg.model || "",
+      channel: msg.channel || "",
+      type: msg.type || "",
       steps,
       images: msg.images || undefined,
       attachments: (msg.attachments || []).map((att) => {
@@ -3263,6 +3291,9 @@ function normalizeRawMessages(rawMessages) {
           data: att.data || "",
           url: url || "",
           transcription: att.transcription || "",
+          description: att.description || "",
+          processed_by: att.processed_by || "",
+          processed_at: att.processed_at || "",
           unreadable: !!att.unreadable,
           size: att.size || 0,
           path: att.path || "",
@@ -3316,25 +3347,6 @@ function groupMessagesAndTools(messages) {
           step.result = msg.content;
           step.status = "done";
         }
-      }
-      continue;
-    }
-
-    // Merge consecutive assistant messages into a single block so that
-    // thinking, tool calls, and content all appear inside one assistant bubble.
-    const lastProcessed = processed[processed.length - 1];
-    if (msg.role === "assistant" && lastProcessed && lastProcessed.role === "assistant") {
-      lastProcessed.content = (lastProcessed.content || "") + (msg.content || "");
-      lastProcessed.thinking = (lastProcessed.thinking || "") + (msg.thinking || "");
-      lastProcessed.steps = [...lastProcessed.steps, ...(msg.steps || [])];
-      lastProcessed.toolCalls = [...(lastProcessed.toolCalls || []), ...(msg.toolCalls || [])];
-      lastProcessed.toolResults = [...(lastProcessed.toolResults || []), ...(msg.toolResults || [])];
-      if (msg.waiting) lastProcessed.waiting = true;
-      if (msg.streaming) lastProcessed.streaming = true;
-      if (msg.metrics) lastProcessed.metrics = msg.metrics;
-      if (msg.timestamp) lastProcessed.timestamp = msg.timestamp;
-      if (msg.attachments?.length) {
-        lastProcessed.attachments = [...(lastProcessed.attachments || []), ...msg.attachments];
       }
       continue;
     }
@@ -3468,7 +3480,13 @@ async function saveSession() {
     const messages = state.messages.filter((msg) => msg.role !== "system").map((msg) => ({
       role: msg.role,
       content: msg.content || "",
-      steps: msg.steps || [],
+      model: msg.model || undefined,
+      channel: msg.channel || undefined,
+      type: msg.type || undefined,
+      steps: (msg.steps || []).map((s) => {
+        const { status, ...rest } = s;
+        return rest;
+      }),
       images: msg.images || undefined,
       attachments: (msg.attachments || []).length ? msg.attachments.map((att) => ({
         name: att.name || "",
@@ -3477,6 +3495,9 @@ async function saveSession() {
         data: att.data || "",
         url: att.url || (att.data ? `data:${att.mime || (att.kind === "audio" ? "audio/wav" : "image/png")};base64,${att.data}` : ""),
         transcription: att.transcription || "",
+        description: att.description || "",
+        processed_by: att.processed_by || "",
+        processed_at: att.processed_at || "",
         unreadable: !!att.unreadable,
         path: att.path || "",
         size: att.size || 0,

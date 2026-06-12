@@ -600,10 +600,41 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	flusher, _ := w.(http.Flusher)
 
 	// Pre-process media attachments using role models before sending to main.
-	ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages, w, flusher)
+	mediaRes, ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages, w, flusher)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
+	}
+
+	// Persist media pre-processing metadata to the session so the timeline
+	// records which model processed each attachment and when.
+	if input.SessionID != "" && mediaRes != nil && len(mediaRes.Attachments) > 0 {
+		sess, serr := s.sessionStore.Get(input.SessionID)
+		if serr == nil && len(sess.Messages) > 0 {
+			var lastMsg sessions.RawMsg
+			if uerr := json.Unmarshal(sess.Messages[len(sess.Messages)-1], &lastMsg); uerr == nil && lastMsg.Role == "user" {
+				now := time.Now().Format(time.RFC3339)
+				for _, ar := range mediaRes.Attachments {
+					if ar.Index >= 0 && ar.Index < len(lastMsg.Attachments) {
+						att := &lastMsg.Attachments[ar.Index]
+						att.ProcessedBy = ar.Model
+						att.ProcessedAt = now
+						if ar.Kind == "audio" {
+							att.Transcription = ar.Transcription
+							att.Unreadable = ar.Unreadable
+						}
+						if ar.Kind == "image" {
+							att.Description = ar.Description
+						}
+					}
+				}
+				if updated, uerr := json.Marshal(lastMsg); uerr == nil {
+					sess.Messages[len(sess.Messages)-1] = updated
+					_ = s.sessionStore.Save(sess)
+					sessions.NotifyUpdate(input.SessionID)
+				}
+			}
+		}
 	}
 
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed, tools.SearchConfig{
@@ -648,12 +679,24 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 }
 
 type sseStreamHandler struct {
-	w       http.ResponseWriter
-	flusher http.Flusher
-	model   string
+	w         http.ResponseWriter
+	flusher   http.Flusher
+	model     string
+	turnEnded bool
+}
+
+func (h *sseStreamHandler) startTurnIfNeeded() {
+	if h.turnEnded {
+		writeSSE(h.w, "assistant_turn", map[string]any{"model": h.model})
+		if h.flusher != nil {
+			h.flusher.Flush()
+		}
+		h.turnEnded = false
+	}
 }
 
 func (h *sseStreamHandler) OnThinking(delta string) {
+	h.startTurnIfNeeded()
 	writeSSE(h.w, "thinking", delta)
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -661,6 +704,7 @@ func (h *sseStreamHandler) OnThinking(delta string) {
 }
 
 func (h *sseStreamHandler) OnContent(delta string) {
+	h.startTurnIfNeeded()
 	writeSSE(h.w, "content", delta)
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -668,6 +712,7 @@ func (h *sseStreamHandler) OnContent(delta string) {
 }
 
 func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
+	h.startTurnIfNeeded()
 	writeSSE(h.w, "tool_call", call)
 	if h.flusher != nil {
 		h.flusher.Flush()
@@ -722,6 +767,7 @@ func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
 	if h.flusher != nil {
 		h.flusher.Flush()
 	}
+	h.turnEnded = true
 }
 
 // runChatStream handles the chat streaming loop by delegating to the iterative agent.
@@ -748,10 +794,10 @@ func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client
 // resolveMedia pre-processes the latest user message's attachments with the
 // shared media pipeline (router.ResolveMessages) and streams the structured
 // per-attachment results to the frontend as a "media_pre_processing" event.
-func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage, w http.ResponseWriter, flusher http.Flusher) ([]ollama.Message, error) {
+func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessage, w http.ResponseWriter, flusher http.Flusher) (*router.ResolveResult, []ollama.Message, error) {
 	res, err := mr.ResolveMessages(ctx, messages)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(res.Attachments) > 0 && w != nil {
 		writeSSE(w, "media_pre_processing", map[string]any{
@@ -762,7 +808,7 @@ func resolveMedia(ctx context.Context, mr *router.Router, messages []MediaMessag
 			flusher.Flush()
 		}
 	}
-	return res.Messages, nil
+	return &res, res.Messages, nil
 }
 
 func (s *Server) models(ctx context.Context) (ModelsResponse, error) {
