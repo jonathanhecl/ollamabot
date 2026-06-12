@@ -2057,17 +2057,12 @@ type telegramImageProgressHandler struct {
 }
 
 func (h *telegramImageProgressHandler) OnProgress(completed, total int, status string) {
-	// Build progress bar with emojis
-	progress := ""
-	for i := 0; i < total; i++ {
-		if i < completed {
-			progress += "✨"
-		} else {
-			progress += "◻️"
-		}
-	}
+	// Build fixed-width progress bar
+	filled := strings.Repeat("█", completed)
+	empty := strings.Repeat("░", total-completed)
+	percent := (completed * 100) / total
 
-	text := fmt.Sprintf("🎨 *Generating image...*\n\n%s [%d/%d] ⏳", progress, completed, total)
+	text := fmt.Sprintf("🎨 *Generating image...*\n`[%s%s]` %d%% (%d/%d)", filled, empty, percent, completed, total)
 
 	if h.messageID == 0 {
 		// First time: send new message

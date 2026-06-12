@@ -931,9 +931,21 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 					r.imageProgressHandler.OnProgress(chunk.Completed, chunk.Total, "generating")
 				}
 			}
+			// Debug logging
+			if chunk.Done {
+				log.Printf("[generate_image] Chunk done: Response len=%d, Images len=%d", len(chunk.Response), len(chunk.Images))
+				if chunk.Response != "" {
+					log.Printf("[generate_image] Response starts with: %.50s...", chunk.Response)
+				}
+			}
 			// Image data comes in Response field (base64 encoded PNG)
 			if chunk.Done && chunk.Response != "" {
 				imageData = chunk.Response
+			}
+			// Also check Images field as fallback
+			if chunk.Done && imageData == "" && len(chunk.Images) > 0 && chunk.Images[0] != "" {
+				imageData = chunk.Images[0]
+				log.Printf("[generate_image] Got image from Images field instead")
 			}
 			_ = progressMsgID // may be used by handler
 			return nil

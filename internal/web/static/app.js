@@ -2266,10 +2266,12 @@ async function processNextQueueItem() {
         renderMessages();
       },
       image_progress: (value) => {
-        // Show image generation progress
-        const progress = "✨".repeat(value.completed) + "◻️".repeat(value.total - value.completed);
-        const text = `🎨 Generating image...\n${progress} [${value.completed}/${value.total}] ⏳`;
-        
+        // Show image generation progress with fixed-width format
+        const filled = "█".repeat(value.completed);
+        const empty = "░".repeat(value.total - value.completed);
+        const percent = Math.round((value.completed / value.total) * 100);
+        const text = `🎨 Generating image... [${filled}${empty}] ${percent}% (${value.completed}/${value.total})`;
+
         let step = assistant.steps.find(s => s.type === "image_progress");
         if (!step) {
           step = { type: "image_progress", content: text, status: "running" };
