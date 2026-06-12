@@ -47,6 +47,7 @@ type Registry struct {
 type ImageProgressHandler interface {
 	OnProgress(completed, total int, message string)
 	OnComplete(imagePath string)
+	SetGenerationID(id string)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -889,6 +890,12 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		// Check if image model is configured
 		if strings.TrimSpace(r.imageModel) == "" {
 			return "", fmt.Errorf("no image generation model configured - please set OLLAMA_MODEL_IMAGE in settings")
+		}
+
+		// Generate unique ID for this generation
+		genID := fmt.Sprintf("gen_%d", time.Now().UnixNano())
+		if r.imageProgressHandler != nil {
+			r.imageProgressHandler.SetGenerationID(genID)
 		}
 
 		// Create generations directory if not exists

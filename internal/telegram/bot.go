@@ -2054,6 +2054,12 @@ type telegramImageProgressHandler struct {
 	bot       *Bot
 	chatID    int64
 	messageID int64
+	genID     string
+}
+
+func (h *telegramImageProgressHandler) SetGenerationID(id string) {
+	h.genID = id
+	h.messageID = 0 // Reset for new generation
 }
 
 func (h *telegramImageProgressHandler) OnProgress(completed, total int, status string) {

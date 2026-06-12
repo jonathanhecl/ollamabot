@@ -2267,14 +2267,17 @@ async function processNextQueueItem() {
       },
       image_progress: (value) => {
         // Show image generation progress with fixed-width format
+        // Each generation has its own unique ID
+        const genID = value.gen_id || "unknown";
         const filled = "█".repeat(value.completed);
         const empty = "░".repeat(value.total - value.completed);
         const percent = Math.round((value.completed / value.total) * 100);
         const text = `🎨 Generating image... [${filled}${empty}] ${percent}% (${value.completed}/${value.total})`;
 
-        let step = assistant.steps.find(s => s.type === "image_progress");
+        // Find step by generation ID to update existing or create new
+        let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (!step) {
-          step = { type: "image_progress", content: text, status: "running" };
+          step = { type: "image_progress", genID: genID, content: text, status: "running" };
           assistant.steps.push(step);
         } else {
           step.content = text;
@@ -2282,13 +2285,14 @@ async function processNextQueueItem() {
         renderMessages();
       },
       image_complete: (value) => {
-        // Image generation completed
-        let step = assistant.steps.find(s => s.type === "image_progress");
+        // Image generation completed - find by genID
+        const genID = value.gen_id || "unknown";
+        let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (step) {
           step.content = `✅ Image generated!\n📁 ${value.path}`;
           step.status = "done";
         } else {
-          assistant.steps.push({ type: "image_progress", content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
+          assistant.steps.push({ type: "image_progress", genID: genID, content: `✅ Image generated!\n📁 ${value.path}`, status: "done" });
         }
         renderMessages();
       },
