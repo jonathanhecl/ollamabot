@@ -3228,10 +3228,11 @@ function normalizeRawMessages(rawMessages) {
   return (rawMessages || []).map((m) => {
     const msg = typeof m === "string" ? JSON.parse(m) : m;
     let steps = msg.steps || [];
+    // Prepend thinking step if present, even when steps already exist from backend
+    if (msg.thinking) {
+      steps = [{ type: "thinking", content: msg.thinking }, ...steps];
+    }
     if (!steps.length) {
-      if (msg.thinking) {
-        steps.push({ type: "thinking", content: msg.thinking });
-      }
       const tc = msg.toolCalls || msg.tool_calls || [];
       const tr = msg.toolResults || msg.tool_results || [];
       for (const call of tc) {

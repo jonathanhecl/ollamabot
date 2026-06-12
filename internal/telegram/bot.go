@@ -1169,7 +1169,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	finalAnswer = agent.CleanThinkingTokens(finalAnswer)
 
 	if finalAnswer == "" {
-		b.sendMessage(chatID, "⚠️ I did not generate a text response. Please try again.", 0, "")
+		// No text response (e.g. only an image was generated); nothing more to send.
 		return
 	}
 

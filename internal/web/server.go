@@ -229,6 +229,12 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			return
 		}
 
+		// Allow unauthenticated access to generated images so <img> tags work
+		if strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.Contains(r.URL.Path, "/generations/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/health" {
 			reqPass := r.Header.Get("X-Server-Password")
 			if reqPass == "" {
