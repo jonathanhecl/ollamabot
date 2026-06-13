@@ -193,6 +193,20 @@ func (r *Recorder) OnDone(resp ollama.ChatResponse) {
 	r.NotifyUpdate(true)
 }
 
+// AddAttachmentRef appends an attachment reference to the current assistant message.
+func (r *Recorder) AddAttachmentRef(ref string, mime string) {
+	r.mu.Lock()
+	msg := r.getOrCreateAssistantMsg()
+	msg.AttachmentRefs = append(msg.AttachmentRefs, ref)
+	msg.Attachments = append(msg.Attachments, AttachmentMeta{
+		Name: ref,
+		Mime: mime,
+		Kind: "image",
+	})
+	r.mu.Unlock()
+	r.NotifyUpdate(false)
+}
+
 func (r *Recorder) AddOrUpdateImageStep(step Step) {
 	r.mu.Lock()
 	r.getOrCreateCurrentAssistantMsg()

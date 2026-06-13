@@ -41,7 +41,9 @@ type Registry struct {
 	imageModel           string
 	imageSteps           int
 	imageProgressHandler ImageProgressHandler
+	attachmentHandler    AttachmentGeneratedHandler
 	sessionID            string
+	sessionsPath         string
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -49,6 +51,12 @@ type ImageProgressHandler interface {
 	OnProgress(genID string, completed, total int, message string, width, height int)
 	OnComplete(genID string, imagePath string, width, height int)
 	OnError(genID string, err error)
+}
+
+// AttachmentGeneratedHandler is called when a tool generates an attachment
+// that should be registered on the current assistant message.
+type AttachmentGeneratedHandler interface {
+	OnAttachmentGenerated(sessionID string, ref string, mime string, path string)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -81,9 +89,19 @@ func (r *Registry) SetImageProgressHandler(h ImageProgressHandler) {
 	r.imageProgressHandler = h
 }
 
+// SetAttachmentGeneratedHandler assigns a callback handler when a tool generates an attachment.
+func (r *Registry) SetAttachmentGeneratedHandler(h AttachmentGeneratedHandler) {
+	r.attachmentHandler = h
+}
+
 // SetSessionID sets the current session ID for organizing generated files.
 func (r *Registry) SetSessionID(id string) {
 	r.sessionID = id
+}
+
+// SetSessionsPath sets the path where session data (including attachments) is stored.
+func (r *Registry) SetSessionsPath(path string) {
+	r.sessionsPath = path
 }
 
 // NewRegistry creates a registry with the given feature toggles.
@@ -506,7 +524,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "generate_image",
-			Description: "Generate an image using a diffusion model (Flux, etc.). Use this when the user explicitly or implicitly requests image generation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'). The agent should choose appropriate resolution: 512x512 for square/portrait, 1024x512 for landscape, 512x1024 for tall/portrait. Returns the path to the generated image file.",
+			Description: "Generate an image using a diffusion model (Flux, etc.). Use this when the user explicitly or implicitly requests image generation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'). The agent should choose appropriate resolution: 512x512 for square/portrait, 1024x512 for landscape, 512x1024 for tall/portrait. Returns the attachment reference of the generated image.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -533,6 +551,39 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					},
 				},
 				"required": []string{"prompt"},
+			},
+		},
+	})
+
+	// Register session attachment browsing tools
+	r.enabled["list_session_attachments"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "list_session_attachments",
+			Description: "List all attachments stored in the current session, including images, audio, and files. Returns names, kinds, sizes, and references. Use this when the user asks about previously uploaded or generated media.",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	})
+
+	r.enabled["view_session_attachment"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "view_session_attachment",
+			Description: "View the contents of a session attachment by its reference name. For images, returns the base64-encoded image data that can be sent to a vision model. For other files, returns the raw content or a description.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"ref": map[string]any{
+						"type":        "string",
+						"description": "The attachment reference name (e.g. 'generated_20260102_150405_512x512.png' or '0_0.json').",
+					},
+				},
+				"required": []string{"ref"},
 			},
 		},
 	})
@@ -901,21 +952,25 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		// Generate unique ID for this generation
 		genID := fmt.Sprintf("gen_%d", time.Now().UnixNano())
 
-		// Create session-specific generations directory
-		var genDir string
+		// Create session-specific attachments directory for generated images
+		var attDir string
 		if strings.TrimSpace(r.sessionID) != "" {
-			genDir = filepath.Join(r.workspace, "sessions", r.sessionID, "generations")
+			if strings.TrimSpace(r.sessionsPath) != "" {
+				attDir = filepath.Join(r.sessionsPath, r.sessionID, "attachments")
+			} else {
+				attDir = filepath.Join(r.workspace, "sessions", r.sessionID, "attachments")
+			}
 		} else {
-			genDir = filepath.Join(r.workspace, "generations")
+			attDir = filepath.Join(r.workspace, "generations")
 		}
-		if err := os.MkdirAll(genDir, 0755); err != nil {
-			return "", fmt.Errorf("failed to create generations directory: %w", err)
+		if err := os.MkdirAll(attDir, 0755); err != nil {
+			return "", fmt.Errorf("failed to create attachments directory: %w", err)
 		}
 
 		// Generate unique filename
 		timestamp := time.Now().Format("20060102_150405")
 		filename := fmt.Sprintf("generated_%s_%dx%d.png", timestamp, width, height)
-		filePath := filepath.Join(genDir, filename)
+		filePath := filepath.Join(attDir, filename)
 
 		// Call image generation via client
 		req := ollama.GenerateRequest{
@@ -981,11 +1036,136 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 
 		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filePath, len(imageBytes))
+
+		// Notify attachment handler so the recorder can register it on the assistant message
+		if r.attachmentHandler != nil && strings.TrimSpace(r.sessionID) != "" {
+			r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, "image/png", filePath)
+		}
+
 		// Call completion handler if set - pass real filesystem path
 		if r.imageProgressHandler != nil {
 			r.imageProgressHandler.OnComplete(genID, filePath, width, height)
 		}
-		return "Image generated successfully.", nil
+		return fmt.Sprintf("Image generated and saved as session attachment. Reference: %s, Path: %s, Size: %dx%d", filename, filePath, width, height), nil
+	case "list_session_attachments":
+		if strings.TrimSpace(r.sessionID) == "" {
+			return "", fmt.Errorf("no active session")
+		}
+		var attDir string
+		if strings.TrimSpace(r.sessionsPath) != "" {
+			attDir = filepath.Join(r.sessionsPath, r.sessionID, "attachments")
+		} else {
+			attDir = filepath.Join(r.workspace, "sessions", r.sessionID, "attachments")
+		}
+		entries, err := os.ReadDir(attDir)
+		if err != nil {
+			return "No attachments found in this session.", nil
+		}
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("Session attachments (%d items):\n", len(entries)))
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			info, err := e.Info()
+			if err != nil {
+				continue
+			}
+			kind := "file"
+			mime := "application/octet-stream"
+			name := e.Name()
+			if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") || strings.HasSuffix(name, ".gif") || strings.HasSuffix(name, ".webp") {
+				kind = "image"
+				mime = "image/png"
+				if strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
+					mime = "image/jpeg"
+				}
+			} else if strings.HasSuffix(name, ".wav") || strings.HasSuffix(name, ".mp3") || strings.HasSuffix(name, ".ogg") {
+				kind = "audio"
+				mime = "audio/wav"
+			} else if strings.HasSuffix(name, ".json") {
+				// Legacy attachmentStorage format: read to get actual kind
+				data, err := os.ReadFile(filepath.Join(attDir, name))
+				if err == nil {
+					var storage struct {
+						Name string `json:"name"`
+						Mime string `json:"mime"`
+						Kind string `json:"kind"`
+					}
+					if json.Unmarshal(data, &storage) == nil {
+						if storage.Kind != "" {
+							kind = storage.Kind
+						}
+						if storage.Mime != "" {
+							mime = storage.Mime
+						}
+						if storage.Name != "" {
+							name = storage.Name
+						}
+					}
+				}
+			}
+			sb.WriteString(fmt.Sprintf("- ref: %s | name: %s | kind: %s | mime: %s | size: %d bytes\n", e.Name(), name, kind, mime, info.Size()))
+		}
+		return sb.String(), nil
+	case "view_session_attachment":
+		ref, _ := args["ref"].(string)
+		if ref == "" {
+			return "", fmt.Errorf("missing ref")
+		}
+		if strings.TrimSpace(r.sessionID) == "" {
+			return "", fmt.Errorf("no active session")
+		}
+		var attDir string
+		if strings.TrimSpace(r.sessionsPath) != "" {
+			attDir = filepath.Join(r.sessionsPath, r.sessionID, "attachments")
+		} else {
+			attDir = filepath.Join(r.workspace, "sessions", r.sessionID, "attachments")
+		}
+		path := filepath.Join(attDir, ref)
+		// Prevent directory traversal
+		if !strings.HasPrefix(filepath.Clean(path), filepath.Clean(attDir)) {
+			return "", fmt.Errorf("invalid ref")
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read attachment: %w", err)
+		}
+		// Try to parse as JSON attachmentStorage first
+		var storage struct {
+			Name        string `json:"name"`
+			Mime        string `json:"mime"`
+			Kind        string `json:"kind"`
+			Data        string `json:"data"`
+			Description string `json:"description,omitempty"`
+		}
+		if err := json.Unmarshal(data, &storage); err == nil && storage.Data != "" {
+			if strings.HasPrefix(storage.Mime, "image/") {
+				return fmt.Sprintf("Attachment: %s (kind=%s, mime=%s)\n[base64_image_data]: %s", storage.Name, storage.Kind, storage.Mime, storage.Data), nil
+			}
+			return fmt.Sprintf("Attachment: %s (kind=%s, mime=%s)\nContent: %s", storage.Name, storage.Kind, storage.Mime, storage.Data), nil
+		}
+		// Binary file (e.g. generated PNG)
+		mime := "application/octet-stream"
+		if strings.HasSuffix(ref, ".png") {
+			mime = "image/png"
+		} else if strings.HasSuffix(ref, ".jpg") || strings.HasSuffix(ref, ".jpeg") {
+			mime = "image/jpeg"
+		} else if strings.HasSuffix(ref, ".gif") {
+			mime = "image/gif"
+		} else if strings.HasSuffix(ref, ".webp") {
+			mime = "image/webp"
+		} else if strings.HasSuffix(ref, ".wav") {
+			mime = "audio/wav"
+		} else if strings.HasSuffix(ref, ".mp3") {
+			mime = "audio/mpeg"
+		}
+		if strings.HasPrefix(mime, "image/") || strings.HasPrefix(mime, "audio/") {
+			b64 := base64.StdEncoding.EncodeToString(data)
+			return fmt.Sprintf("Attachment: %s (mime=%s, size=%d bytes)\n[base64_data]: %s", ref, mime, len(data), b64), nil
+		}
+		// Text fallback
+		return fmt.Sprintf("Attachment: %s (mime=%s, size=%d bytes)\nContent:\n%s", ref, mime, len(data), string(data)), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

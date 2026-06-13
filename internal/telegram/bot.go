@@ -1033,10 +1033,15 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		sessionID: sessionID,
 		onStep:    recorder.AddOrUpdateImageStep,
 	})
+	registry.SetAttachmentGeneratedHandler(&telegramAttachmentHandler{
+		recorder: recorder,
+	})
+	registry.SetSessionsPath(b.cfg.SessionsPath)
 	registry.SetSessionID(sessionID)
 
 	// Inject uploaded-files context if any files have been uploaded to this session
 	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
+	ollamaMessages = b.injectTelegramAttachmentsContext(sessionID, ollamaMessages)
 
 	think := agent.ShouldThink(b.cfg.OllamaDefaultModel, true, snapshotPath())
 	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
@@ -1520,6 +1525,70 @@ func (b *Bot) injectTelegramUploadsContext(sessionID string, messages []ollama.M
 		"You can read text files with the read_file tool using the given path, " +
 		"or run shell commands on binary/video files with execute_command.\n\nUploaded files:\n" +
 		strings.Join(lines, "\n")
+
+	for i, m := range messages {
+		if m.Role == "system" {
+			messages[i].Content = messages[i].Content + "\n\n" + note
+			return messages
+		}
+	}
+	return append([]ollama.Message{{Role: "system", Content: note}}, messages...)
+}
+
+// injectTelegramAttachmentsContext prepends a system note listing session
+// attachments (generated images, uploads, etc.) so the agent is aware of them.
+func (b *Bot) injectTelegramAttachmentsContext(sessionID string, messages []ollama.Message) []ollama.Message {
+	if strings.TrimSpace(sessionID) == "" {
+		return messages
+	}
+	dir := filepath.Join(b.cfg.SessionsPath, sessionID, "attachments")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) == 0 {
+		return messages
+	}
+
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		kind := "file"
+		if strings.HasSuffix(e.Name(), ".png") || strings.HasSuffix(e.Name(), ".jpg") || strings.HasSuffix(e.Name(), ".jpeg") || strings.HasSuffix(e.Name(), ".gif") || strings.HasSuffix(e.Name(), ".webp") {
+			kind = "image"
+		} else if strings.HasSuffix(e.Name(), ".wav") || strings.HasSuffix(e.Name(), ".mp3") || strings.HasSuffix(e.Name(), ".ogg") {
+			kind = "audio"
+		} else if strings.HasSuffix(e.Name(), ".json") {
+			data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err == nil {
+				var storage struct {
+					Kind string `json:"kind"`
+					Name string `json:"name"`
+				}
+				if json.Unmarshal(data, &storage) == nil {
+					if storage.Kind != "" {
+						kind = storage.Kind
+					}
+					if storage.Name != "" {
+						lines = append(lines, fmt.Sprintf("- %s (kind: %s, size: %s)", storage.Name, kind, humanSize(info.Size())))
+						continue
+					}
+				}
+			}
+		}
+		lines = append(lines, fmt.Sprintf("- %s (kind: %s, size: %s)", e.Name(), kind, humanSize(info.Size())))
+	}
+	if len(lines) == 0 {
+		return messages
+	}
+
+	note := "The current session contains the following attachments. " +
+		"You can inspect them with the list_session_attachments and view_session_attachment tools. " +
+		"For images, you can use view_session_attachment to get the base64 data and then send it to a vision model if needed.\n\n" +
+		"Session attachments:\n" + strings.Join(lines, "\n")
 
 	for i, m := range messages {
 		if m.Role == "system" {
@@ -2611,5 +2680,28 @@ func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, e
 				_, _ = b.sendMessage(id, toTelegramHTML(chunk), 0, "HTML")
 			}
 		}
+	}
+}
+
+// telegramAttachmentHandler bridges tool-generated attachments into the Telegram session recorder.
+type telegramAttachmentHandler struct {
+	recorder *sessions.Recorder
+}
+
+func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+	if h.recorder != nil {
+		h.recorder.AddAttachmentRef(ref, mime)
+	}
+}
+
+func humanSize(b int64) string {
+	const kb, mb = 1024, 1024 * 1024
+	switch {
+	case b >= mb:
+		return fmt.Sprintf("%.1f MB", float64(b)/mb)
+	case b >= kb:
+		return fmt.Sprintf("%.1f KB", float64(b)/kb)
+	default:
+		return fmt.Sprintf("%d B", b)
 	}
 }

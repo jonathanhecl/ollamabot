@@ -703,11 +703,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher:   flusher,
 		recorder:  recorder,
 	})
+	registry.SetAttachmentGeneratedHandler(&webAttachmentHandler{
+		recorder: recorder,
+	})
+	registry.SetSessionsPath(cfg.SessionsPath)
 	registry.SetSessionID(input.SessionID)
 
 	// Inject uploaded-files context if session has uploads
 	if input.SessionID != "" {
 		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
+		ollamaMessages = injectAttachmentsContext(cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
 	var cancel context.CancelFunc
@@ -1295,9 +1300,22 @@ func (s *Server) handleDownloadGeneration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	filePath := filepath.Join(cfg.Workspace, "sessions", id, "generations", clean)
-	f, err := os.Open(filePath)
-	if err != nil {
+	// Look in sessionsPath attachments first (canonical location), then workspace/sessions/attachments (legacy fallback), then generations/
+	var f *os.File
+	var err error
+
+	candidates := []string{
+		filepath.Join(cfg.SessionsPath, id, "attachments", clean),
+		filepath.Join(cfg.Workspace, "sessions", id, "attachments", clean),
+		filepath.Join(cfg.Workspace, "sessions", id, "generations", clean),
+	}
+	for _, candidate := range candidates {
+		f, err = os.Open(candidate)
+		if err == nil {
+			break
+		}
+	}
+	if f == nil {
 		if os.IsNotExist(err) {
 			http.NotFound(w, r)
 			return
@@ -1411,6 +1429,73 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 		strings.Join(lines, "\n")
 
 	// Find existing system message and append to it, or prepend a new one.
+	for i, msg := range messages {
+		if msg.Role == "system" {
+			messages[i].Content = messages[i].Content + "\n\n" + note
+			return messages
+		}
+	}
+	sys := ollama.Message{Role: "system", Content: note}
+	return append([]ollama.Message{sys}, messages...)
+}
+
+// injectAttachmentsContext prepends a system message listing session attachments
+// (including generated images and user uploads) so the agent knows what media
+// is available and can reference it using list_session_attachments / view_session_attachment.
+func injectAttachmentsContext(sessionsPath, sessionID string, messages []ollama.Message) []ollama.Message {
+	if strings.TrimSpace(sessionID) == "" {
+		return messages
+	}
+	attDir := filepath.Join(sessionsPath, sessionID, "attachments")
+	entries, err := os.ReadDir(attDir)
+	if err != nil || len(entries) == 0 {
+		return messages
+	}
+
+	var lines []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		kind := "file"
+		if strings.HasSuffix(e.Name(), ".png") || strings.HasSuffix(e.Name(), ".jpg") || strings.HasSuffix(e.Name(), ".jpeg") || strings.HasSuffix(e.Name(), ".gif") || strings.HasSuffix(e.Name(), ".webp") {
+			kind = "image"
+		} else if strings.HasSuffix(e.Name(), ".wav") || strings.HasSuffix(e.Name(), ".mp3") || strings.HasSuffix(e.Name(), ".ogg") {
+			kind = "audio"
+		} else if strings.HasSuffix(e.Name(), ".json") {
+			// Try to read legacy attachmentStorage to get kind
+			data, err := os.ReadFile(filepath.Join(attDir, e.Name()))
+			if err == nil {
+				var storage struct {
+					Kind string `json:"kind"`
+					Name string `json:"name"`
+				}
+				if json.Unmarshal(data, &storage) == nil {
+					if storage.Kind != "" {
+						kind = storage.Kind
+					}
+					if storage.Name != "" {
+						lines = append(lines, fmt.Sprintf("- %s (kind: %s, size: %s)", storage.Name, kind, humanSize(info.Size())))
+						continue
+					}
+				}
+			}
+		}
+		lines = append(lines, fmt.Sprintf("- %s (kind: %s, size: %s)", e.Name(), kind, humanSize(info.Size())))
+	}
+	if len(lines) == 0 {
+		return messages
+	}
+
+	note := "The current session contains the following attachments. " +
+		"You can inspect them with the list_session_attachments and view_session_attachment tools. " +
+		"For images, you can use view_session_attachment to get the base64 data and then send it to a vision model if needed.\n\n" +
+		"Session attachments:\n" + strings.Join(lines, "\n")
+
 	for i, msg := range messages {
 		if msg.Role == "system" {
 			messages[i].Content = messages[i].Content + "\n\n" + note
@@ -2083,6 +2168,17 @@ func (h *webImageProgressHandler) OnError(genID string, err error) {
 	})
 	if h.flusher != nil {
 		h.flusher.Flush()
+	}
+}
+
+// webAttachmentHandler bridges tool-generated attachments into the session recorder.
+type webAttachmentHandler struct {
+	recorder *sessions.Recorder
+}
+
+func (h *webAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+	if h.recorder != nil {
+		h.recorder.AddAttachmentRef(ref, mime)
 	}
 }
 
