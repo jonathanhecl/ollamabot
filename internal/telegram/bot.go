@@ -1234,8 +1234,63 @@ func (b *Bot) sendMessage(chatID int64, text string, replyToID int64, parseMode 
 	return 0, nil
 }
 
-// sendPhoto sends a photo file to a Telegram chat.
-func (b *Bot) sendPhoto(chatID int64, photoPath string, replyToID int64) error {
+// sendPhoto sends a photo file to a Telegram chat with an optional caption.
+func (b *Bot) sendPhoto(chatID int64, photoPath string, caption string, replyToID int64) (int64, error) {
+	file, err := os.Open(photoPath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
+	if caption != "" {
+		_ = writer.WriteField("caption", caption)
+		_ = writer.WriteField("parse_mode", "Markdown")
+	}
+	if replyToID != 0 {
+		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
+	}
+
+	part, err := writer.CreateFormFile("photo", filepath.Base(photoPath))
+	if err != nil {
+		return 0, err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return 0, err
+	}
+	writer.Close()
+
+	url := b.apiBase + "/sendPhoto"
+	resp, err := b.httpClient.Post(url, writer.FormDataContentType(), &body)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      *struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return 0, err
+	}
+	if !apiResp.OK {
+		return 0, fmt.Errorf("telegram api error: %s", apiResp.Description)
+	}
+	if apiResp.Result != nil {
+		return apiResp.Result.MessageID, nil
+	}
+	return 0, nil
+}
+
+// editMessagePhoto updates the photo and caption of an existing photo message in a Telegram chat.
+func (b *Bot) editMessagePhoto(chatID int64, messageID int64, photoPath string, caption string) error {
 	file, err := os.Open(photoPath)
 	if err != nil {
 		return err
@@ -1245,9 +1300,19 @@ func (b *Bot) sendPhoto(chatID int64, photoPath string, replyToID int64) error {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
-	if replyToID != 0 {
-		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
+	_ = writer.WriteField("message_id", fmt.Sprintf("%d", messageID))
+
+	mediaObj := map[string]any{
+		"type":       "photo",
+		"media":      "attach://photo",
+		"caption":    caption,
+		"parse_mode": "Markdown",
 	}
+	mediaJSON, err := json.Marshal(mediaObj)
+	if err != nil {
+		return err
+	}
+	_ = writer.WriteField("media", string(mediaJSON))
 
 	part, err := writer.CreateFormFile("photo", filepath.Base(photoPath))
 	if err != nil {
@@ -1259,7 +1324,7 @@ func (b *Bot) sendPhoto(chatID int64, photoPath string, replyToID int64) error {
 	}
 	writer.Close()
 
-	url := b.apiBase + "/sendPhoto"
+	url := b.apiBase + "/editMessageMedia"
 	resp, err := b.httpClient.Post(url, writer.FormDataContentType(), &body)
 	if err != nil {
 		return err
@@ -1872,40 +1937,67 @@ type telegramImageProgressHandler struct {
 	onStep    func(step msgStep) // callback to update stream handler steps
 }
 
-func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
-	// Build fixed-width progress bar
+func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total int, status string, width, height int) {
+	percent := 0
+	if total > 0 {
+		percent = (completed * 100) / total
+	}
+
 	filled := strings.Repeat("█", completed)
 	empty := strings.Repeat("░", total-completed)
-	percent := (completed * 100) / total
-
 	text := fmt.Sprintf("🎨 *Generating image...*\n`[%s%s]` %d%% (%d/%d)", filled, empty, percent, completed, total)
+
+	// Draw the progress image
+	imgBytes, err := generateProgressImage(percent)
+	if err != nil {
+		log.Printf("Error generating progress image: %v", err)
+		return
+	}
+
+	tempDir := filepath.Join(h.bot.cfg.Workspace, "temp")
+	_ = os.MkdirAll(tempDir, 0755)
+	tempPath := filepath.Join(tempDir, fmt.Sprintf("progress_%s.png", genID))
+	err = os.WriteFile(tempPath, imgBytes, 0644)
+	if err != nil {
+		log.Printf("Error writing progress image: %v", err)
+		return
+	}
+	defer os.Remove(tempPath)
 
 	msgID, exists := h.msgIDs[genID]
 	if !exists {
-		// First time for this generation: send new message
-		newMsgID, err := h.bot.sendMessage(h.chatID, text, 0, "Markdown")
+		// First time: send photo
+		newMsgID, err := h.bot.sendPhoto(h.chatID, tempPath, text, 0)
 		if err == nil {
 			h.msgIDs[genID] = newMsgID
+		} else {
+			log.Printf("Error sending progress photo: %v", err)
 		}
 	} else {
-		// Update existing message for this generation
-		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
+		// Edit existing message media
+		err = h.bot.editMessagePhoto(h.chatID, msgID, tempPath, text)
+		if err != nil {
+			log.Printf("Error editing progress photo: %v", err)
+		}
 	}
 
 	// Track step for web UI persistence
 	if h.onStep != nil {
 		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
-		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: stepText, Status: "running"})
+		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: stepText, Status: "running", Width: width, Height: height})
 	}
 }
 
-func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string) {
-	// Edit message to show completion
+func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string, width, height int) {
+	// Edit message to show final image
 	if msgID, exists := h.msgIDs[genID]; exists {
-		text := "Image generated!"
-		_ = h.bot.editMessageText(h.chatID, msgID, text, "Markdown", nil)
-		// Send the actual image file
-		_ = h.bot.sendPhoto(h.chatID, imagePath, msgID)
+		err := h.bot.editMessagePhoto(h.chatID, msgID, imagePath, "🎨 *Image generated successfully!*")
+		if err != nil {
+			log.Printf("Error editing final photo: %v, sending as new", err)
+			_, _ = h.bot.sendPhoto(h.chatID, imagePath, "🎨 *Image generated successfully!*", msgID)
+		}
+	} else {
+		_, _ = h.bot.sendPhoto(h.chatID, imagePath, "🎨 *Image generated successfully!*", 0)
 	}
 
 	// Track step for web UI persistence - convert filesystem path to API URL
@@ -1917,7 +2009,7 @@ func (h *telegramImageProgressHandler) OnComplete(genID string, imagePath string
 		} else {
 			apiURL = fmt.Sprintf("/generations/%s", baseName)
 		}
-		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: "Image generated!", ImageURL: apiURL, Status: "done"})
+		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: "Image generated!", ImageURL: apiURL, Status: "done", Width: width, Height: height})
 	}
 }
 

@@ -127,3 +127,87 @@ func mustRawMessages(t *testing.T, messages []RawMsg) []json.RawMessage {
 	}
 	return out
 }
+
+func TestMergeFinalHistoryPreservesBaseAssistantSteps(t *testing.T) {
+	baseHist := []RawMsg{
+		{
+			Role:      "user",
+			Content:   "hi",
+			Timestamp: "t0",
+		},
+		{
+			Role:      "assistant",
+			Content:   "hello",
+			Timestamp: "t1",
+			Steps: []Step{
+				{Type: "thinking", Content: "think 1"},
+				{Type: "image_progress", ImageURL: "http://example.com/img.png", Status: "done"},
+			},
+			Metrics: &Metrics{TotalDuration: 42},
+		},
+		{
+			Role:      "user",
+			Content:   "next prompt",
+			Timestamp: "t2",
+		},
+	}
+
+	rec := NewRecorder(nil, "", baseHist, "model", "web")
+
+	// Simulate streaming events of the new turn
+	rec.OnThinking("think 2")
+	rec.OnContent("response 2")
+	rec.OnDone(ollama.ChatResponse{TotalDuration: 100})
+
+	// The full conversation history as received from Ollama API
+	finalHist := []ollama.Message{
+		{Role: "user", Content: "hi"},
+		{Role: "assistant", Content: "hello"},
+		{Role: "user", Content: "next prompt"},
+		{Role: "assistant", Content: "response 2"},
+	}
+
+	rec.mu.Lock()
+	mergedRaw := rec.mergeFinalHistoryLocked(finalHist)
+	rec.mu.Unlock()
+
+	if len(mergedRaw) != 4 {
+		t.Fatalf("expected 4 messages, got %d", len(mergedRaw))
+	}
+
+	var firstUser RawMsg
+	json.Unmarshal(mergedRaw[0], &firstUser)
+	if firstUser.Timestamp != "t0" || firstUser.Content != "hi" {
+		t.Errorf("first user message mismatch: %+v", firstUser)
+	}
+
+	var firstAssistant RawMsg
+	json.Unmarshal(mergedRaw[1], &firstAssistant)
+	if firstAssistant.Timestamp != "t1" || firstAssistant.Content != "hello" {
+		t.Errorf("first assistant message mismatch: %+v", firstAssistant)
+	}
+	if len(firstAssistant.Steps) != 2 || firstAssistant.Steps[1].ImageURL != "http://example.com/img.png" {
+		t.Errorf("expected first assistant steps to be preserved, got %+v", firstAssistant.Steps)
+	}
+	if firstAssistant.Metrics == nil || firstAssistant.Metrics.TotalDuration != 42 {
+		t.Errorf("expected first assistant metrics to be preserved, got %+v", firstAssistant.Metrics)
+	}
+
+	var secondUser RawMsg
+	json.Unmarshal(mergedRaw[2], &secondUser)
+	if secondUser.Timestamp != "t2" || secondUser.Content != "next prompt" {
+		t.Errorf("second user message mismatch: %+v", secondUser)
+	}
+
+	var secondAssistant RawMsg
+	json.Unmarshal(mergedRaw[3], &secondAssistant)
+	if secondAssistant.Content != "response 2" {
+		t.Errorf("second assistant content mismatch: %q", secondAssistant.Content)
+	}
+	if len(secondAssistant.Steps) != 1 || secondAssistant.Steps[0].Content != "think 2" {
+		t.Errorf("expected second assistant steps, got %+v", secondAssistant.Steps)
+	}
+	if secondAssistant.Metrics == nil || secondAssistant.Metrics.TotalDuration != 100 {
+		t.Errorf("expected second assistant metrics, got %+v", secondAssistant.Metrics)
+	}
+}

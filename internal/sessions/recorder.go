@@ -337,6 +337,7 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 
 	var userAssistantTimestamps []string
 	var historyUserMsgs []RawMsg
+	var historyAssistantMsgs []RawMsg
 	for _, hm := range r.baseHistory {
 		if hm.Role == "user" || hm.Role == "assistant" {
 			userAssistantTimestamps = append(userAssistantTimestamps, hm.Timestamp)
@@ -344,9 +345,13 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 		if hm.Role == "user" {
 			historyUserMsgs = append(historyUserMsgs, hm)
 		}
+		if hm.Role == "assistant" {
+			historyAssistantMsgs = append(historyAssistantMsgs, hm)
+		}
 	}
 
 	userMsgIdx := 0
+	assistantMsgIdx := 0
 	uaIdx := 0
 	out := make([]json.RawMessage, 0, len(finalHistory))
 	for _, msg := range finalHistory {
@@ -382,6 +387,36 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 			raw, _ := json.Marshal(rm)
 			out = append(out, raw)
 			continue
+		}
+
+		if msg.Role == "assistant" {
+			if assistantMsgIdx < len(historyAssistantMsgs) {
+				orig := historyAssistantMsgs[assistantMsgIdx]
+				assistantMsgIdx++
+				var tcRaw []json.RawMessage
+				for _, tc := range msg.ToolCalls {
+					tcBytes, _ := json.Marshal(tc)
+					tcRaw = append(tcRaw, tcBytes)
+				}
+				rm := RawMsg{
+					Role:           msg.Role,
+					Content:        msg.Content,
+					Name:           msg.Name,
+					Images:         msg.Images,
+					ToolCalls:      tcRaw,
+					Timestamp:      orig.Timestamp,
+					Model:          orig.Model,
+					Channel:        orig.Channel,
+					AttachmentRefs: orig.AttachmentRefs,
+					ImageKinds:     orig.ImageKinds,
+					Attachments:    orig.Attachments,
+					Steps:          orig.Steps,
+					Metrics:        orig.Metrics,
+				}
+				raw, _ := json.Marshal(rm)
+				out = append(out, raw)
+				continue
+			}
 		}
 
 		var tcRaw []json.RawMessage

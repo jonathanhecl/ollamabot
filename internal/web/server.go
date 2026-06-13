@@ -50,6 +50,8 @@ type Server struct {
 	clarificationsMu sync.Mutex
 	clarifications   map[string]chan string
 	sleepMgr         *learning.SleepManager
+	activeSessionsMu sync.Mutex
+	activeSessions   map[string]context.CancelFunc
 }
 
 type ModelView struct {
@@ -145,6 +147,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		goalMgr:        gm,
 		approvals:      make(map[string]chan bool),
 		clarifications: make(map[string]chan string),
+		activeSessions: make(map[string]context.CancelFunc),
 	}
 }
 
@@ -178,6 +181,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
+	mux.HandleFunc("POST /api/sessions/{id}/abort", s.handleAbortSession)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/memory", s.handleListMemory)
 	mux.HandleFunc("POST /api/memory", s.handleAddMemory)
@@ -555,6 +559,40 @@ func routerConfig(cfg config.Config) router.Config {
 	}
 }
 
+func (s *Server) registerActiveSession(sessionID string, cancel context.CancelFunc) {
+	s.activeSessionsMu.Lock()
+	defer s.activeSessionsMu.Unlock()
+	if s.activeSessions == nil {
+		s.activeSessions = make(map[string]context.CancelFunc)
+	}
+	if oldCancel, exists := s.activeSessions[sessionID]; exists {
+		oldCancel()
+	}
+	s.activeSessions[sessionID] = cancel
+}
+
+func (s *Server) unregisterActiveSession(sessionID string) {
+	s.activeSessionsMu.Lock()
+	defer s.activeSessionsMu.Unlock()
+	if s.activeSessions != nil {
+		delete(s.activeSessions, sessionID)
+	}
+}
+
+func (s *Server) abortActiveSession(sessionID string) bool {
+	s.activeSessionsMu.Lock()
+	defer s.activeSessionsMu.Unlock()
+	if s.activeSessions == nil {
+		return false
+	}
+	if cancel, exists := s.activeSessions[sessionID]; exists {
+		cancel()
+		delete(s.activeSessions, sessionID)
+		return true
+	}
+	return false
+}
+
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	sm := s.sleepMgr
@@ -672,9 +710,19 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
+	var cancel context.CancelFunc
+	var agentCtx context.Context
+	if input.SessionID != "" {
+		agentCtx, cancel = context.WithCancel(context.Background())
+		s.registerActiveSession(input.SessionID, cancel)
+		defer s.unregisterActiveSession(input.SessionID)
+	} else {
+		agentCtx = r.Context()
+	}
+
 	think := agent.ShouldThink(input.Model, input.Think, SnapshotPath(s.cachePath))
 	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, think, len(ollamaMessages))
-	finalHistory, err := runChatStream(r.Context(), cfg, client, input.Model, ollamaMessages, think, registry, w, flusher, recorder)
+	finalHistory, err := runChatStream(agentCtx, cfg, client, input.Model, ollamaMessages, think, registry, w, flusher, recorder)
 	if err != nil {
 		log.Printf("[Web] Agent error: %v", err)
 		if recorder != nil {
@@ -1035,6 +1083,12 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	sessions.NotifyUpdate(sess.ID)
 	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleAbortSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	aborted := s.abortActiveSession(id)
+	writeJSON(w, http.StatusOK, map[string]any{"aborted": aborted})
 }
 
 func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
@@ -1959,7 +2013,7 @@ type webImageProgressHandler struct {
 	recorder  *sessions.Recorder
 }
 
-func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string) {
+func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string, width, height int) {
 	if h.recorder != nil {
 		filled := strings.Repeat("█", completed)
 		empty := strings.Repeat("░", total-completed)
@@ -1968,20 +2022,29 @@ func (h *webImageProgressHandler) OnProgress(genID string, completed, total int,
 			percent = (completed * 100) / total
 		}
 		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
-		h.recorder.AddOrUpdateImageStep(sessions.Step{Type: "image_progress", GenID: genID, Content: stepText, Status: "running"})
+		h.recorder.AddOrUpdateImageStep(sessions.Step{
+			Type:    "image_progress",
+			GenID:   genID,
+			Content: stepText,
+			Status:  "running",
+			Width:   width,
+			Height:  height,
+		})
 	}
 	writeSSE(h.w, "image_progress", map[string]any{
 		"completed": completed,
 		"total":     total,
 		"status":    status,
 		"gen_id":    genID,
+		"width":     width,
+		"height":    height,
 	})
 	if h.flusher != nil {
 		h.flusher.Flush()
 	}
 }
 
-func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
+func (h *webImageProgressHandler) OnComplete(genID string, imagePath string, width, height int) {
 	// Convert filesystem path to API URL
 	baseName := filepath.Base(imagePath)
 	var apiURL string
@@ -1991,11 +2054,21 @@ func (h *webImageProgressHandler) OnComplete(genID string, imagePath string) {
 		apiURL = fmt.Sprintf("/generations/%s", baseName)
 	}
 	if h.recorder != nil {
-		h.recorder.AddOrUpdateImageStep(sessions.Step{Type: "image_progress", GenID: genID, Content: "Image generated!", ImageURL: apiURL, Status: "done"})
+		h.recorder.AddOrUpdateImageStep(sessions.Step{
+			Type:     "image_progress",
+			GenID:    genID,
+			Content:  "Image generated!",
+			ImageURL: apiURL,
+			Status:   "done",
+			Width:    width,
+			Height:   height,
+		})
 	}
 	writeSSE(h.w, "image_complete", map[string]any{
 		"path":   apiURL,
 		"gen_id": genID,
+		"width":  width,
+		"height": height,
 	})
 	if h.flusher != nil {
 		h.flusher.Flush()

@@ -46,8 +46,8 @@ type Registry struct {
 
 // ImageProgressHandler is called during image generation with progress updates
 type ImageProgressHandler interface {
-	OnProgress(genID string, completed, total int, message string)
-	OnComplete(genID string, imagePath string)
+	OnProgress(genID string, completed, total int, message string, width, height int)
+	OnComplete(genID string, imagePath string, width, height int)
 	OnError(genID string, err error)
 }
 
@@ -943,7 +943,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				log.Printf("[generate_image] Progress: %d/%d", chunk.Completed, chunk.Total)
 				// Call progress handler if set (e.g., for Telegram/Web UI updates)
 				if r.imageProgressHandler != nil {
-					r.imageProgressHandler.OnProgress(genID, chunk.Completed, chunk.Total, "generating")
+					r.imageProgressHandler.OnProgress(genID, chunk.Completed, chunk.Total, "generating", width, height)
 				}
 			}
 			// Image data comes in Image field on the final done chunk
@@ -983,7 +983,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		log.Printf("[generate_image] Image saved to: %s (%d bytes)", filePath, len(imageBytes))
 		// Call completion handler if set - pass real filesystem path
 		if r.imageProgressHandler != nil {
-			r.imageProgressHandler.OnComplete(genID, filePath)
+			r.imageProgressHandler.OnComplete(genID, filePath, width, height)
 		}
 		return "Image generated successfully.", nil
 	default:

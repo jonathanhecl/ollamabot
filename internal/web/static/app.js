@@ -387,9 +387,16 @@ if (els.logoutBtn) {
   });
 }
 if (els.skipBtn) {
-  els.skipBtn.addEventListener("click", () => {
+  els.skipBtn.addEventListener("click", async () => {
     if (state.currentAbortController) {
       state.currentAbortController.abort();
+    }
+    if (state.activeSessionId) {
+      try {
+        await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/abort`, { method: "POST" });
+      } catch (err) {
+        console.error("Failed to abort session on backend:", err);
+      }
     }
   });
 }
@@ -2124,7 +2131,7 @@ async function processNextQueueItem() {
       });
       break;
     }
-    if (msg.role === "user" || msg.role === "assistant") {
+    if (msg.role === "user" || msg.role === "assistant" || msg.role === "tool") {
       // Never re-send audio binary data in history: its transcription replaces
       // it. Images are kept; the backend drops them when vision routing is
       // active (the description already lives in the history).
@@ -2145,7 +2152,7 @@ async function processNextQueueItem() {
       }
 
       let historyContent = msg.content || "";
-      if (!historyContent) {
+      if (!historyContent && msg.role === "user") {
         const audioTexts = atts
           .filter((a) => a.kind === "audio" && a.transcription)
           .map((a) => a.transcription);
@@ -2159,6 +2166,8 @@ async function processNextQueueItem() {
         content: historyContent,
         images: images.length ? images : undefined,
         image_kinds: images.length ? kinds : undefined,
+        tool_calls: msg.tool_calls || undefined,
+        name: msg.name || undefined,
       });
     }
   }
@@ -2329,19 +2338,34 @@ async function processNextQueueItem() {
         // Show image generation progress with fixed-width format
         // Each generation has its own unique ID
         const genID = value.gen_id || "unknown";
-        const filled = "█".repeat(value.completed);
-        const empty = "░".repeat(value.total - value.completed);
-        const percent = Math.round((value.completed / value.total) * 100);
-        const text = `Generating image... [${filled}${empty}] ${percent}% (${value.completed}/${value.total})`;
+        const completed = value.completed || 0;
+        const total = value.total || 4;
+        const percent = Math.round((completed / total) * 100);
+        const text = `Generating image... ${percent}% (${completed}/${total})`;
 
         // Find step by generation ID to update existing or create new
         let step = assistant.steps.find(s => s.type === "image_progress" && s.genID === genID);
         if (!step) {
-          step = { type: "image_progress", genID: genID, content: text, status: "running" };
+          step = {
+            type: "image_progress",
+            genID: genID,
+            content: text,
+            status: "running",
+            completed: completed,
+            total: total,
+            percent: percent,
+            width: value.width || 0,
+            height: value.height || 0
+          };
           assistant.steps.push(step);
         } else if (step.status === "running") {
           // Only update if still running - don't reactivate done/error bars
           step.content = text;
+          step.completed = completed;
+          step.total = total;
+          step.percent = percent;
+          if (value.width) step.width = value.width;
+          if (value.height) step.height = value.height;
         }
         renderMessages();
       },
@@ -2355,8 +2379,18 @@ async function processNextQueueItem() {
           step.content = `Image generated!`;
           step.imageURL = absURL;
           step.status = "done";
+          if (value.width) step.width = value.width;
+          if (value.height) step.height = value.height;
         } else if (!step) {
-          assistant.steps.push({ type: "image_progress", genID: genID, content: `Image generated!`, imageURL: absURL, status: "done" });
+          assistant.steps.push({
+            type: "image_progress",
+            genID: genID,
+            content: `Image generated!`,
+            imageURL: absURL,
+            status: "done",
+            width: value.width || 0,
+            height: value.height || 0
+          });
         }
         renderMessages();
       },
@@ -2731,13 +2765,57 @@ function renderStep(step, isLive = false, isLastStep = false) {
       return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "image_progress": {
-      const statusClass = step.status === "done" ? "done" : step.status === "error" ? "error" : "running";
-      const icon = step.status === "done" ? "" : step.status === "error" ? "❌ " : "🎨 ";
-      let inner = `<pre>${icon}${escapeHtml(step.content || "")}</pre>`;
-      if (step.imageURL) {
-        inner += `<img src="${escapeHtml(step.imageURL)}" alt="Generated image" class="generated-image" />`;
+      let status = step.status;
+      if (!status) {
+        status = step.imageURL ? "done" : "error";
       }
-      return `<div class="step step-image-progress ${statusClass}">${inner}</div>`;
+
+      const w = step.width || 1024;
+      const h = step.height || 1024;
+
+      if (status === "done") {
+        return `
+          <div class="step step-image-progress done">
+            <div class="image-gen-completed" style="aspect-ratio: ${w} / ${h};">
+              <img src="${escapeHtml(step.imageURL)}" alt="Generated image" class="generated-image media-preview image" data-url="${escapeHtml(step.imageURL)}" style="aspect-ratio: ${w} / ${h};" />
+            </div>
+          </div>
+        `;
+      } else if (status === "error") {
+        return `
+          <div class="step step-image-progress error">
+            <div class="image-gen-placeholder error-placeholder" style="aspect-ratio: ${w} / ${h};">
+              <div class="placeholder-overlay error-overlay">
+                <span class="error-icon">⚠️</span>
+                <span class="status-text">${escapeHtml(step.content || "Image generation failed")}</span>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        const pct = step.percent || 0;
+        return `
+          <div class="step step-image-progress running">
+            <div class="image-gen-placeholder" style="aspect-ratio: ${w} / ${h};">
+              <div class="gradient-bg">
+                <div class="blob blob-1"></div>
+                <div class="blob blob-2"></div>
+                <div class="blob blob-3"></div>
+              </div>
+              <div class="noise-overlay"></div>
+              <div class="placeholder-overlay">
+                <div class="status-info">
+                  <span class="status-spinner"></span>
+                  <span class="status-text">${escapeHtml(step.content || "Generating image...")}</span>
+                </div>
+                <div class="progress-bar-container">
+                  <div class="progress-bar-fill" style="width: ${pct}%;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      }
     }
     default:
       return "";
@@ -3309,6 +3387,7 @@ function normalizeRawMessages(rawMessages) {
       type: msg.type || "",
       steps,
       images: msg.images || undefined,
+      tool_calls: msg.tool_calls || msg.toolCalls || undefined,
       attachments: (msg.attachments || []).map((att) => {
         let url = att.url;
         if (!url || url === "undefined") {
@@ -3558,10 +3637,12 @@ async function saveSession() {
   try {
     const messages = state.messages.filter((msg) => msg.role !== "system").map((msg) => ({
       role: msg.role,
+      name: msg.name || undefined,
       content: msg.content || "",
       model: msg.model || undefined,
       channel: msg.channel || undefined,
       type: msg.type || undefined,
+      tool_calls: msg.tool_calls || undefined,
       steps: (msg.steps || []).map((s) => {
         const { status, ...rest } = s;
         return rest;

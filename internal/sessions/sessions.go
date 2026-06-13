@@ -72,6 +72,8 @@ type Step struct {
 	Result    string `json:"result,omitempty"`
 	Status    string `json:"status,omitempty"`
 	Call      any    `json:"call,omitempty"` // for tool_call steps with full call object
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
 }
 
 // Metrics mirrors Ollama performance metrics stored per assistant turn.
