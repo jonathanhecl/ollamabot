@@ -2770,8 +2770,8 @@ function renderStep(step, isLive = false, isLastStep = false) {
         status = step.imageURL ? "done" : "error";
       }
 
-      const w = step.width || 1024;
-      const h = step.height || 1024;
+      const w = step.width || 512;
+      const h = step.height || 512;
 
       if (status === "done") {
         return `
@@ -3365,18 +3365,32 @@ function normalizeRawMessages(rawMessages) {
       const { status, ...rest } = s;
       return rest;
     });
+
+    // Filter out duplicate tool_call steps if a corresponding tool_exec step exists
+    steps = steps.filter((step) => {
+      if (step.type === "tool_call") {
+        const name = step.call?.function?.name;
+        if (name && steps.some((other) => other.type === "tool_exec" && other.name === name)) {
+          return false;
+        }
+      }
+      return true;
+    });
+
     // Prepend thinking step if present, even when steps already exist from backend
     if (msg.thinking && !steps.some((s) => s.type === "thinking")) {
       steps = [{ type: "thinking", content: msg.thinking }, ...steps];
     }
-    // Always convert legacy tool_calls / tool_results if present
-    const tc = msg.toolCalls || msg.tool_calls || [];
-    const tr = msg.toolResults || msg.tool_results || [];
-    for (const call of tc) {
-      steps.push({ type: "tool_call", call });
-    }
-    for (const res of tr) {
-      steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
+    // Convert legacy tool_calls / tool_results only if steps is empty
+    if (!msg.steps || msg.steps.length === 0) {
+      const tc = msg.toolCalls || msg.tool_calls || [];
+      const tr = msg.toolResults || msg.tool_results || [];
+      for (const call of tc) {
+        steps.push({ type: "tool_call", call });
+      }
+      for (const res of tr) {
+        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
+      }
     }
     return {
       role: msg.role || "user",
@@ -3643,7 +3657,15 @@ async function saveSession() {
       channel: msg.channel || undefined,
       type: msg.type || undefined,
       tool_calls: msg.tool_calls || undefined,
-      steps: (msg.steps || []).map((s) => {
+      steps: (msg.steps || []).filter((step) => {
+        if (step.type === "tool_call") {
+          const name = step.call?.function?.name;
+          if (name && (msg.steps || []).some((other) => other.type === "tool_exec" && other.name === name)) {
+            return false;
+          }
+        }
+        return true;
+      }).map((s) => {
         const { status, ...rest } = s;
         return rest;
       }),

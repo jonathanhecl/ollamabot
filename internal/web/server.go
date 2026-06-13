@@ -2015,13 +2015,11 @@ type webImageProgressHandler struct {
 
 func (h *webImageProgressHandler) OnProgress(genID string, completed, total int, status string, width, height int) {
 	if h.recorder != nil {
-		filled := strings.Repeat("█", completed)
-		empty := strings.Repeat("░", total-completed)
 		percent := 0
 		if total > 0 {
 			percent = (completed * 100) / total
 		}
-		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
+		stepText := fmt.Sprintf("Generating image... %d%% (%d/%d)", percent, completed, total)
 		h.recorder.AddOrUpdateImageStep(sessions.Step{
 			Type:    "image_progress",
 			GenID:   genID,
