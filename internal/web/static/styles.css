@@ -553,10 +553,16 @@ h2 {
 
 /* --- Thinking step --- */
 .step-thinking {
-  border: 1px dashed var(--line);
-  padding: 8px;
-  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 0;
   background: #12150f;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: border-color 0.2s ease;
+}
+
+.step-thinking[open] {
+  border-color: rgba(214, 255, 95, 0.18);
 }
 
 .step-thinking summary {
@@ -564,21 +570,37 @@ h2 {
   color: var(--accent-2);
   font-weight: 800;
   font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  transition: background 0.2s ease;
+  list-style: none;
+  user-select: none;
+}
+
+.step-thinking summary::-webkit-details-marker { display: none; }
+.step-thinking summary::before {
+  content: "▸";
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+}
+.step-thinking[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.step-thinking summary:hover {
+  background: rgba(214, 255, 95, 0.04);
 }
 
 .step-thinking pre {
-  margin: 8px 0 0;
+  margin: 0 10px 8px;
   overflow: auto;
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.5;
   color: var(--muted);
-}
-
-/* Smooth expand/collapse for thinking details */
-.step-thinking pre {
   transition: max-height 0.3s ease, opacity 0.25s ease;
   max-height: 0;
   opacity: 0;
