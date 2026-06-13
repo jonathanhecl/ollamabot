@@ -3384,10 +3384,56 @@ function groupMessagesAndTools(messages) {
       continue;
     }
 
-    processed.push({
+    if (msg.role === "assistant" && processed.length > 0 && processed[processed.length - 1].role === "assistant") {
+      const lastAssistant = processed[processed.length - 1];
+
+      // Concatenate content, separating with a newline if both have content
+      if (lastAssistant.content && msg.content) {
+        lastAssistant.content += "\n" + msg.content;
+      } else if (msg.content) {
+        lastAssistant.content = msg.content;
+      }
+
+      // Merge steps
+      if (msg.steps && msg.steps.length > 0) {
+        lastAssistant.steps = [...lastAssistant.steps, ...msg.steps.map(s => ({ ...s }))];
+      }
+
+      // Merge streaming/waiting states
+      lastAssistant.streaming = lastAssistant.streaming || msg.streaming;
+      lastAssistant.waiting = lastAssistant.waiting || msg.waiting;
+
+      // Merge metrics
+      if (msg.metrics) {
+        if (!lastAssistant.metrics) {
+          lastAssistant.metrics = {
+            total_duration: 0,
+            load_duration: 0,
+            prompt_eval_count: 0,
+            prompt_eval_duration: 0,
+            eval_count: 0,
+            eval_duration: 0,
+          };
+        }
+        lastAssistant.metrics.total_duration += (msg.metrics.total_duration || 0);
+        lastAssistant.metrics.load_duration += (msg.metrics.load_duration || 0);
+        lastAssistant.metrics.prompt_eval_count += (msg.metrics.prompt_eval_count || 0);
+        lastAssistant.metrics.prompt_eval_duration += (msg.metrics.prompt_eval_duration || 0);
+        lastAssistant.metrics.eval_count += (msg.metrics.eval_count || 0);
+        lastAssistant.metrics.eval_duration += (msg.metrics.eval_duration || 0);
+      }
+
+      continue;
+    }
+
+    const copy = {
       ...msg,
-      steps: [...(msg.steps || [])]
-    });
+      steps: (msg.steps || []).map(s => ({ ...s }))
+    };
+    if (msg.metrics) {
+      copy.metrics = { ...msg.metrics };
+    }
+    processed.push(copy);
   }
   return processed;
 }
