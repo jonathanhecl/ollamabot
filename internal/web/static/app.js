@@ -1424,6 +1424,10 @@ async function saveRoleModels() {
       model_subagent: state.subagentModel,
       model_learning: state.learningModel,
       server_password: state.settings.server_password || "",
+      telegram_session_expiry_min: state.settings.telegram_session_expiry_min || 30,
+      telegram_bot_token: state.settings.telegram_bot_token || "",
+      telegram_authorized_ids: state.settings.telegram_authorized_ids || "",
+      telegram_startup_notification: state.settings.telegram_startup_notification !== false,
     }),
   });
 

@@ -367,14 +367,15 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.TelegramSessionExpiryMin = 30
 	}
 	s.cfg.TelegramStartupNotification = input.TelegramStartupNotification
-	// Telegram Bot Token: only update if not masked sentinel
+	// Telegram Bot Token: only update if explicitly provided and not masked sentinel.
+	// Empty string is treated as "no change" to prevent partial settings POSTs
+	// (e.g. from saveRoleModels) from accidentally clearing the token.
 	newBotToken := strings.TrimSpace(input.TelegramBotToken)
 	if newBotToken != "" && newBotToken != "***" {
 		s.cfg.TelegramBotToken = newBotToken
-	} else if newBotToken == "" {
-		s.cfg.TelegramBotToken = ""
 	}
-	// Telegram Authorized IDs: parse CSV
+	// Telegram Authorized IDs: only update if explicitly provided.
+	// Empty string is treated as "no change" for the same reason.
 	rawAuthorizedIDs := strings.TrimSpace(input.TelegramAuthorizedIDs)
 	if rawAuthorizedIDs != "" {
 		var ids []string
@@ -385,8 +386,6 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		s.cfg.TelegramAuthorizedIDs = ids
-	} else {
-		s.cfg.TelegramAuthorizedIDs = []string{}
 	}
 	s.cfg.Workspace = workspace
 	s.cfg.SessionsPath = sessionsPath
