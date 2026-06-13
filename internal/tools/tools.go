@@ -976,11 +976,11 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		req := ollama.GenerateRequest{
 			Model:  r.imageModel,
 			Prompt: prompt,
+			Width:  width,
+			Height: height,
+			Steps:  r.imageSteps,
 			Options: map[string]any{
-				"width":  width,
-				"height": height,
-				"steps":  r.imageSteps,
-				"seed":   seed,
+				"seed": seed,
 			},
 		}
 

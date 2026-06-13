@@ -134,11 +134,11 @@ func (r *Router) GenerateImage(ctx context.Context, prompt string, width, height
 	req := ollama.GenerateRequest{
 		Model:  model,
 		Prompt: prompt,
+		Width:  width,
+		Height: height,
+		Steps:  steps,
 		Options: map[string]any{
-			"width":  width,
-			"height": height,
-			"steps":  steps,
-			"seed":   seed,
+			"seed": seed,
 		},
 	}
 

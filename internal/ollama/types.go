@@ -125,6 +125,9 @@ type GenerateRequest struct {
 	Prompt  string         `json:"prompt"`
 	Images  []string       `json:"images,omitempty"` // For img2img
 	Stream  *bool          `json:"stream,omitempty"`
+	Width   int            `json:"width,omitempty"`
+	Height  int            `json:"height,omitempty"`
+	Steps   int            `json:"steps,omitempty"`
 	Options map[string]any `json:"options,omitempty"`
 }
 
