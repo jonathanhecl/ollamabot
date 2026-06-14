@@ -25,6 +25,11 @@ type ClarificationHandler interface {
 	RequestClarification(ctx context.Context, question string, options []string) (string, error)
 }
 
+// PlanConfirmationHandler is implemented by clients wishing to present a plan to the user for approval.
+type PlanConfirmationHandler interface {
+	RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error)
+}
+
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
 	enabled              map[string]bool
@@ -35,15 +40,17 @@ type Registry struct {
 	embedModel           string
 	todoStore            *TodoStore
 	approvalHandler      ApprovalHandler
-	clarificationHandler ClarificationHandler
-	skillsPath           string
-	searchCfg            SearchConfig
-	imageModel           string
-	imageSteps           int
-	imageProgressHandler ImageProgressHandler
-	attachmentHandler    AttachmentGeneratedHandler
-	sessionID            string
-	sessionsPath         string
+	clarificationHandler    ClarificationHandler
+	planConfirmationHandler PlanConfirmationHandler
+	planConfirmMode         string
+	skillsPath              string
+	searchCfg               SearchConfig
+	imageModel              string
+	imageSteps              int
+	imageProgressHandler    ImageProgressHandler
+	attachmentHandler       AttachmentGeneratedHandler
+	sessionID               string
+	sessionsPath            string
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -67,6 +74,16 @@ func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
 // SetClarificationHandler assigns a callback handler to ask clarification questions.
 func (r *Registry) SetClarificationHandler(h ClarificationHandler) {
 	r.clarificationHandler = h
+}
+
+// SetPlanConfirmationHandler assigns a callback handler to present a plan.
+func (r *Registry) SetPlanConfirmationHandler(h PlanConfirmationHandler) {
+	r.planConfirmationHandler = h
+}
+
+// SetPlanConfirmMode sets the plan confirmation mode (always, auto, smart).
+func (r *Registry) SetPlanConfirmMode(mode string) {
+	r.planConfirmMode = mode
 }
 
 // SetSkillsPath assigns the skills directory path.
@@ -112,9 +129,10 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		memoryStore: memoryStore,
 		client:      client,
 		embedModel:  embedModel,
-		todoStore:   NewTodoStore(),
-		skillsPath:  "skills",
-		searchCfg:   searchCfg,
+		todoStore:       NewTodoStore(),
+		planConfirmMode: "smart",
+		skillsPath:      "skills",
+		searchCfg:       searchCfg,
 	}
 
 	if webSearch {
@@ -518,6 +536,32 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["present_plan"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "present_plan",
+			Description: "Present a structured plan to the user for approval before executing a complex multi-step task.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"summary": map[string]any{
+						"type":        "string",
+						"description": "A brief summary explaining what the agent plans to accomplish.",
+					},
+					"steps": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "The ordered list of concrete, actionable steps the agent will perform.",
+					},
+				},
+				"required": []string{"summary", "steps"},
+			},
+		},
+	})
+
 	// Register Generate Image Tool (enabled when image model is configured)
 	r.enabled["generate_image"] = true
 	r.defs = append(r.defs, ollama.Tool{
@@ -593,6 +637,15 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 
 // Definitions returns the Ollama tool definitions to expose to the model.
 func (r *Registry) Definitions() []ollama.Tool {
+	if r.planConfirmMode == "auto" {
+		var filtered []ollama.Tool
+		for _, d := range r.defs {
+			if d.Function.Name != "present_plan" {
+				filtered = append(filtered, d)
+			}
+		}
+		return filtered
+	}
 	return r.defs
 }
 
@@ -911,6 +964,34 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("no clarification handler configured")
 		}
 		return r.clarificationHandler.RequestClarification(ctx, question, options)
+	case "present_plan":
+		summary, _ := args["summary"].(string)
+		stepsVal := args["steps"]
+		if summary == "" || stepsVal == nil {
+			return "", fmt.Errorf("missing required arguments for present_plan")
+		}
+		var steps []string
+		bytes, err := json.Marshal(stepsVal)
+		if err != nil {
+			return "", fmt.Errorf("failed to encode steps: %w", err)
+		}
+		if err := json.Unmarshal(bytes, &steps); err != nil {
+			return "", fmt.Errorf("failed to decode steps: %w", err)
+		}
+		if len(steps) == 0 {
+			return "", fmt.Errorf("present_plan requires at least 1 step")
+		}
+		if r.planConfirmationHandler == nil {
+			return "Plan auto-approved (no client handler configured). Proceeding with execution.", nil
+		}
+		approved, err := r.planConfirmationHandler.RequestPlanApproval(ctx, summary, steps)
+		if err != nil {
+			return "", fmt.Errorf("plan approval failed: %w", err)
+		}
+		if !approved {
+			return "Plan rejected by the user. Please stop and ask the user for clarification or propose a new plan.", nil
+		}
+		return "Plan approved by the user. Proceed with the steps.", nil
 	case "generate_image":
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {

@@ -45,13 +45,15 @@ type Server struct {
 	memoryStore      *memory.Store
 	autoMgr          *agent.AutonomousManager
 	goalMgr          *agent.GoalManager
-	approvalsMu      sync.Mutex
-	approvals        map[string]chan bool
-	clarificationsMu sync.Mutex
-	clarifications   map[string]chan string
-	sleepMgr         *learning.SleepManager
-	activeSessionsMu sync.Mutex
-	activeSessions   map[string]context.CancelFunc
+	approvalsMu         sync.Mutex
+	approvals           map[string]chan bool
+	clarificationsMu    sync.Mutex
+	clarifications      map[string]chan string
+	planConfirmationsMu sync.Mutex
+	planConfirmations   map[string]chan bool
+	sleepMgr            *learning.SleepManager
+	activeSessionsMu    sync.Mutex
+	activeSessions      map[string]context.CancelFunc
 }
 
 type ModelView struct {
@@ -93,6 +95,7 @@ type SettingsResponse struct {
 	ModelEmbeddings              string `json:"model_embeddings"`
 	ModelImage                   string `json:"model_image"`
 	ImageSteps                   int    `json:"image_steps"`
+	PlanConfirmation             string `json:"plan_confirmation"`
 	Workspace                    string `json:"workspace"`
 	SessionsPath                 string `json:"sessions_path"`
 	MemoryPath                   string `json:"memory_path"`
@@ -145,9 +148,10 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		memoryStore:    ms,
 		autoMgr:        am,
 		goalMgr:        gm,
-		approvals:      make(map[string]chan bool),
-		clarifications: make(map[string]chan string),
-		activeSessions: make(map[string]context.CancelFunc),
+		approvals:         make(map[string]chan bool),
+		clarifications:    make(map[string]chan string),
+		planConfirmations: make(map[string]chan bool),
+		activeSessions:    make(map[string]context.CancelFunc),
 	}
 }
 
@@ -191,6 +195,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
+	mux.HandleFunc("POST /api/tools/plan-confirm", s.handlePlanConfirm)
 
 	// Autonomous projects endpoints
 	mux.HandleFunc("GET /api/autonomous/projects", s.handleListProjects)
@@ -362,6 +367,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
 	s.cfg.SessionAutoName = input.SessionAutoName
+	s.cfg.PlanConfirmation = strings.TrimSpace(input.PlanConfirmation)
+	if s.cfg.PlanConfirmation == "" {
+		s.cfg.PlanConfirmation = "smart"
+	}
 	s.cfg.TelegramSessionExpiryMin = input.TelegramSessionExpiryMin
 	if s.cfg.TelegramSessionExpiryMin <= 0 {
 		s.cfg.TelegramSessionExpiryMin = 30
@@ -691,6 +700,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		flusher: flusher,
 	})
 	registry.SetClarificationHandler(&webClarificationHandler{
+		server:  s,
+		w:       w,
+		flusher: flusher,
+	})
+	registry.SetPlanConfirmationHandler(&webPlanConfirmationHandler{
 		server:  s,
 		w:       w,
 		flusher: flusher,
@@ -1716,6 +1730,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelEmbeddings:              cfg.OllamaModelEmbed,
 		ModelImage:                   cfg.OllamaModelImage,
 		ImageSteps:                   cfg.OllamaImageSteps,
+		PlanConfirmation:             cfg.PlanConfirmation,
 		Workspace:                    cfg.Workspace,
 		SessionsPath:                 cfg.SessionsPath,
 		MemoryPath:                   cfg.MemoryPath,
@@ -2084,6 +2099,96 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 			chosen := selectDefaultOption(options)
 			log.Printf("[Web] Clarification timed out. Auto-selected default option: %q", chosen)
 			return chosen, nil
+		}
+	}
+}
+
+type planConfirmRequest struct {
+	ID       string `json:"id"`
+	Approved bool   `json:"approved"`
+}
+
+func (s *Server) handlePlanConfirm(w http.ResponseWriter, r *http.Request) {
+	var req planConfirmRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	req.ID = strings.TrimSpace(req.ID)
+	if req.ID == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("missing id"))
+		return
+	}
+
+	s.planConfirmationsMu.Lock()
+	ch, ok := s.planConfirmations[req.ID]
+	s.planConfirmationsMu.Unlock()
+
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("plan confirmation request not found or expired"))
+		return
+	}
+
+	// Notify the waiting block
+	select {
+	case ch <- req.Approved:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "processed"})
+	default:
+		writeError(w, http.StatusGone, fmt.Errorf("plan confirmation channel was closed or already answered"))
+	}
+}
+
+type webPlanConfirmationHandler struct {
+	server  *Server
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error) {
+	planID := fmt.Sprintf("web_plan_%d", time.Now().UnixNano())
+	ch := make(chan bool, 1)
+
+	h.server.planConfirmationsMu.Lock()
+	h.server.planConfirmations[planID] = ch
+	h.server.planConfirmationsMu.Unlock()
+
+	defer func() {
+		h.server.planConfirmationsMu.Lock()
+		delete(h.server.planConfirmations, planID)
+		h.server.planConfirmationsMu.Unlock()
+	}()
+
+	// Send SSE plan confirmation request event
+	writeSSE(h.w, "tool_plan_confirmation", map[string]any{
+		"id":      planID,
+		"summary": summary,
+		"steps":   steps,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	timeout := time.After(5 * time.Minute)
+
+	for {
+		select {
+		case approved := <-ch:
+			return approved, nil
+		case <-ticker.C:
+			// Send ping comment to keep SSE stream open
+			_, _ = h.w.Write([]byte(": ping\n\n"))
+			if h.flusher != nil {
+				h.flusher.Flush()
+			}
+		case <-ctx.Done():
+			log.Printf("[Web] Plan confirmation cancelled. Defaulting to reject.")
+			return false, ctx.Err()
+		case <-timeout:
+			log.Printf("[Web] Plan confirmation timed out. Auto-approving.")
+			return true, nil
 		}
 	}
 }

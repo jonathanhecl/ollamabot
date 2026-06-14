@@ -204,6 +204,14 @@ const els = {
   clarificationCancel: document.querySelector("#clarificationCancel"),
   clarificationCustomInput: document.querySelector("#clarificationCustomInput"),
   clarificationSendCustom: document.querySelector("#clarificationSendCustom"),
+  planConfirmationSelect: document.querySelector("#planConfirmationSelect"),
+  planConfirmationCard: document.querySelector("#planConfirmationCard"),
+  planSummaryText: document.querySelector("#planSummaryText"),
+  planStepsContainer: document.querySelector("#planStepsContainer"),
+  planRejectBtn: document.querySelector("#planRejectBtn"),
+  planApproveBtn: document.querySelector("#planApproveBtn"),
+  planCountdownContainer: document.querySelector("#planCountdownContainer"),
+  planCountdown: document.querySelector("#planCountdown"),
   
   // Memory DOM Elements
   openMemory: document.querySelector("#openMemory"),
@@ -323,6 +331,7 @@ els.openSettings.addEventListener("click", async () => {
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
+  els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
   els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
@@ -1259,6 +1268,7 @@ async function loadSettings() {
   els.telegramBotToken.value = state.settings.telegram_bot_token || "";
   els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
   els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
+  els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
 
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
@@ -1364,6 +1374,7 @@ async function saveSettings(event) {
       telegram_bot_token: els.telegramBotToken.value.trim(),
       telegram_authorized_ids: els.telegramAuthorizedIds.value.trim(),
       telegram_startup_notification: els.telegramStartupNotification.checked,
+      plan_confirmation: els.planConfirmationSelect.value,
       server_port: els.webPort.value.trim() || "8080",
       sleep_mode_enabled: els.sleepModeToggle.checked,
       sleep_mode_inactivity_threshold: els.sleepModeInactivity.value.trim(),
@@ -1428,6 +1439,7 @@ async function saveRoleModels() {
       telegram_bot_token: state.settings.telegram_bot_token || "",
       telegram_authorized_ids: state.settings.telegram_authorized_ids || "",
       telegram_startup_notification: state.settings.telegram_startup_notification !== false,
+      plan_confirmation: state.settings.plan_confirmation || "smart",
     }),
   });
 
@@ -2249,6 +2261,9 @@ async function processNextQueueItem() {
       },
       tool_clarification_required: (value) => {
         showClarificationDialog(value.id, value.question, value.options);
+      },
+      tool_plan_confirmation: (value) => {
+        showPlanConfirmationCard(value.id, value.summary, value.steps);
       },
       media_pre_processing: (value) => {
         // Structured payload: { summary, attachments: [{index, kind, action,
@@ -3359,6 +3374,86 @@ async function respondToClarification(id, option) {
     // Hide the inline card
     els.clarificationCard.style.display = "none";
     els.messages.appendChild(els.clarificationCard);
+  }
+}
+
+let planConfirmationInterval = null;
+
+function showPlanConfirmationCard(id, summary, steps) {
+  if (planConfirmationInterval) {
+    clearInterval(planConfirmationInterval);
+  }
+  state.currentPlanConfirmationId = id;
+  els.planSummaryText.textContent = summary;
+  els.planStepsContainer.innerHTML = "";
+  
+  steps.forEach(step => {
+    const li = document.createElement("li");
+    li.textContent = step;
+    els.planStepsContainer.appendChild(li);
+  });
+  
+  els.planRejectBtn.onclick = () => {
+    respondToPlanConfirmation(id, false);
+  };
+
+  els.planApproveBtn.onclick = () => {
+    respondToPlanConfirmation(id, true);
+  };
+  
+  const messagesContainer = els.messages;
+  const existingCard = els.planConfirmationCard;
+  if (existingCard.parentNode !== messagesContainer) {
+    messagesContainer.appendChild(existingCard);
+  }
+  existingCard.style.display = "block";
+  
+  existingCard.scrollIntoView({ behavior: "smooth", block: "center" });
+  
+  const countdownEl = els.planCountdown;
+  if (countdownEl) {
+    const startTime = Date.now();
+    const duration = 300 * 1000; // 5 minutes
+    
+    const updateTimer = () => {
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, duration - elapsed);
+      const totalSecs = Math.ceil(remaining / 1000);
+      const mins = Math.floor(totalSecs / 60);
+      const secs = totalSecs % 60;
+      countdownEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+      if (remaining <= 0) {
+        clearInterval(planConfirmationInterval);
+        planConfirmationInterval = null;
+        respondToPlanConfirmation(id, true);
+      }
+    };
+    updateTimer();
+    planConfirmationInterval = setInterval(updateTimer, 500);
+  }
+}
+
+function clearPlanConfirmation() {
+  if (planConfirmationInterval) {
+    clearInterval(planConfirmationInterval);
+    planConfirmationInterval = null;
+  }
+  state.currentPlanConfirmationId = null;
+}
+
+async function respondToPlanConfirmation(id, approved) {
+  clearPlanConfirmation();
+  try {
+    await fetch("/api/tools/plan-confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, approved }),
+    });
+  } catch (err) {
+    console.error("Failed to send plan confirmation response:", err);
+  } finally {
+    els.planConfirmationCard.style.display = "none";
+    els.messages.appendChild(els.planConfirmationCard);
   }
 }
 

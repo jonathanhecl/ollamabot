@@ -3546,3 +3546,37 @@ textarea {
   padding-top: 10px;
   border-top: 1px solid var(--line);
 }
+
+/* Inline Plan Confirmation Card */
+.plan-confirmation-card {
+  max-width: 85%;
+  width: fit-content;
+  min-width: 320px;
+  border: 1px solid rgba(99, 210, 255, 0.3);
+  background: linear-gradient(135deg, rgba(13, 27, 42, 0.9) 0%, rgba(9, 17, 28, 0.95) 100%);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 12px auto;
+  position: relative;
+  z-index: 10;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25), 0 0 15px rgba(99, 210, 255, 0.1);
+  animation: planCardFadeIn 0.3s ease-out;
+}
+
+@keyframes planCardFadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.plan-confirmation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(99, 210, 255, 0.15);
+  padding-bottom: 6px;
+}
+
+.plan-steps-list li {
+  margin-bottom: 6px;
+}

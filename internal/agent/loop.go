@@ -42,6 +42,7 @@ func NewAgent(cfg config.Config, client *ollama.Client, registry *tools.Registry
 	if registry != nil {
 		registry.SetImageModel(cfg.OllamaModelImage)
 		registry.SetImageSteps(cfg.OllamaImageSteps)
+		registry.SetPlanConfirmMode(cfg.PlanConfirmation)
 	}
 	return &Agent{
 		cfg:      cfg,
@@ -202,6 +203,25 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			Role:    "system",
 			Content: clarificationReinforce,
 		})
+
+		// Inject reinforcement for plan confirmation
+		planMode := a.cfg.PlanConfirmation
+		if planMode == "" {
+			planMode = "smart"
+		}
+		if planMode == "always" {
+			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan."
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: planReinforce,
+			})
+		} else if planMode == "smart" {
+			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. For simple questions or single-action tasks, you can respond directly without calling 'present_plan'."
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: planReinforce,
+			})
+		}
 
 		// 2. Build system instructions incorporating Todo checklists, goals, and skills
 		activeMessages := make([]ollama.Message, 0, len(systemPrefix)+len(messages))

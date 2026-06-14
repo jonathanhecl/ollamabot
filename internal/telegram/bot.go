@@ -209,6 +209,10 @@ type pendingClarification struct {
 	options []string
 }
 
+type pendingPlanConfirmation struct {
+	ch chan bool
+}
+
 // Bot represents the Telegram polling bot
 type Bot struct {
 	cfg              config.Config
@@ -220,14 +224,16 @@ type Bot struct {
 	goalMgr          *agent.GoalManager
 	apiBase          string
 	httpClient       *http.Client
-	approvalsMu      sync.Mutex
-	approvals        map[string]chan bool
-	clarificationsMu sync.Mutex
-	clarifications   map[string]pendingClarification
-	sleepMgr         *learning.SleepManager
-	envPath          string
-	msgIDMu          sync.RWMutex
-	msgIDMap         map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
+	approvalsMu         sync.Mutex
+	approvals           map[string]chan bool
+	clarificationsMu    sync.Mutex
+	clarifications      map[string]pendingClarification
+	planConfirmationsMu sync.Mutex
+	planConfirmations   map[string]pendingPlanConfirmation
+	sleepMgr            *learning.SleepManager
+	envPath             string
+	msgIDMu             sync.RWMutex
+	msgIDMap            map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
@@ -243,10 +249,11 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		goalMgr:        agent.NewGoalManager(cfg, client),
 		apiBase:        "https://api.telegram.org/bot" + token,
 		httpClient:     &http.Client{Timeout: 40 * time.Second},
-		approvals:      make(map[string]chan bool),
-		clarifications: make(map[string]pendingClarification),
-		msgIDMap:       make(map[string]map[int64]int),
-		envPath:        ".env",
+		approvals:         make(map[string]chan bool),
+		clarifications:    make(map[string]pendingClarification),
+		planConfirmations: make(map[string]pendingPlanConfirmation),
+		msgIDMap:          make(map[string]map[int64]int),
+		envPath:           ".env",
 	}
 }
 
@@ -1016,6 +1023,10 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		chatID: chatID,
 	})
 	registry.SetClarificationHandler(&telegramClarificationHandler{
+		bot:    b,
+		chatID: chatID,
+	})
+	registry.SetPlanConfirmationHandler(&telegramPlanConfirmationHandler{
 		bot:    b,
 		chatID: chatID,
 	})
@@ -1997,6 +2008,75 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 	}
 }
 
+type telegramPlanConfirmationHandler struct {
+	bot    *Bot
+	chatID int64
+}
+
+func (h *telegramPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error) {
+	planID := fmt.Sprintf("tgp_%d", time.Now().UnixNano())
+	ch := make(chan bool, 1)
+
+	h.bot.planConfirmationsMu.Lock()
+	h.bot.planConfirmations[planID] = pendingPlanConfirmation{
+		ch: ch,
+	}
+	h.bot.planConfirmationsMu.Unlock()
+
+	defer func() {
+		h.bot.planConfirmationsMu.Lock()
+		delete(h.bot.planConfirmations, planID)
+		h.bot.planConfirmationsMu.Unlock()
+	}()
+
+	var rows [][]InlineKeyboardButton
+	rows = append(rows, []InlineKeyboardButton{
+		{
+			Text:         "✅ Approve Plan",
+			CallbackData: fmt.Sprintf("planconfirm:%s:approve", planID),
+		},
+		{
+			Text:         "❌ Reject Plan",
+			CallbackData: fmt.Sprintf("planconfirm:%s:reject", planID),
+		},
+	})
+
+	markup := &InlineKeyboardMarkup{
+		InlineKeyboard: rows,
+	}
+
+	var sb strings.Builder
+	sb.WriteString("📋 *Execution Plan Proposed*\n\n")
+	sb.WriteString(summary)
+	sb.WriteString("\n\n*Steps:*\n")
+	for i, step := range steps {
+		fmt.Fprintf(&sb, "%d. %s\n", i+1, step)
+	}
+
+	text := sb.String()
+	msgID, err := h.bot.sendMessageWithMarkup(h.chatID, text, 0, "Markdown", markup)
+	if err != nil {
+		return false, fmt.Errorf("failed to send Telegram plan confirmation request: %w", err)
+	}
+
+	select {
+	case approved := <-ch:
+		statusText := "❌ *Plan Rejected*"
+		if approved {
+			statusText = "✅ *Plan Approved*"
+		}
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
+		return approved, nil
+	case <-ctx.Done():
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* plan proposal cancelled.", "", nil)
+		return false, ctx.Err()
+	case <-time.After(5 * time.Minute):
+		statusText := "⚠️ *Timed out:* auto-approving plan."
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
+		return true, nil
+	}
+}
+
 // telegramImageProgressHandler handles image generation progress updates for Telegram
 type telegramImageProgressHandler struct {
 	bot       *Bot
@@ -2202,6 +2282,37 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 		select {
 		case pc.ch <- chosen:
 			_ = b.answerCallbackQuery(cb.ID, "Clarification submitted", false)
+		default:
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Already answered", true)
+		}
+		return
+	}
+
+	if strings.HasPrefix(data, "planconfirm:") {
+		parts := strings.Split(data, ":") // planconfirm:id:action(approve|reject)
+		if len(parts) < 3 {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Invalid action", false)
+			return
+		}
+		planID := parts[1]
+		action := parts[2]
+
+		b.planConfirmationsMu.Lock()
+		pc, ok := b.planConfirmations[planID]
+		b.planConfirmationsMu.Unlock()
+
+		if !ok {
+			_ = b.answerCallbackQuery(cb.ID, "⚠️ Plan request expired or not found", true)
+			if cb.Message != nil {
+				_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n⚠️ *Expired:* plan request is no longer active.", "", nil)
+			}
+			return
+		}
+
+		approved := (action == "approve")
+		select {
+		case pc.ch <- approved:
+			_ = b.answerCallbackQuery(cb.ID, "Decision submitted", false)
 		default:
 			_ = b.answerCallbackQuery(cb.ID, "⚠️ Already answered", true)
 		}
