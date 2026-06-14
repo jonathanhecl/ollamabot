@@ -188,7 +188,9 @@ func Load(path string) (Config, error) {
 	if value := apply("SERVER_PASSWORD"); value != "" {
 		cfg.ServerPassword = value
 	}
-	if value := apply("PLAN_CONFIRMATION"); value != "" {
+	if value := apply("SESSION_PLAN_CONFIRMATION"); value != "" {
+		cfg.PlanConfirmation = value
+	} else if value := apply("PLAN_CONFIRMATION"); value != "" {
 		cfg.PlanConfirmation = value
 	}
 	if value := apply("WEB_SEARCH_PRIORITY"); value != "" {
@@ -270,7 +272,7 @@ func SaveBasic(path string, cfg Config) error {
 			"# Sessions\n"+
 			"SESSION_AUTO_NAME=%t\n"+
 			"SESSION_EXPIRY_MIN=%d\n"+
-			"PLAN_CONFIRMATION=%s\n\n"+
+			"SESSION_PLAN_CONFIRMATION=%s\n\n"+
 			"# Ollama\n"+
 			"OLLAMA_BASE_URL=%s\n"+
 			"OLLAMA_DEFAULT_MODEL=%s\n"+
