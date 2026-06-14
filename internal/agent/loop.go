@@ -153,7 +153,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		if strings.TrimSpace(a.cfg.OllamaModelImage) != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
-				Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for square images, 1024x512 for landscape/wide shots, 512x1024 for portrait/tall images, or 768x768 for medium size. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language.",
+				Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for standard square images, 1024x512 for landscape, 512x1024 for portrait. You can also specify custom smaller or aspect-ratio dimensions (like 64, 128, 256, etc.) directly when generating specific UI assets like icons, buttons, or logos. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language.",
 			})
 		}
 

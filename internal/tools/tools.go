@@ -578,14 +578,12 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					},
 					"width": map[string]any{
 						"type":        "integer",
-						"description": "Image width in pixels. Options: 512 (default), 768, 1024.",
-						"enum":        []int{512, 768, 1024},
+						"description": "Image width in pixels. Standard options: 512 (default), 768, 1024. Custom resolutions (e.g., 64, 128, 256) are also supported for logos, icons, and buttons.",
 						"default":     512,
 					},
 					"height": map[string]any{
 						"type":        "integer",
-						"description": "Image height in pixels. Options: 512 (default), 768, 1024. Choose based on desired aspect ratio: 1024x512 for landscape, 512x1024 for portrait, 512x512 for square.",
-						"enum":        []int{512, 768, 1024},
+						"description": "Image height in pixels. Standard options: 512 (default), 768, 1024. Custom resolutions (e.g., 64, 128, 256) are also supported for logos, icons, and buttons.",
 						"default":     512,
 					},
 					"seed": map[string]any{
