@@ -153,10 +153,14 @@ const els = {
   openSettings: document.querySelector("#openSettings"),
   settingsForm: document.querySelector("#settingsForm"),
   ollamaUrl: document.querySelector("#ollamaUrl"),
+  ollamaProbeModels: document.querySelector("#ollamaProbeModels"),
+  ollamaImageSteps: document.querySelector("#ollamaImageSteps"),
   workspacePath: document.querySelector("#workspacePath"),
   sessionsPath: document.querySelector("#sessionsPath"),
   memoryPath: document.querySelector("#memoryPath"),
+  skillsPath: document.querySelector("#skillsPath"),
   webPort: document.querySelector("#webPort"),
+  serverEnabled: document.querySelector("#serverEnabled"),
   serverPassword: document.querySelector("#serverPassword"),
   logoutBtn: document.querySelector("#logoutBtn"),
   webSearchToggle: document.querySelector("#webSearchToggle"),
@@ -164,7 +168,7 @@ const els = {
   searchProvidersList: document.querySelector("#searchProvidersList"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
-  telegramSessionExpiry: document.querySelector("#telegramSessionExpiry"),
+  sessionExpiry: document.querySelector("#sessionExpiry"),
   telegramBotToken: document.querySelector("#telegramBotToken"),
   telegramAuthorizedIds: document.querySelector("#telegramAuthorizedIds"),
   telegramStartupNotification: document.querySelector("#telegramStartupNotification"),
@@ -325,18 +329,33 @@ els.reloadModelsBtn.addEventListener("click", async () => {
 });
 els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.ollamaProbeModels.value = state.settings.ollama_probe_models || "";
+  els.ollamaImageSteps.value = state.settings.image_steps || 4;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
+  els.skillsPath.value = state.settings.skills_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
-  els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
+  els.sessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
   els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
+  els.telegramBotToken.value = state.settings.telegram_bot_token || "";
+  els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
+  els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
+  els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
+  els.serverEnabled.checked = state.settings.server_enabled !== false;
+  els.serverPassword.value = state.settings.server_password || "";
+  els.sleepModeToggle.checked = !!state.settings.sleep_mode_enabled;
+  els.sleepModeContainer.style.display = state.settings.sleep_mode_enabled ? "block" : "none";
+  els.sleepModeInactivity.value = state.settings.sleep_mode_inactivity_threshold || "30m";
+  els.sleepModeResumeDelay.value = state.settings.sleep_mode_resume_delay || "10m";
+  els.sleepModeSubagentsToggle.checked = !!state.settings.sleep_mode_subagents_enabled;
+
   const searchEnabled = !!state.settings.web_search_enabled;
   els.webSearchToggle.checked = searchEnabled;
   els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
 
-  const providersCsv = state.settings.search_providers || "";
+  const providersCsv = state.settings.web_search_priority || "";
   const parts = providersCsv.split(",").map(p => p.trim()).filter(Boolean);
   const activeMap = { brave: false, tavily: false, ddg: true };
   parts.forEach(p => {
@@ -1094,7 +1113,10 @@ function renderSearchProviders(providersOrder, activeMap, keysMap) {
         <div class="provider-body" style="${isActive ? "" : "display:none;"}">
           <label class="provider-api-key-label">
             Brave Search API Key
-            <input type="password" class="provider-api-key-input" id="brave_api_key_input" value="${escapeHtml(keyVal)}" placeholder="${keyVal === "***" ? "Key saved — enter a new value to change it" : "Enter your Brave Search API key..."}" autocomplete="off" />
+            <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
+              <input type="password" class="provider-api-key-input" id="brave_api_key_input" value="${escapeHtml(keyVal)}" placeholder="Enter your Brave Search API key..." autocomplete="off" style="width: 100%; padding-right: 40px;" />
+              <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
+            </div>
           </label>
           <details class="provider-howto">
             <summary>📖 How to get a Brave Search API key</summary>
@@ -1116,7 +1138,10 @@ function renderSearchProviders(providersOrder, activeMap, keysMap) {
         <div class="provider-body" style="${isActive ? "" : "display:none;"}">
           <label class="provider-api-key-label">
             Tavily Search API Key
-            <input type="password" class="provider-api-key-input" id="tavily_api_key_input" value="${escapeHtml(keyVal)}" placeholder="${keyVal === "***" ? "Key saved — enter a new value to change it" : "Enter your Tavily API key..."}" autocomplete="off" />
+            <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
+              <input type="password" class="provider-api-key-input" id="tavily_api_key_input" value="${escapeHtml(keyVal)}" placeholder="Enter your Tavily API key..." autocomplete="off" style="width: 100%; padding-right: 40px;" />
+              <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
+            </div>
           </label>
           <details class="provider-howto">
             <summary>📖 How to get a Tavily API key</summary>
@@ -1259,12 +1284,15 @@ async function loadSettings() {
   if (!response.ok) return;
   state.settings = await response.json();
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
+  els.ollamaProbeModels.value = state.settings.ollama_probe_models || "";
+  els.ollamaImageSteps.value = state.settings.image_steps || 4;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
+  els.skillsPath.value = state.settings.skills_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
-  els.telegramSessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
+  els.sessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
   els.telegramBotToken.value = state.settings.telegram_bot_token || "";
   els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
   els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
@@ -1274,7 +1302,7 @@ async function loadSettings() {
   els.webSearchToggle.checked = searchEnabled;
   els.searchProvidersContainer.style.display = searchEnabled ? "block" : "none";
 
-  const providersCsv = state.settings.search_providers || "";
+  const providersCsv = state.settings.web_search_priority || "";
   const parts = providersCsv.split(",").map(p => p.trim()).filter(Boolean);
   const activeMap = { brave: false, tavily: false, ddg: true };
   parts.forEach(p => {
@@ -1295,6 +1323,7 @@ async function loadSettings() {
   renderSearchProviders(order, activeMap, keysMap);
 
   els.webPort.value = state.settings.server_port || "8080";
+  els.serverEnabled.checked = state.settings.server_enabled !== false;
   els.serverPassword.value = state.settings.server_password || "";
   if (state.settings.server_password) {
     if (els.logoutBtn) els.logoutBtn.style.display = "inline-block";
@@ -1355,22 +1384,25 @@ async function saveSettings(event) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       ollama_base_url: els.ollamaUrl.value.trim(),
+      ollama_probe_models: els.ollamaProbeModels.value.trim(),
       workspace: els.workspacePath.value.trim(),
       sessions_path: els.sessionsPath.value.trim(),
       memory_path: els.memoryPath.value.trim(),
+      skills_path: els.skillsPath.value.trim(),
       model_default: state.activeModel,
       model_vision: state.visionModel,
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
-      image_steps: state.imageSteps || 4,
+      image_steps: parseInt(els.ollamaImageSteps.value.trim(), 10) || 4,
       web_search_enabled: webSearchEnabled,
-      search_providers: searchProvidersCsv,
+      web_search_priority: searchProvidersCsv,
       brave_search_api_key: braveKey,
       tavily_search_api_key: tavilyKey,
+      server_enabled: els.serverEnabled.checked,
       server_expose_network: els.webExposeToggle.checked,
       session_auto_name: els.webAutoNameToggle.checked,
-      telegram_session_expiry_min: parseInt(els.telegramSessionExpiry.value.trim(), 10) || 30,
+      telegram_session_expiry_min: parseInt(els.sessionExpiry.value.trim(), 10) || 30,
       telegram_bot_token: els.telegramBotToken.value.trim(),
       telegram_authorized_ids: els.telegramAuthorizedIds.value.trim(),
       telegram_startup_notification: els.telegramStartupNotification.checked,
@@ -1397,6 +1429,24 @@ async function saveSettings(event) {
     sessionStorage.removeItem("ollamabot.serverPassword");
   }
   state.settings = data;
+  state.activeModel = data.model_default || "";
+  state.visionModel = data.model_vision || "";
+  state.audioModel = data.model_audio || "";
+  state.embeddingsModel = data.model_embeddings || "";
+  state.imageModel = data.model_image || "";
+  state.imageSteps = data.image_steps || 4;
+  state.learningModel = data.model_learning || "";
+  state.subagentModel = data.model_subagent || "";
+
+  localStorage.setItem("ollamabot.mainModel", state.activeModel);
+  localStorage.setItem("ollamabot.visionModel", state.visionModel);
+  localStorage.setItem("ollamabot.audioModel", state.audioModel);
+  localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
+  localStorage.setItem("ollamabot.imageModel", state.imageModel);
+  localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
+  localStorage.setItem("ollamabot.learningModel", state.learningModel);
+  localStorage.setItem("ollamabot.subagentModel", state.subagentModel);
+
   els.settingsDialog.close();
   await loadModels();
 }
@@ -1422,7 +1472,7 @@ async function saveRoleModels() {
       model_image: state.imageModel,
       image_steps: state.imageSteps || 4,
       web_search_enabled: state.settings.web_search_enabled || false,
-      search_providers: state.settings.search_providers || "ddg",
+      web_search_priority: state.settings.web_search_priority || "ddg",
       brave_search_api_key: state.settings.brave_search_api_key || "",
       tavily_search_api_key: state.settings.tavily_search_api_key || "",
       server_expose_network: state.settings.server_expose_network || false,
@@ -4600,6 +4650,27 @@ els.reindexMemoryBtn.addEventListener("click", async () => {
     els.reindexMemoryBtn.disabled = false;
   }
 });
+
+// Password visibility toggler
+document.addEventListener("click", (e) => {
+  const toggleBtn = e.target.closest(".password-toggle-btn");
+  if (!toggleBtn) return;
+  
+  const wrapper = toggleBtn.closest(".password-input-wrapper");
+  if (!wrapper) return;
+  
+  const input = wrapper.querySelector("input");
+  if (!input) return;
+  
+  if (input.type === "password") {
+    input.type = "text";
+    toggleBtn.textContent = "🙈";
+  } else {
+    input.type = "password";
+    toggleBtn.textContent = "👁️";
+  }
+});
+
 
 
 

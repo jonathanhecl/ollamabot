@@ -30,9 +30,13 @@ type Config struct {
 	ServerExposeNetwork          bool
 	SessionAutoName              bool
 	Workspace                    string
+	WorkspaceRaw                 string
 	SessionsPath                 string
+	SessionsPathRaw              string
 	MemoryPath                   string
+	MemoryPathRaw                string
 	SkillsPath                   string
+	SkillsPathRaw                string
 	SleepModeEnabled             bool
 	SleepModeInactivityThreshold string
 	SleepModeResumeDelay         string
@@ -72,9 +76,13 @@ func Load(path string) (Config, error) {
 		ServerExposeNetwork:          true,
 		SessionAutoName:              true,
 		Workspace:                    "workspace",
+		WorkspaceRaw:                 "workspace",
 		SessionsPath:                 "sessions",
+		SessionsPathRaw:              "sessions",
 		MemoryPath:                   "memory",
+		MemoryPathRaw:                "memory",
 		SkillsPath:                   "skills",
+		SkillsPathRaw:                "skills",
 		SleepModeEnabled:             false,
 		SleepModeInactivityThreshold: "30m",
 		SleepModeResumeDelay:         "10m",
@@ -113,7 +121,7 @@ func Load(path string) (Config, error) {
 	}
 	cfg.TelegramBotToken = apply("TELEGRAM_BOT_TOKEN")
 	cfg.TelegramAuthorizedIDs = splitCSV(apply("TELEGRAM_AUTHORIZED_IDS"))
-	if value := apply("TELEGRAM_SESSION_EXPIRY_MIN"); value != "" {
+	if value := apply("SESSION_EXPIRY_MIN"); value != "" {
 		if val, err := strconv.Atoi(value); err == nil {
 			cfg.TelegramSessionExpiryMin = val
 		}
@@ -145,15 +153,19 @@ func Load(path string) (Config, error) {
 	}
 	if value := apply("WORKSPACE_PATH"); value != "" {
 		cfg.Workspace = value
+		cfg.WorkspaceRaw = value
 	}
 	if value := apply("SESSIONS_PATH"); value != "" {
 		cfg.SessionsPath = value
+		cfg.SessionsPathRaw = value
 	}
 	if value := apply("MEMORY_PATH"); value != "" {
 		cfg.MemoryPath = value
+		cfg.MemoryPathRaw = value
 	}
 	if value := apply("SKILLS_PATH"); value != "" {
 		cfg.SkillsPath = value
+		cfg.SkillsPathRaw = value
 	}
 	if value := apply("SLEEP_MODE_ENABLED"); value != "" {
 		cfg.SleepModeEnabled = parseBool(value)
@@ -179,13 +191,15 @@ func Load(path string) (Config, error) {
 	if value := apply("PLAN_CONFIRMATION"); value != "" {
 		cfg.PlanConfirmation = value
 	}
-	if value := apply("SEARCH_PROVIDERS"); value != "" {
+	if value := apply("WEB_SEARCH_PRIORITY"); value != "" {
+		cfg.SearchProviders = splitCSV(value)
+	} else if value := apply("SEARCH_PROVIDERS"); value != "" {
 		cfg.SearchProviders = splitCSV(value)
 	}
-	if value := apply("BRAVE_SEARCH_API_KEY"); value != "" {
+	if value := apply("WEB_SEARCH_BRAVE_API_KEY"); value != "" {
 		cfg.BraveSearchAPIKey = value
 	}
-	if value := apply("TAVILY_API_KEY"); value != "" {
+	if value := apply("WEB_SEARCH_TAVILY_API_KEY"); value != "" {
 		cfg.TavilyAPIKey = value
 	}
 	// Infer WebSearchEnabled from providers list
@@ -230,40 +244,95 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 }
 
 func SaveBasic(path string, cfg Config) error {
+	workspacePath := cfg.WorkspaceRaw
+	if workspacePath == "" {
+		workspacePath = cfg.Workspace
+	}
+	sessionsPath := cfg.SessionsPathRaw
+	if sessionsPath == "" {
+		sessionsPath = cfg.SessionsPath
+	}
+	memoryPath := cfg.MemoryPathRaw
+	if memoryPath == "" {
+		memoryPath = cfg.MemoryPath
+	}
+	skillsPath := cfg.SkillsPathRaw
+	if skillsPath == "" {
+		skillsPath = cfg.SkillsPath
+	}
+
 	content := fmt.Sprintf(
-		"OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=%t\nSERVER_EXPOSE_NETWORK=%t\nSESSION_AUTO_NAME=%t\nOLLAMA_PROBE_MODELS=%s\nOLLAMA_DEFAULT_MODEL=%s\nOLLAMA_MODEL_VISION=%s\nOLLAMA_MODEL_AUDIO=%s\nOLLAMA_MODEL_EMBED=%s\nOLLAMA_MODEL_IMAGE=%s\nOLLAMA_IMAGE_STEPS=%d\nTELEGRAM_BOT_TOKEN=%s\nTELEGRAM_AUTHORIZED_IDS=%s\nTELEGRAM_SESSION_EXPIRY_MIN=%d\nTELEGRAM_STARTUP_NOTIFICATION=%t\nWORKSPACE_PATH=%s\nSESSIONS_PATH=%s\nMEMORY_PATH=%s\nSKILLS_PATH=%s\nSLEEP_MODE_ENABLED=%t\nSLEEP_MODE_INACTIVITY_THRESHOLD=%s\nSLEEP_MODE_RESUME_DELAY=%s\nOLLAMA_MODEL_LEARNING=%s\nSEARCH_PROVIDERS=%s\nBRAVE_SEARCH_API_KEY=%s\nTAVILY_API_KEY=%s\nSLEEP_MODE_SUBAGENTS_ENABLED=%t\nOLLAMA_MODEL_SUBAGENT=%s\nSERVER_PASSWORD=%s\nPLAN_CONFIRMATION=%s\n",
-		cfg.OllamaBaseURL,
+		"# Server\n"+
+			"SERVER_ENABLED=%t\n"+
+			"SERVER_PORT=%s\n"+
+			"SERVER_PASSWORD=%s\n"+
+			"SERVER_EXPOSE_NETWORK=%t\n\n"+
+			"# Sessions\n"+
+			"SESSION_AUTO_NAME=%t\n"+
+			"SESSION_EXPIRY_MIN=%d\n"+
+			"PLAN_CONFIRMATION=%s\n\n"+
+			"# Ollama\n"+
+			"OLLAMA_BASE_URL=%s\n"+
+			"OLLAMA_DEFAULT_MODEL=%s\n"+
+			"OLLAMA_PROBE_MODELS=%s\n"+
+			"OLLAMA_MODEL_VISION=%s\n"+
+			"OLLAMA_MODEL_AUDIO=%s\n"+
+			"OLLAMA_MODEL_EMBED=%s\n"+
+			"OLLAMA_MODEL_IMAGE=%s\n"+
+			"OLLAMA_MODEL_LEARNING=%s\n"+
+			"OLLAMA_MODEL_SUBAGENT=%s\n"+
+			"OLLAMA_IMAGE_STEPS=%d\n\n"+
+			"# Telegram\n"+
+			"TELEGRAM_BOT_TOKEN=%s\n"+
+			"TELEGRAM_AUTHORIZED_IDS=%s\n"+
+			"TELEGRAM_STARTUP_NOTIFICATION=%t\n\n"+
+			"# Paths\n"+
+			"WORKSPACE_PATH=%s\n"+
+			"SESSIONS_PATH=%s\n"+
+			"MEMORY_PATH=%s\n"+
+			"SKILLS_PATH=%s\n\n"+
+			"# Sleep Mode\n"+
+			"SLEEP_MODE_ENABLED=%t\n"+
+			"SLEEP_MODE_INACTIVITY_THRESHOLD=%s\n"+
+			"SLEEP_MODE_RESUME_DELAY=%s\n"+
+			"SLEEP_MODE_SUBAGENTS_ENABLED=%t\n\n"+
+			"# Web Search\n"+
+			"WEB_SEARCH_ENABLED=%t\n"+
+			"WEB_SEARCH_PRIORITY=%s\n"+
+			"WEB_SEARCH_BRAVE_API_KEY=%s\n"+
+			"WEB_SEARCH_TAVILY_API_KEY=%s\n",
 		cfg.ServerEnabled,
 		cfg.ServerPort,
-		cfg.WebSearchEnabled,
+		cfg.ServerPassword,
 		cfg.ServerExposeNetwork,
 		cfg.SessionAutoName,
-		strings.Join(cfg.OllamaProbeModels, ","),
+		cfg.TelegramSessionExpiryMin,
+		cfg.PlanConfirmation,
+		cfg.OllamaBaseURL,
 		cfg.OllamaDefaultModel,
+		strings.Join(cfg.OllamaProbeModels, ","),
 		cfg.OllamaModelVision,
 		cfg.OllamaModelAudio,
 		cfg.OllamaModelEmbed,
 		cfg.OllamaModelImage,
+		cfg.OllamaModelLearning,
+		cfg.OllamaModelSubagent,
 		cfg.OllamaImageSteps,
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
-		cfg.TelegramSessionExpiryMin,
 		cfg.TelegramStartupNotification,
-		cfg.Workspace,
-		cfg.SessionsPath,
-		cfg.MemoryPath,
-		cfg.SkillsPath,
+		workspacePath,
+		sessionsPath,
+		memoryPath,
+		skillsPath,
 		cfg.SleepModeEnabled,
 		cfg.SleepModeInactivityThreshold,
 		cfg.SleepModeResumeDelay,
-		cfg.OllamaModelLearning,
+		cfg.SleepModeSubagentsEnabled,
+		cfg.WebSearchEnabled,
 		strings.Join(cfg.SearchProviders, ","),
 		cfg.BraveSearchAPIKey,
 		cfg.TavilyAPIKey,
-		cfg.SleepModeSubagentsEnabled,
-		cfg.OllamaModelSubagent,
-		cfg.ServerPassword,
-		cfg.PlanConfirmation,
 	)
 	return os.WriteFile(path, []byte(content), 0o600)
 }

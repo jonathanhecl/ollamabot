@@ -340,22 +340,31 @@
       
       <div class="settings-modal-body">
         <aside class="settings-tabs">
-          <button type="button" class="tab-btn active" data-tab="general">⚙️ General</button>
-          <button type="button" class="tab-btn" data-tab="paths">📁 Paths</button>
+          <button type="button" class="tab-btn active" data-tab="ollama">🤖 Ollama</button>
           <button type="button" class="tab-btn" data-tab="server">🌐 Server</button>
-          <button type="button" class="tab-btn" data-tab="features">🚀 Features</button>
           <button type="button" class="tab-btn" data-tab="sessions">💬 Sessions</button>
           <button type="button" class="tab-btn" data-tab="telegram">📱 Telegram</button>
+          <button type="button" class="tab-btn" data-tab="paths">📁 Paths</button>
+          <button type="button" class="tab-btn" data-tab="sleep-mode">🧠 Sleep Mode</button>
+          <button type="button" class="tab-btn" data-tab="web-search">🔍 Web Search</button>
         </aside>
         
         <form id="settingsForm" class="settings-form-tabbed">
-          <!-- General Tab -->
-          <div class="tab-content active" id="tab-general">
+          <!-- Ollama Tab -->
+          <div class="tab-content active" id="tab-ollama">
             <label>
               Ollama URL
               <input id="ollamaUrl" type="url" placeholder="http://localhost:11434" />
             </label>
-            <label>
+            <label style="margin-top: 10px;">
+              Probe Models (comma-separated)
+              <input id="ollamaProbeModels" type="text" placeholder="e.g. gemma4:e4b, x/flux2-klein:4b" />
+            </label>
+            <label style="margin-top: 10px;">
+              Image Generation Steps
+              <input id="ollamaImageSteps" type="number" placeholder="4" min="1" />
+            </label>
+            <label style="margin-top: 10px;">
               Default Microphone
               <select id="micSelect">
                 <option value="">Default system microphone</option>
@@ -363,80 +372,30 @@
             </label>
           </div>
           
-          <!-- Paths Tab -->
-          <div class="tab-content" id="tab-paths">
-            <label>
-              Workspace path
-              <input id="workspacePath" type="text" placeholder="workspace" />
-            </label>
-            <label>
-              Sessions path
-              <input id="sessionsPath" type="text" placeholder="sessions" />
-            </label>
-            <label>
-              Memory path
-              <input id="memoryPath" type="text" placeholder="memory" />
-            </label>
-          </div>
-          
           <!-- Server Tab -->
           <div class="tab-content" id="tab-server">
+            <div class="checkbox-row" style="margin-bottom: 10px;">
+              <label class="think-toggle">
+                <input id="serverEnabled" type="checkbox" />
+                <span>Enable Server</span>
+              </label>
+            </div>
             <label>
-              Server port
+              Server Port
               <input id="webPort" type="text" placeholder="8080" />
             </label>
             <label style="margin-top: 10px;">
-              Server password
-              <input id="serverPassword" type="password" placeholder="Leave blank for no password" />
+              Server Password
+              <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
+                <input id="serverPassword" type="password" placeholder="Leave blank for no password" style="width: 100%; padding-right: 40px;" autocomplete="off" />
+                <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
+              </div>
             </label>
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
                 <input id="webExposeToggle" type="checkbox" />
                 <span>Server expose network</span>
               </label>
-            </div>
-          </div>
-          
-          <!-- Features Tab -->
-          <div class="tab-content" id="tab-features">
-            <div class="checkbox-row" style="margin-bottom: 14px;">
-              <label class="think-toggle">
-                <input id="webSearchToggle" type="checkbox" />
-                <span>Enable Web Search</span>
-              </label>
-            </div>
-
-            <!-- Search Providers Container -->
-            <div id="searchProvidersContainer" class="search-providers-container" style="display: none;">
-              <label class="eyebrow" style="display: block; margin-top: 10px; margin-bottom: 8px;">Providers & Priority Order</label>
-              <div id="searchProvidersList" class="search-providers-list">
-                <!-- Dynamic provider cards will be rendered here -->
-              </div>
-            </div>
-
-            <div class="checkbox-row" style="margin-top: 14px;">
-              <label class="think-toggle">
-                <input id="sleepModeToggle" type="checkbox" />
-                <span>Enable Sleep Mode (Continuous Learning)</span>
-              </label>
-            </div>
-
-            <!-- Sleep Mode Options Container -->
-            <div id="sleepModeContainer" style="display: none; margin-top: 10px; border-left: 2px solid var(--line); padding-left: 14px;">
-              <label style="margin-top: 10px; display: grid; gap: 6px;">
-                Inactivity Threshold
-                <input id="sleepModeInactivity" type="text" placeholder="30m" />
-              </label>
-              <label style="margin-top: 10px; display: grid; gap: 6px;">
-                Resume Delay
-                <input id="sleepModeResumeDelay" type="text" placeholder="10m" />
-              </label>
-              <div class="checkbox-row" style="margin-top: 14px; margin-bottom: 10px;">
-                <label class="think-toggle">
-                  <input id="sleepModeSubagentsToggle" type="checkbox" />
-                  <span>Enable Subagents (Sequential Task Queue)</span>
-                </label>
-              </div>
             </div>
           </div>
           
@@ -449,8 +408,8 @@
               </label>
             </div>
             <label>
-              Telegram Session Expiration (minutes)
-              <input id="telegramSessionExpiry" type="number" placeholder="30" min="1" />
+              Session Expiration (minutes)
+              <input id="sessionExpiry" type="number" placeholder="30" min="1" />
             </label>
             <label style="margin-top: 10px;">
               Plan Confirmation Mode
@@ -466,7 +425,10 @@
           <div class="tab-content" id="tab-telegram">
             <label>
               Bot Token
-              <input id="telegramBotToken" type="password" placeholder="Leave blank to disable Telegram bot" />
+              <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
+                <input id="telegramBotToken" type="password" placeholder="Leave blank to disable Telegram bot" style="width: 100%; padding-right: 40px;" autocomplete="off" />
+                <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
+              </div>
             </label>
             <label style="margin-top: 10px;">
               Authorized IDs (comma-separated)
@@ -477,6 +439,70 @@
                 <input id="telegramStartupNotification" type="checkbox" />
                 <span>Send startup notification (🚀 OllamaBot Initialized)</span>
               </label>
+            </div>
+          </div>
+          
+          <!-- Paths Tab -->
+          <div class="tab-content" id="tab-paths">
+            <label>
+              Workspace Path
+              <input id="workspacePath" type="text" placeholder="workspace" />
+            </label>
+            <label style="margin-top: 10px;">
+              Sessions Path
+              <input id="sessionsPath" type="text" placeholder="sessions" />
+            </label>
+            <label style="margin-top: 10px;">
+              Memory Path
+              <input id="memoryPath" type="text" placeholder="memory" />
+            </label>
+            <label style="margin-top: 10px;">
+              Skills Path
+              <input id="skillsPath" type="text" placeholder="skills" />
+            </label>
+          </div>
+          
+          <!-- Sleep Mode Tab -->
+          <div class="tab-content" id="tab-sleep-mode">
+            <div class="checkbox-row" style="margin-bottom: 14px;">
+              <label class="think-toggle">
+                <input id="sleepModeToggle" type="checkbox" />
+                <span>Enable Sleep Mode (Continuous Learning)</span>
+              </label>
+            </div>
+            <!-- Sleep Mode Options Container -->
+            <div id="sleepModeContainer" style="display: none; border-left: 2px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; gap: 10px;">
+              <label style="display: grid; gap: 6px;">
+                Inactivity Threshold
+                <input id="sleepModeInactivity" type="text" placeholder="30m" />
+              </label>
+              <label style="display: grid; gap: 6px;">
+                Resume Delay
+                <input id="sleepModeResumeDelay" type="text" placeholder="10m" />
+              </label>
+              <div class="checkbox-row" style="margin-top: 4px;">
+                <label class="think-toggle">
+                  <input id="sleepModeSubagentsToggle" type="checkbox" />
+                  <span>Enable Subagents (Sequential Task Queue)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Web Search Tab -->
+          <div class="tab-content" id="tab-web-search">
+            <div class="checkbox-row" style="margin-bottom: 14px;">
+              <label class="think-toggle">
+                <input id="webSearchToggle" type="checkbox" />
+                <span>Enable Web Search</span>
+              </label>
+            </div>
+            <!-- Search Providers Container -->
+            <div id="searchProvidersContainer" class="search-providers-container" style="display: none;">
+              <label class="eyebrow" style="display: block; margin-bottom: 8px;">Providers & Priority Order</label>
+              <div id="searchProvidersList" class="search-providers-list">
+                <!-- Dynamic provider cards will be rendered here -->
+              </div>
             </div>
           </div>
           

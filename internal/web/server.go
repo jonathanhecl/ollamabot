@@ -84,6 +84,7 @@ type ModelsResponse struct {
 
 type SettingsResponse struct {
 	OllamaBaseURL                string `json:"ollama_base_url"`
+	OllamaProbeModels            string `json:"ollama_probe_models"`
 	ServerPort                   string `json:"server_port"`
 	ServerEnabled                bool   `json:"server_enabled"`
 	WebSearchEnabled             bool   `json:"web_search_enabled"`
@@ -104,7 +105,7 @@ type SettingsResponse struct {
 	SleepModeInactivityThreshold string `json:"sleep_mode_inactivity_threshold"`
 	SleepModeResumeDelay         string `json:"sleep_mode_resume_delay"`
 	ModelLearning                string `json:"model_learning"`
-	SearchProviders              string `json:"search_providers"`      // comma-separated: "brave,ddg"
+	WebSearchPriority            string `json:"web_search_priority"`   // comma-separated: "brave,ddg"
 	BraveSearchAPIKey            string `json:"brave_search_api_key"`  // masked ("***") on GET if set
 	TavilySearchAPIKey           string `json:"tavily_search_api_key"` // masked ("***") on GET if set
 	SleepModeSubagentsEnabled    bool   `json:"sleep_mode_subagents_enabled"`
@@ -305,10 +306,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	workspace := strings.TrimSpace(input.Workspace)
-	if workspace == "" {
-		workspace = "workspace"
+	workspaceRaw := strings.TrimSpace(input.Workspace)
+	if workspaceRaw == "" {
+		workspaceRaw = "workspace"
 	}
+	workspace := workspaceRaw
 	if !filepath.IsAbs(workspace) {
 		if exe, err := os.Executable(); err == nil {
 			workspace = filepath.Join(filepath.Dir(exe), workspace)
@@ -316,10 +318,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(workspace, 0o755)
 
-	sessionsPath := strings.TrimSpace(input.SessionsPath)
-	if sessionsPath == "" {
-		sessionsPath = "sessions"
+	sessionsPathRaw := strings.TrimSpace(input.SessionsPath)
+	if sessionsPathRaw == "" {
+		sessionsPathRaw = "sessions"
 	}
+	sessionsPath := sessionsPathRaw
 	if !filepath.IsAbs(sessionsPath) {
 		if exe, err := os.Executable(); err == nil {
 			sessionsPath = filepath.Join(filepath.Dir(exe), sessionsPath)
@@ -327,10 +330,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(sessionsPath, 0o755)
 
-	memoryPath := strings.TrimSpace(input.MemoryPath)
-	if memoryPath == "" {
-		memoryPath = "memory"
+	memoryPathRaw := strings.TrimSpace(input.MemoryPath)
+	if memoryPathRaw == "" {
+		memoryPathRaw = "memory"
 	}
+	memoryPath := memoryPathRaw
 	if !filepath.IsAbs(memoryPath) {
 		if exe, err := os.Executable(); err == nil {
 			memoryPath = filepath.Join(filepath.Dir(exe), memoryPath)
@@ -338,10 +342,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = os.MkdirAll(memoryPath, 0o755)
 
-	skillsPath := strings.TrimSpace(input.SkillsPath)
-	if skillsPath == "" {
-		skillsPath = "skills"
+	skillsPathRaw := strings.TrimSpace(input.SkillsPath)
+	if skillsPathRaw == "" {
+		skillsPathRaw = "skills"
 	}
+	skillsPath := skillsPathRaw
 	if !filepath.IsAbs(skillsPath) {
 		if exe, err := os.Executable(); err == nil {
 			skillsPath = filepath.Join(filepath.Dir(exe), skillsPath)
@@ -351,6 +356,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.cfg.OllamaBaseURL = baseURL
+	s.cfg.ServerEnabled = input.ServerEnabled
+	s.cfg.OllamaProbeModels = func() []string {
+		var ms []string
+		for _, part := range strings.Split(input.OllamaProbeModels, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				ms = append(ms, part)
+			}
+		}
+		return ms
+	}()
 	s.cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(input.ServerPort), ":")
 	if s.cfg.ServerPort == "" {
 		s.cfg.ServerPort = "8080"
@@ -380,7 +396,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	// Empty string is treated as "no change" to prevent partial settings POSTs
 	// (e.g. from saveRoleModels) from accidentally clearing the token.
 	newBotToken := strings.TrimSpace(input.TelegramBotToken)
-	if newBotToken != "" && newBotToken != "***" {
+	if newBotToken != "***" {
 		s.cfg.TelegramBotToken = newBotToken
 	}
 	// Telegram Authorized IDs: only update if explicitly provided.
@@ -397,9 +413,13 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		s.cfg.TelegramAuthorizedIDs = ids
 	}
 	s.cfg.Workspace = workspace
+	s.cfg.WorkspaceRaw = workspaceRaw
 	s.cfg.SessionsPath = sessionsPath
+	s.cfg.SessionsPathRaw = sessionsPathRaw
 	s.cfg.MemoryPath = memoryPath
+	s.cfg.MemoryPathRaw = memoryPathRaw
 	s.cfg.SkillsPath = skillsPath
+	s.cfg.SkillsPathRaw = skillsPathRaw
 	s.cfg.SleepModeEnabled = input.SleepModeEnabled
 	s.cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
 	s.cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
@@ -407,13 +427,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
 	s.cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
 	newServerPass := strings.TrimSpace(input.ServerPassword)
-	if newServerPass != "" && newServerPass != "***" {
+	if newServerPass != "***" {
 		s.cfg.ServerPassword = newServerPass
-	} else if newServerPass == "" {
-		s.cfg.ServerPassword = ""
 	}
 	// Search providers: parse CSV from UI
-	rawProviders := strings.TrimSpace(input.SearchProviders)
+	rawProviders := strings.TrimSpace(input.WebSearchPriority)
 	if rawProviders != "" && rawProviders != "none" {
 		var ps []string
 		for _, p := range strings.Split(rawProviders, ",") {
@@ -426,35 +444,17 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	} else if rawProviders == "none" || rawProviders == "" {
 		s.cfg.SearchProviders = []string{"none"}
 	}
-	// Helper to check if a provider is active in the updated configuration
-	isProviderActive := func(provider string) bool {
-		if !input.WebSearchEnabled {
-			return false
-		}
-		for _, p := range s.cfg.SearchProviders {
-			if p == provider {
-				return true
-			}
-		}
-		return false
-	}
 
 	// Brave API key: only update if not masked sentinel.
 	// Only clear if the provider is active; if inactive, keep the existing key.
 	newKey := strings.TrimSpace(input.BraveSearchAPIKey)
-	if newKey != "" && newKey != "***" {
+	if newKey != "***" {
 		s.cfg.BraveSearchAPIKey = newKey
-	} else if newKey == "" && isProviderActive("brave") {
-		s.cfg.BraveSearchAPIKey = ""
 	}
-
-	// Tavily API key: only update if not masked sentinel.
-	// Only clear if the provider is active; if inactive, keep the existing key.
+ 
 	newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
-	if newTavilyKey != "" && newTavilyKey != "***" {
+	if newTavilyKey != "***" {
 		s.cfg.TavilyAPIKey = newTavilyKey
-	} else if newTavilyKey == "" && isProviderActive("tavily") {
-		s.cfg.TavilyAPIKey = ""
 	}
 	// Update WebSearchEnabled based on providers
 	s.cfg.WebSearchEnabled = len(s.cfg.SearchProviders) > 0 &&
@@ -1699,25 +1699,26 @@ func writeError(w http.ResponseWriter, status int, err error) {
 }
 
 func settingsResponse(cfg config.Config) SettingsResponse {
-	// Mask the Brave API key to avoid leaking it through the API.
-	maskedKey := ""
-	if cfg.BraveSearchAPIKey != "" {
-		maskedKey = "***"
+	workspace := cfg.WorkspaceRaw
+	if workspace == "" {
+		workspace = cfg.Workspace
 	}
-	maskedTavily := ""
-	if cfg.TavilyAPIKey != "" {
-		maskedTavily = "***"
+	sessionsPath := cfg.SessionsPathRaw
+	if sessionsPath == "" {
+		sessionsPath = cfg.SessionsPath
 	}
-	maskedServerPassword := ""
-	if cfg.ServerPassword != "" {
-		maskedServerPassword = "***"
+	memoryPath := cfg.MemoryPathRaw
+	if memoryPath == "" {
+		memoryPath = cfg.MemoryPath
 	}
-	maskedTelegramBotToken := ""
-	if cfg.TelegramBotToken != "" {
-		maskedTelegramBotToken = "***"
+	skillsPath := cfg.SkillsPathRaw
+	if skillsPath == "" {
+		skillsPath = cfg.SkillsPath
 	}
+
 	return SettingsResponse{
 		OllamaBaseURL:                cfg.OllamaBaseURL,
+		OllamaProbeModels:            strings.Join(cfg.OllamaProbeModels, ","),
 		ServerPort:                   cfg.ServerPort,
 		ServerEnabled:                cfg.ServerEnabled,
 		WebSearchEnabled:             cfg.WebSearchEnabled,
@@ -1731,21 +1732,21 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelImage:                   cfg.OllamaModelImage,
 		ImageSteps:                   cfg.OllamaImageSteps,
 		PlanConfirmation:             cfg.PlanConfirmation,
-		Workspace:                    cfg.Workspace,
-		SessionsPath:                 cfg.SessionsPath,
-		MemoryPath:                   cfg.MemoryPath,
-		SkillsPath:                   cfg.SkillsPath,
+		Workspace:                    workspace,
+		SessionsPath:                 sessionsPath,
+		MemoryPath:                   memoryPath,
+		SkillsPath:                   skillsPath,
 		SleepModeEnabled:             cfg.SleepModeEnabled,
 		SleepModeInactivityThreshold: cfg.SleepModeInactivityThreshold,
 		SleepModeResumeDelay:         cfg.SleepModeResumeDelay,
 		ModelLearning:                cfg.OllamaModelLearning,
-		SearchProviders:              strings.Join(cfg.SearchProviders, ","),
-		BraveSearchAPIKey:            maskedKey,
-		TavilySearchAPIKey:           maskedTavily,
+		WebSearchPriority:            strings.Join(cfg.SearchProviders, ","),
+		BraveSearchAPIKey:            cfg.BraveSearchAPIKey,
+		TavilySearchAPIKey:           cfg.TavilyAPIKey,
 		SleepModeSubagentsEnabled:    cfg.SleepModeSubagentsEnabled,
 		ModelSubagent:                cfg.OllamaModelSubagent,
-		ServerPassword:               maskedServerPassword,
-		TelegramBotToken:             maskedTelegramBotToken,
+		ServerPassword:               cfg.ServerPassword,
+		TelegramBotToken:             cfg.TelegramBotToken,
 		TelegramAuthorizedIDs:        strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		TelegramStartupNotification:  cfg.TelegramStartupNotification,
 	}
