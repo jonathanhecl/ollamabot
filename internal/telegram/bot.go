@@ -2106,9 +2106,7 @@ func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total
 		percent = (completed * 100) / total
 	}
 
-	filled := strings.Repeat("█", completed)
-	empty := strings.Repeat("░", total-completed)
-	text := fmt.Sprintf("🎨 *Generating image...*\n`[%s%s]` %d%% (%d/%d)", filled, empty, percent, completed, total)
+	text := fmt.Sprintf("🎨 *Generating image... %d%%*", percent)
 
 	// Draw the progress image
 	imgBytes, err := generateProgressImage(percent)
@@ -2146,7 +2144,7 @@ func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total
 
 	// Track step for web UI persistence
 	if h.onStep != nil {
-		stepText := fmt.Sprintf("Generating image... [%s%s] %d%% (%d/%d)", filled, empty, percent, completed, total)
+		stepText := fmt.Sprintf("Generating image... %d%%", percent)
 		h.onStep(msgStep{Type: "image_progress", GenID: genID, Content: stepText, Status: "running", Width: width, Height: height})
 	}
 }
