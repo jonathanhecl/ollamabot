@@ -9,9 +9,10 @@ echo "Building $APP_NAME for macOS..."
 
 mkdir -p "$OUTPUT_DIR"
 
+BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
 
 echo "  -> macOS arm64 (Apple Silicon)..."
-GOOS=darwin GOARCH=arm64 go build -o "$OUTPUT_DIR/${APP_NAME}" ./cmd/ollamabot
+GOOS=darwin GOARCH=arm64 go build -ldflags "-X 'main.buildTime=$BUILD_TIME'" -o "$OUTPUT_DIR/${APP_NAME}" ./cmd/ollamabot
 
 echo ""
 echo "Build completed successfully:"

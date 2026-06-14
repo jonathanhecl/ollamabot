@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -23,6 +24,44 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/web"
 )
 
+const version = "0.1.0"
+
+var buildTime = ""
+
+func getVersionInfo() string {
+	info, ok := debug.ReadBuildInfo()
+	var vcsTime, vcsRevision string
+	var vcsModified bool
+	if ok {
+		for _, setting := range info.Settings {
+			switch setting.Key {
+			case "vcs.revision":
+				vcsRevision = setting.Value
+			case "vcs.time":
+				vcsTime = setting.Value
+			case "vcs.modified":
+				vcsModified = setting.Value == "true"
+			}
+		}
+	}
+
+	res := version
+	if buildTime != "" {
+		res += fmt.Sprintf(" (built at %s)", buildTime)
+	} else if vcsTime != "" {
+		shortRev := vcsRevision
+		if len(shortRev) > 7 {
+			shortRev = shortRev[:7]
+		}
+		modStr := ""
+		if vcsModified {
+			modStr = " (modified)"
+		}
+		res += fmt.Sprintf(" (built from %s [%s]%s)", vcsTime, shortRev, modStr)
+	}
+	return res
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -34,8 +73,13 @@ func run(args []string) error {
 	global := flag.NewFlagSet("ollamabot", flag.ContinueOnError)
 	envPath := global.String("env", ".env", "path to .env file")
 	baseURL := global.String("base-url", "", "override Ollama base URL")
+	versionFlag := global.Bool("version", false, "show version info")
 	if err := global.Parse(args); err != nil {
 		return err
+	}
+	if *versionFlag {
+		fmt.Println("OllamaBot", getVersionInfo())
+		return nil
 	}
 	remaining := global.Args()
 	if len(remaining) == 0 && !config.Exists(*envPath) {
@@ -104,6 +148,7 @@ func run(args []string) error {
 			goalMgr := agent.NewGoalManager(cfg, client)
 			_ = goalMgr.ResumeActiveGoals()
 			startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr)
+			fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
 			if sleepMgr != nil {
@@ -118,6 +163,9 @@ func run(args []string) error {
 	}
 
 	switch remaining[0] {
+	case "version":
+		fmt.Println("OllamaBot", getVersionInfo())
+		return nil
 	case "probe":
 		return runProbe(ctx, remaining[1:], cfg, client, runner, web.SnapshotPath(""))
 	case "docs":
@@ -347,7 +395,7 @@ func saveRun(cachePath string, result probe.Result) {
 }
 
 func usage() {
-	fmt.Println("usage: ollamabot [--env .env] [--base-url URL] <probe|docs> ...")
+	fmt.Println("usage: ollamabot [--env .env] [--base-url URL] [--version] <probe|docs|serve|version> ...")
 	probeUsage()
 	fmt.Println("docs:")
 	fmt.Println("  docs generate [--out docs]")
