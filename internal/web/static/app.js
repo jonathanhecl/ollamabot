@@ -6,7 +6,7 @@ window.fetch = async function(resource, options) {
   
   const url = typeof resource === 'string' ? resource : resource.url;
   if (url && (url.startsWith('/api/') || url.includes('/api/'))) {
-    const serverPassword = sessionStorage.getItem("ollamabot.serverPassword") || "";
+    const serverPassword = localStorage.getItem("ollamabot.serverPassword") || "";
     if (serverPassword) {
       if (options.headers instanceof Headers) {
         options.headers.set("X-Server-Password", serverPassword);
@@ -19,7 +19,7 @@ window.fetch = async function(resource, options) {
   const response = await originalFetch(resource, options);
   
   if (response.status === 401 && url && !url.includes('/api/health')) {
-    sessionStorage.removeItem("ollamabot.serverPassword");
+    localStorage.removeItem("ollamabot.serverPassword");
     showLoginOverlay();
   }
   
@@ -60,7 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
           headers: { "X-Server-Password": pass }
         });
         if (res.ok) {
-          sessionStorage.setItem("ollamabot.serverPassword", pass);
+          localStorage.setItem("ollamabot.serverPassword", pass);
           hideLoginOverlay();
           window.location.reload();
         } else {
@@ -410,7 +410,7 @@ els.fileInput.addEventListener("change", () => addFileAttachments([...els.fileIn
 els.recordControl.addEventListener("click", toggleRecording);
 if (els.logoutBtn) {
   els.logoutBtn.addEventListener("click", () => {
-    sessionStorage.removeItem("ollamabot.serverPassword");
+    localStorage.removeItem("ollamabot.serverPassword");
     window.location.reload();
   });
 }
@@ -954,7 +954,7 @@ function startRealtimeEvents() {
     eventSource.close();
   }
 
-  const serverPassword = sessionStorage.getItem("ollamabot.serverPassword") || "";
+  const serverPassword = localStorage.getItem("ollamabot.serverPassword") || "";
   const queryParam = serverPassword ? `?password=${encodeURIComponent(serverPassword)}` : "";
 
   eventSource = new EventSource(`/api/events${queryParam}`);
@@ -1424,9 +1424,9 @@ async function saveSettings(event) {
   }
   const newPass = els.serverPassword.value.trim();
   if (newPass && newPass !== "***") {
-    sessionStorage.setItem("ollamabot.serverPassword", newPass);
+    localStorage.setItem("ollamabot.serverPassword", newPass);
   } else if (!newPass) {
-    sessionStorage.removeItem("ollamabot.serverPassword");
+    localStorage.removeItem("ollamabot.serverPassword");
   }
   state.settings = data;
   state.activeModel = data.model_default || "";
