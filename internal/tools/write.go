@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jonathanhecl/ollamabot/internal/skills"
 )
 
 // ResolveAndValidatePath resolves rawPath against workspace and checks bounds.
@@ -44,6 +46,13 @@ func WriteFile(workspace, rawPath, contents string) error {
 	path, err := ResolveAndValidatePath(workspace, rawPath)
 	if err != nil {
 		return err
+	}
+
+	lowerPath := strings.ToLower(path)
+	if strings.HasSuffix(lowerPath, "skill.md") {
+		if _, err := skills.ParseSkillMarkdown(contents); err != nil {
+			return fmt.Errorf("skill validation failed: %w", err)
+		}
 	}
 
 	parent := filepath.Dir(path)

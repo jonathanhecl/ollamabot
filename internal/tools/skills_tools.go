@@ -101,6 +101,10 @@ homepage: %s
 %s
 `, safeName, description, homepage, description, formattedInst)
 
+	if _, err := skills.ParseSkillMarkdown(content); err != nil {
+		return fmt.Errorf("skill validation failed: %w", err)
+	}
+
 	return os.WriteFile(path, []byte(content), 0644)
 }
 

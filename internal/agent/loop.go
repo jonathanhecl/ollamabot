@@ -35,6 +35,7 @@ type Agent struct {
 	registry    *tools.Registry
 	paths       *pathMemory
 	currentGoal string
+	options     map[string]any
 	mu          sync.RWMutex
 }
 
@@ -51,6 +52,12 @@ func NewAgent(cfg config.Config, client *ollama.Client, registry *tools.Registry
 		registry: registry,
 		paths:    newPathMemory(cfg.Workspace),
 	}
+}
+
+func (a *Agent) SetOptions(opts map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.options = opts
 }
 
 // Run executes the iterative multi-turn planning and tool loop.
@@ -235,6 +242,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			Messages: activeMessages,
 			Think:    think,
 		}
+		a.mu.RLock()
+		if len(a.options) > 0 {
+			req.Options = a.options
+		}
+		a.mu.RUnlock()
 		defs := a.registry.Definitions()
 		if len(defs) > 0 {
 			req.Tools = defs

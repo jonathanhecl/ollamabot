@@ -181,7 +181,46 @@ func UpdateSoulFromPrompt(prompt string) error {
 	}
 
 	if updated {
+		if err := backupFile(targetPath); err != nil {
+			fmt.Printf("Warning: failed to backup soul file: %v\n", err)
+		}
 		return os.WriteFile(targetPath, []byte(strings.Join(lines, "\n")), 0o644)
+	}
+
+	return nil
+}
+
+// backupFile creates a rolling backup of the given file in the "agent/backups" directory.
+// It shifts backups: .bak4 -> .bak5, .bak3 -> .bak4, .bak2 -> .bak3, .bak1 -> .bak2, current -> .bak1.
+func backupFile(targetPath string) error {
+	if _, err := os.Stat(targetPath); os.IsNotExist(err) {
+		return nil // Nothing to backup
+	}
+
+	dir := filepath.Join("agent", "backups")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create backups directory: %w", err)
+	}
+
+	base := filepath.Base(targetPath)
+
+	// Shift existing backups: bak4 -> bak5, etc.
+	for i := 4; i >= 1; i-- {
+		oldPath := filepath.Join(dir, fmt.Sprintf("%s.bak%d", base, i))
+		newPath := filepath.Join(dir, fmt.Sprintf("%s.bak%d", base, i+1))
+		if _, err := os.Stat(oldPath); err == nil {
+			_ = os.Rename(oldPath, newPath)
+		}
+	}
+
+	// Copy current file to bak1
+	bak1Path := filepath.Join(dir, fmt.Sprintf("%s.bak1", base))
+	content, err := os.ReadFile(targetPath)
+	if err != nil {
+		return fmt.Errorf("failed to read file for backup: %w", err)
+	}
+	if err := os.WriteFile(bak1Path, content, 0644); err != nil {
+		return fmt.Errorf("failed to write backup file: %w", err)
 	}
 
 	return nil
@@ -225,5 +264,8 @@ func SaveUserProfile(content string) error {
 		return err
 	}
 	filePath := filepath.Join(dir, "USER_PROFILE.md")
+	if err := backupFile(filePath); err != nil {
+		fmt.Printf("Warning: failed to backup user profile: %v\n", err)
+	}
 	return os.WriteFile(filePath, []byte(content), 0644)
 }

@@ -258,12 +258,22 @@ func (sm *SleepManager) processNextQueuedTask(ctx context.Context) {
 		sm.mu.Unlock()
 		return
 	}
-	task := sm.taskQueue[0]
-	sm.taskQueue = sm.taskQueue[1:]
+	
+	// Collect up to 5 analyze_session tasks to consolidate
+	var sessions []string
+	var remainingQueue []Subtask
+	for _, task := range sm.taskQueue {
+		if len(sessions) < 5 && task.Type == "analyze_session" {
+			sessions = append(sessions, task.TargetID)
+		} else {
+			remainingQueue = append(remainingQueue, task)
+		}
+	}
+	sm.taskQueue = remainingQueue
 	sm.mu.Unlock()
 
-	if task.Type == "analyze_session" {
-		go sm.runLearningCycleForSessionWithModel(ctx, task.TargetID, modelToUse)
+	if len(sessions) > 0 {
+		go sm.runLearningCycleForSessionsWithModel(ctx, sessions, modelToUse)
 	}
 }
 
@@ -324,7 +334,7 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 		return
 	}
 
-	var sessionToAnalyze string
+	var sessionsToAnalyze []string
 	sm.mu.RLock()
 	analyzed := make(map[string]bool)
 	for _, id := range sm.state.AnalyzedSessions {
@@ -334,20 +344,25 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 
 	for _, s := range sessList {
 		if !analyzed[s.ID] {
-			sessionToAnalyze = s.ID
-			break
+			sessionsToAnalyze = append(sessionsToAnalyze, s.ID)
+			if len(sessionsToAnalyze) >= 5 {
+				break
+			}
 		}
 	}
 
-	if sessionToAnalyze == "" {
+	if len(sessionsToAnalyze) == 0 {
 		log.Println("[sleep] No new sessions to analyze.")
 		return
 	}
 
-	sm.runLearningCycleForSessionWithModel(parentCtx, sessionToAnalyze, modelToUse)
+	sm.runLearningCycleForSessionsWithModel(parentCtx, sessionsToAnalyze, modelToUse)
 }
 
-func (sm *SleepManager) runLearningCycleForSessionWithModel(parentCtx context.Context, sessionToAnalyze string, modelToUse string) {
+func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.Context, sessionsToAnalyze []string, modelToUse string) {
+	if len(sessionsToAnalyze) == 0 {
+		return
+	}
 	sm.mu.Lock()
 	if sm.isLearning {
 		sm.mu.Unlock()
@@ -367,46 +382,54 @@ func (sm *SleepManager) runLearningCycleForSessionWithModel(parentCtx context.Co
 		sm.mu.Unlock()
 	}()
 
-	log.Printf("[sleep] Continuous learning cycle started for session %s.", sessionToAnalyze)
-
-	sess, err := sm.sessionStore.Get(sessionToAnalyze)
-	if err != nil {
-		log.Printf("[sleep] Error loading session %s: %v", sessionToAnalyze, err)
-		return
-	}
-
-	if len(sess.Messages) == 0 {
-		sm.mu.Lock()
-		sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sessionToAnalyze)
-		sm.mu.Unlock()
-		_ = sm.SaveState()
-		return
-	}
-
-	log.Printf("[sleep] Analyzing session %s (%s)...", sessionToAnalyze, sess.Title)
+	log.Printf("[sleep] Continuous learning cycle started for %d sessions: %v.", len(sessionsToAnalyze), sessionsToAnalyze)
 
 	var historyText strings.Builder
-	for idx, raw := range sess.Messages {
-		var m struct {
-			Role    string `json:"role"`
-			Content string `json:"content"`
+	var feedbackText strings.Builder
+	var validSessions []string
+
+	for _, sessionID := range sessionsToAnalyze {
+		sess, err := sm.sessionStore.Get(sessionID)
+		if err != nil {
+			log.Printf("[sleep] Error loading session %s: %v", sessionID, err)
+			continue
 		}
-		if err := json.Unmarshal(raw, &m); err == nil {
-			fmt.Fprintf(&historyText, "[Msg %d] %s: %s\n", idx+1, m.Role, m.Content)
+		if len(sess.Messages) == 0 {
+			sm.mu.Lock()
+			sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sessionID)
+			sm.mu.Unlock()
+			_ = sm.SaveState()
+			continue
+		}
+
+		validSessions = append(validSessions, sessionID)
+
+		fmt.Fprintf(&historyText, "\n--- SESSION: %s (ID: %s) ---\n", sess.Title, sess.ID)
+		for idx, raw := range sess.Messages {
+			var m struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(raw, &m); err == nil {
+				fmt.Fprintf(&historyText, "[Msg %d] %s: %s\n", idx+1, m.Role, m.Content)
+			}
+		}
+
+		if len(sess.Feedback) > 0 {
+			fmt.Fprintf(&feedbackText, "\n--- FEEDBACK FOR SESSION: %s (ID: %s) ---\n", sess.Title, sess.ID)
+			for _, fb := range sess.Feedback {
+				emoji := "👍"
+				if fb.Reaction == "negative" {
+					emoji = "👎"
+				}
+				fmt.Fprintf(&feedbackText, "- Message #%d: %s %s\n", fb.MessageIndex+1, emoji, fb.Reaction)
+			}
 		}
 	}
 
-	// Build user feedback section from session reactions
-	var feedbackText strings.Builder
-	if len(sess.Feedback) > 0 {
-		feedbackText.WriteString("\n---\nUSER FEEDBACK (emoji reactions on messages):\n")
-		for _, fb := range sess.Feedback {
-			emoji := "👍"
-			if fb.Reaction == "negative" {
-				emoji = "👎"
-			}
-			feedbackText.WriteString(fmt.Sprintf("- Message #%d: %s %s\n", fb.MessageIndex+1, emoji, fb.Reaction))
-		}
+	if len(validSessions) == 0 {
+		log.Println("[sleep] No valid sessions to analyze after filtering.")
+		return
 	}
 
 	learningModel := modelToUse
@@ -425,12 +448,12 @@ func (sm *SleepManager) runLearningCycleForSessionWithModel(parentCtx context.Co
 	}
 
 	analysisPrompt := fmt.Sprintf(`You are the OllamaBot self-refining learning analyzer.
-Analyze the following conversation history for:
+Analyze the following conversation histories from %d consolidated sessions for:
 - Potential errors, user frustration, repetitive mistakes, or areas where the assistant struggled.
 - User preferences, coding style preferences, spoken language preferences, tastes, background info, or user name.
 
 ---
-CONVERSATION HISTORY:
+CONVERSATION HISTORIES:
 %s
 %s---
 
@@ -441,11 +464,11 @@ Your goal:
 2. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
 3. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
 4. Call the appropriate tools to make these improvements. You have access to:
-   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management.
+   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent. If a similar skill exists, modify it using 'skill_edit' instead of creating a duplicate file to prevent cluttering.
    - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
 
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
-Provide a clear final summary of what you did.`, historyText.String(), feedbackText.String())
+Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String())
 
 	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    sm.cfg.SearchProviders,
@@ -455,6 +478,9 @@ Provide a clear final summary of what you did.`, historyText.String(), feedbackT
 	registry.SetSkillsPath(sm.cfg.SkillsPath)
 
 	reflectorAgent := agent.NewAgent(sm.cfg, sm.client, registry)
+	reflectorAgent.SetOptions(map[string]any{
+		"temperature": 0.1,
+	})
 
 	systemPrompt := `You are the OllamaBot Self-Improvement Reflector.
 You operate in the background during sleep mode.
@@ -465,6 +491,8 @@ When editing or creating skills, use standard SKILL.md format:
 - ## Description header.
 - ## Instructions header containing list items starting with - [ ], -, or numbered steps.
 
+To prevent duplicates, you MUST check the existing skills with 'skill_list' before creating a new one. If a skill with similar intent exists, modify it instead of creating a new one.
+
 Keep the user profile ('agent/USER_PROFILE.md') structured:
 - Name
 - Preferred Languages
@@ -474,7 +502,7 @@ Keep the user profile ('agent/USER_PROFILE.md') structured:
 
 Log all updates you make in the audit log ('skills/audit_log.md'). You can write or edit this file using 'Write' or 'Edit' tools. Each log entry must include:
 - Date/time
-- Chat Session ID analyzed
+- Chat Session ID(s) analyzed
 - Issue or user preferences detected
 - Actions executed (skills created, user profile updated, etc.)
 - Justification/Reasoning`
@@ -503,16 +531,19 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 		}
 	}
 
+	consolidatedSessIDs := strings.Join(validSessions, ", ")
 	if len(actions) > 0 {
-		sm.appendToAuditLog(sessionToAnalyze, actions, summary)
+		sm.appendToAuditLog(consolidatedSessIDs, actions, summary)
 	}
 
 	sm.mu.Lock()
-	sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sessionToAnalyze)
+	for _, sID := range validSessions {
+		sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sID)
+	}
 	sm.mu.Unlock()
 	_ = sm.SaveState()
 
-	log.Printf("[sleep] Analysis of session %s completed successfully.", sessionToAnalyze)
+	log.Printf("[sleep] Analysis of sessions [%s] completed successfully.", consolidatedSessIDs)
 }
 
 func (sm *SleepManager) appendToAuditLog(sessionID string, actions []string, summary string) {
