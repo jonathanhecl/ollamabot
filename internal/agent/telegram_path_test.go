@@ -36,6 +36,9 @@ func TestRun_textOnlyTelegramPath(t *testing.T) {
 	msgs := []ollama.Message{{Role: "user", Content: "Reply with exactly: pong"}}
 	final, err := a.Run(ctx, model, msgs, false, &discardHandler{})
 	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			t.Skip("Model 'granite4.1:8b' not found in local Ollama, skipping integration test:", err)
+		}
 		t.Fatalf("Run failed: %v", err)
 	}
 

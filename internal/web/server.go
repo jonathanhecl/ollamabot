@@ -473,7 +473,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		s.sleepMgr.Pause()
 	}
 	if s.cfg.SleepModeEnabled {
-		s.sleepMgr = learning.NewSleepManager(s.cfg, s.client)
+		s.sleepMgr = learning.NewSleepManager(s.cfg, s.client, s.memoryStore)
 		s.sleepMgr.Start(context.Background())
 	} else {
 		s.sleepMgr = nil

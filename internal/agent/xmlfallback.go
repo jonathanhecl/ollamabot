@@ -13,6 +13,30 @@ var (
 	toolTagOpenRe  = regexp.MustCompile(`(?s)<([A-Z][A-Z0-9_]*)>`)
 )
 
+var toolNameMapping = map[string]string{
+	"readfile":               "read_file",
+	"websearch":              "web_search",
+	"fetchwebpage":           "fetch_webpage",
+	"executecommand":         "execute_command",
+	"askclarification":       "ask_clarification",
+	"presentplan":            "present_plan",
+	"generateimage":          "generate_image",
+	"listsessionattachments": "list_session_attachments",
+	"viewsessionattachment":  "view_session_attachment",
+	"memorysearch":           "memory_search",
+	"memoryadd":              "memory_add",
+	"memorydelete":           "memory_delete",
+	"memorylist":             "memory_list",
+	"skilllist":              "skill_list",
+	"skillget":               "skill_get",
+	"skillcreate":            "skill_create",
+	"skilledit":              "skill_edit",
+	"skilldelete":            "skill_delete",
+	"write":                  "Write",
+	"edit":                   "Edit",
+	"todowrite":              "TodoWrite",
+}
+
 // parseXMLFallback recovers a tool call from a raw model reply that did not use
 // the native tool-call API. It accepts three envelopes:
 //
@@ -43,6 +67,10 @@ func parseNamedEnvelope(s string, openRe *regexp.Regexp, closeTag string) (strin
 		return "", nil, false
 	}
 	name := strings.TrimSpace(s[loc[2]:loc[3]])
+	norm := strings.ReplaceAll(strings.ToLower(name), "_", "")
+	if mapped, ok := toolNameMapping[norm]; ok {
+		name = mapped
+	}
 	body, end, ok := extractBalancedJSON(s, loc[1])
 	if !ok {
 		return "", nil, false
@@ -63,6 +91,10 @@ func parseToolTagEnvelope(s string) (string, map[string]any, bool) {
 		return "", nil, false
 	}
 	tag := s[loc[2]:loc[3]]
+	norm := strings.ReplaceAll(strings.ToLower(tag), "_", "")
+	if _, ok := toolNameMapping[norm]; !ok {
+		return "", nil, false
+	}
 	body, end, ok := extractBalancedJSON(s, loc[1])
 	if !ok {
 		return "", nil, false
@@ -136,6 +168,10 @@ func decodeToolJSON(raw string) (map[string]any, bool) {
 }
 
 func toToolName(raw string) string {
+	norm := strings.ReplaceAll(strings.ToLower(raw), "_", "")
+	if mapped, ok := toolNameMapping[norm]; ok {
+		return mapped
+	}
 	parts := strings.Split(strings.ToLower(raw), "_")
 	for i, p := range parts {
 		if p == "" {
@@ -170,6 +206,10 @@ func detectMalformedXMLFallback(text string) (string, bool) {
 		loc := openInvokeRe.FindStringSubmatchIndex(clean)
 		if loc != nil {
 			name := strings.TrimSpace(clean[loc[2]:loc[3]])
+			norm := strings.ReplaceAll(strings.ToLower(name), "_", "")
+			if mapped, ok := toolNameMapping[norm]; ok {
+				name = mapped
+			}
 			body, _, ok := extractBalancedJSON(clean, loc[1])
 			if !ok {
 				return fmt.Sprintf("Error: Malformed JSON arguments in <invoke name=\"%s\">. Braces must be balanced.", name), true
@@ -189,6 +229,10 @@ func detectMalformedXMLFallback(text string) (string, bool) {
 		loc := openToolCallRe.FindStringSubmatchIndex(clean)
 		if loc != nil {
 			name := strings.TrimSpace(clean[loc[2]:loc[3]])
+			norm := strings.ReplaceAll(strings.ToLower(name), "_", "")
+			if mapped, ok := toolNameMapping[norm]; ok {
+				name = mapped
+			}
 			body, _, ok := extractBalancedJSON(clean, loc[1])
 			if !ok {
 				return fmt.Sprintf("Error: Malformed JSON arguments in <tool_call name=\"%s\">. Braces must be balanced.", name), true
@@ -207,18 +251,20 @@ func detectMalformedXMLFallback(text string) (string, bool) {
 	loc := toolTagOpenRe.FindStringSubmatchIndex(clean)
 	if loc != nil {
 		tag := clean[loc[2]:loc[3]]
-		name := toToolName(tag)
-		body, _, ok := extractBalancedJSON(clean, loc[1])
-		if !ok {
-			return fmt.Sprintf("Error: Malformed JSON arguments in <%s>. Braces must be balanced.", tag), true
-		}
-		_, ok = decodeToolJSON(body)
-		if !ok {
-			return fmt.Sprintf("Error: Invalid JSON syntax in <%s>: %s", tag, body), true
-		}
-		closeTag := "</" + tag + ">"
-		if !strings.Contains(clean, closeTag) {
-			return fmt.Sprintf("Error: Missing closing tag %s for tool %s.", closeTag, name), true
+		norm := strings.ReplaceAll(strings.ToLower(tag), "_", "")
+		if name, ok := toolNameMapping[norm]; ok {
+			body, _, ok := extractBalancedJSON(clean, loc[1])
+			if !ok {
+				return fmt.Sprintf("Error: Malformed JSON arguments in <%s>. Braces must be balanced.", tag), true
+			}
+			_, ok = decodeToolJSON(body)
+			if !ok {
+				return fmt.Sprintf("Error: Invalid JSON syntax in <%s>: %s", tag, body), true
+			}
+			closeTag := "</" + tag + ">"
+			if !strings.Contains(clean, closeTag) {
+				return fmt.Sprintf("Error: Missing closing tag %s for tool %s.", closeTag, name), true
+			}
 		}
 	}
 

@@ -29,10 +29,24 @@ func TestParseXMLFallback(t *testing.T) {
 			wantOk:     true,
 		},
 		{
-			name:       "custom tag envelope",
+			name:       "custom tag envelope mapping",
 			input:      `<READ_FILE>{"path": "README.md"}</READ_FILE>`,
-			wantTool:   "ReadFile",
+			wantTool:   "read_file",
 			wantParams: map[string]any{"path": "README.md"},
+			wantOk:     true,
+		},
+		{
+			name:       "custom tag web_search mapping",
+			input:      `<WEB_SEARCH>{"query": "golang"}</WEB_SEARCH>`,
+			wantTool:   "web_search",
+			wantParams: map[string]any{"query": "golang"},
+			wantOk:     true,
+		},
+		{
+			name:       "invoke name CamelCase ReadFile mapping",
+			input:      `<invoke name="ReadFile">{"path": "a.txt"}</invoke>`,
+			wantTool:   "read_file",
+			wantParams: map[string]any{"path": "a.txt"},
 			wantOk:     true,
 		},
 		{
@@ -107,7 +121,22 @@ func TestDetectMalformedXMLFallback(t *testing.T) {
 			name:          "custom tag missing close tag",
 			input:         `<READ_FILE>{"path": "a.txt"}</READ_FIL>`,
 			wantMalformed: true,
-			wantSubstr:    "Missing closing tag </READ_FILE> for tool ReadFile.",
+			wantSubstr:    "Missing closing tag </READ_FILE> for tool read_file.",
+		},
+		{
+			name:          "HTML tags ignored in text",
+			input:         `This is <HTML> and <DIV> content with no JSON.`,
+			wantMalformed: false,
+		},
+		{
+			name:          "lowercase HTML tags ignored in text",
+			input:         `Here is some <div> content.`,
+			wantMalformed: false,
+		},
+		{
+			name:          "uppercase doc placeholder ignored",
+			input:         `Write the code to <FILE_PATH> now.`,
+			wantMalformed: false,
 		},
 	}
 

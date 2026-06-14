@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
@@ -34,6 +35,7 @@ type SleepManager struct {
 	cfg          config.Config
 	client       *ollama.Client
 	sessionStore *sessions.Store
+	memoryStore  *memory.Store
 	lastActivity time.Time
 	isSleeping   bool
 	isLearning   bool
@@ -43,11 +45,12 @@ type SleepManager struct {
 	taskQueue    []Subtask
 }
 
-func NewSleepManager(cfg config.Config, client *ollama.Client) *SleepManager {
+func NewSleepManager(cfg config.Config, client *ollama.Client, memoryStore *memory.Store) *SleepManager {
 	return &SleepManager{
 		cfg:          cfg,
 		client:       client,
 		sessionStore: sessions.NewStore(cfg.SessionsPath),
+		memoryStore:  memoryStore,
 		lastActivity: time.Now(),
 		statePath:    filepath.Join(cfg.SessionsPath, "learning_state.json"),
 	}
@@ -470,7 +473,7 @@ Your goal:
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String())
 
-	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, nil, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
+	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, sm.memoryStore, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    sm.cfg.SearchProviders,
 		BraveAPIKey:  sm.cfg.BraveSearchAPIKey,
 		TavilyAPIKey: sm.cfg.TavilyAPIKey,

@@ -21,6 +21,11 @@ var defaultAllowedCommands = map[string]bool{
 	"exiftool":  true,
 	"mediainfo": true,
 	"identify":  true,
+	"go":        true,
+	"git":       true,
+	"npm":       true,
+	"tsc":       true,
+	"yarn":      true,
 }
 
 const maxOutputBytes = 64 * 1024 // 64 KiB

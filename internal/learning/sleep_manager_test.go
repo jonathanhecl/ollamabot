@@ -30,7 +30,7 @@ func TestNewSleepManager(t *testing.T) {
 		SleepModeInactivityThreshold: "5s",
 	}
 
-	sm := NewSleepManager(cfg, nil)
+	sm := NewSleepManager(cfg, nil, nil)
 	if sm == nil {
 		t.Fatal("expected sleep manager, got nil")
 	}
@@ -55,7 +55,7 @@ func TestNotifyUserActivity(t *testing.T) {
 		SleepModeInactivityThreshold: "5s",
 	}
 
-	sm := NewSleepManager(cfg, nil)
+	sm := NewSleepManager(cfg, nil, nil)
 	
 	// Set initial past activity time
 	past := time.Now().Add(-10 * time.Second)
@@ -83,7 +83,7 @@ func TestPauseAndState(t *testing.T) {
 		SleepModeInactivityThreshold: "5s",
 	}
 
-	sm := NewSleepManager(cfg, nil)
+	sm := NewSleepManager(cfg, nil, nil)
 
 	// Test state save/load
 	sm.state.AnalyzedSessions = []string{"sess-1", "sess-2"}
@@ -93,7 +93,7 @@ func TestPauseAndState(t *testing.T) {
 	}
 
 	// Create another manager to load
-	sm2 := NewSleepManager(cfg, nil)
+	sm2 := NewSleepManager(cfg, nil, nil)
 	sm2.LoadState()
 
 	if len(sm2.state.AnalyzedSessions) != 2 || sm2.state.AnalyzedSessions[0] != "sess-1" {
@@ -134,7 +134,7 @@ func TestAppendToAuditLog(t *testing.T) {
 		SleepModeInactivityThreshold: "5s",
 	}
 
-	sm := NewSleepManager(cfg, nil)
+	sm := NewSleepManager(cfg, nil, nil)
 	
 	sm.appendToAuditLog("sess-abc", []string{"Created skill X", "Edited skill Y"}, "Made improvements")
 
@@ -176,7 +176,7 @@ func TestCheckHardwareAndSelectModel(t *testing.T) {
 		OllamaModelSubagent:  "subagent-model:1b",
 	}
 
-	sm := NewSleepManager(cfg, client)
+	sm := NewSleepManager(cfg, client, nil)
 
 	// Case 1: No models loaded. Should return primary preferred model (subagent-model:1b).
 	psModels = nil

@@ -16,6 +16,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/docs"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
+	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/telegram"
@@ -96,7 +97,8 @@ func run(args []string) error {
 		if cfg.ServerEnabled {
 			var sleepMgr *learning.SleepManager
 			if cfg.SleepModeEnabled {
-				sleepMgr = learning.NewSleepManager(cfg, client)
+				ms := memory.NewStore(cfg.MemoryPath)
+				sleepMgr = learning.NewSleepManager(cfg, client, ms)
 				sleepMgr.Start(ctx)
 			}
 			goalMgr := agent.NewGoalManager(cfg, client)
@@ -262,7 +264,8 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 
 	var sleepMgr *learning.SleepManager
 	if cfg.SleepModeEnabled {
-		sleepMgr = learning.NewSleepManager(cfg, client)
+		ms := memory.NewStore(cfg.MemoryPath)
+		sleepMgr = learning.NewSleepManager(cfg, client, ms)
 		sleepMgr.Start(context.Background())
 	}
 
