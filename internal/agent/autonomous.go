@@ -458,19 +458,41 @@ Task Description: %s
 		{Role: "user", Content: fmt.Sprintf("Execute the task: %q", task.Content)},
 	}
 
-	// Execution turn
+	// Execution turn with smart retry
 	startTime := time.Now()
-	finalHistory, err := a.Run(ctx, model, messages, true, &dummyStreamHandler{})
+	var finalHistory []ollama.Message
+	var runErr error
+	maxRunRetries := 3
+	for retry := 0; retry < maxRunRetries; retry++ {
+		finalHistory, runErr = a.Run(ctx, model, messages, true, &dummyStreamHandler{})
+		if runErr == nil {
+			break
+		}
+		log.Printf("[autonomous] Error running agent turn for project %s (attempt %d/%d): %v", projectID, retry+1, maxRunRetries, runErr)
+		if retry < maxRunRetries-1 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+			}
+			// Re-create registry and agent to start fresh
+			registry = tools.NewRegistry(am.cfg.WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.cfg.OllamaModelEmbed, tools.SearchConfig{
+				Providers:   am.cfg.SearchProviders,
+				BraveAPIKey: am.cfg.BraveSearchAPIKey,
+			})
+			a = NewAgent(am.cfg, am.client, registry)
+		}
+	}
 	elapsed := time.Since(startTime)
 
-	if err != nil {
+	if runErr != nil {
 		task.Status = "failed"
-		task.Result = fmt.Sprintf("Error running agent turn: %v", err)
+		task.Result = fmt.Sprintf("Error running agent turn: %v", runErr)
 		_ = am.SaveProject(proj)
 		if OnTaskCompletion != nil {
-			OnTaskCompletion(proj, *task, err)
+			OnTaskCompletion(proj, *task, runErr)
 		}
-		return err
+		return runErr
 	}
 
 	// Find the final text response from the assistant

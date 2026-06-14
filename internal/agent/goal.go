@@ -313,11 +313,42 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			baseMessages: sess.Messages,
 		}
 
-		// Run execution turn
-		finalHistory, err := a.Run(ctx, g.cfg.OllamaDefaultModel, ollamaMessages, true, handler)
-		if err != nil {
-			log.Printf("[GoalManager] Error running cycle %d: %v", cycle, err)
-			g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", err))
+		// Run execution turn with smart retry
+		var finalHistory []ollama.Message
+		var runErr error
+		maxRunRetries := 3
+		for retry := 0; retry < maxRunRetries; retry++ {
+			finalHistory, runErr = a.Run(ctx, g.cfg.OllamaDefaultModel, ollamaMessages, true, handler)
+			if runErr == nil {
+				break
+			}
+			log.Printf("[GoalManager] Error running cycle %d (attempt %d/%d): %v", cycle, retry+1, maxRunRetries, runErr)
+			if retry < maxRunRetries-1 {
+				g.notify(sessionID, fmt.Sprintf("⚠️ Goal loop execution warning: %v. Retrying in 10 seconds...", runErr))
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(10 * time.Second):
+				}
+				// Reload session to make sure we have the latest state before retrying
+				sess, err = g.sessionStore.Get(sessionID)
+				if err != nil {
+					log.Printf("[GoalManager] Error reloading session for retry: %v. Aborting.", err)
+					return
+				}
+				// Re-instantiate agent and registry to ensure fresh state if needed
+				registry = tools.NewRegistry(g.cfg.WebSearchEnabled, g.cfg.Workspace, g.memoryStore, g.client, g.cfg.OllamaModelEmbed, tools.SearchConfig{
+					Providers:    g.cfg.SearchProviders,
+					BraveAPIKey:  g.cfg.BraveSearchAPIKey,
+					TavilyAPIKey: g.cfg.TavilyAPIKey,
+				})
+				a = NewAgent(g.cfg, g.client, registry)
+			}
+		}
+
+		if runErr != nil {
+			log.Printf("[GoalManager] Error running cycle %d after %d attempts: %v", cycle, maxRunRetries, runErr)
+			g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
 			return
 		}
 

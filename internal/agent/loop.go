@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -137,7 +138,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		if a.cfg.OllamaModelEmbed != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
-				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.",
+				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add. Write self-contained, descriptive, and reusable memory entries (containing error patterns, technologies involved, file context, and the exact working solution) so they can be retrieved and applied effectively in both the current project and other contexts.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.\n- Lessons Learned: When you solve a difficult error, bug, or discover workspace-specific setups (e.g. missing dependencies, required environment variables, unique build scripts), store a concise 'lesson learned' memory with context using memory_add so you do not repeat the mistake in future tasks.",
 			})
 		}
 
@@ -362,6 +363,94 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				result, terr := a.registry.Execute(ctx, call)
 				if terr != nil {
 					result = fmt.Sprintf("Error: %v", terr)
+				}
+
+				// Proactive error recovery/assistance
+				lowerResult := strings.ToLower(result)
+				if terr != nil || strings.HasPrefix(result, "Error") {
+					// 1. File Not Found Assistance
+					if strings.Contains(lowerResult, "not found") || strings.Contains(lowerResult, "no such file") {
+						var rawPath string
+						if toolName == "read_file" {
+							rawPath, _ = params["path"].(string)
+						} else if toolName == "Edit" || toolName == "Write" {
+							rawPath, _ = params["file_path"].(string)
+						}
+						if rawPath != "" {
+							if suggs := a.paths.FindSuggestions(rawPath); len(suggs) > 0 {
+								var sb strings.Builder
+								sb.WriteString(result)
+								sb.WriteString("\n\n[PROACTIVE SYSTEM ASSISTANCE: The requested file was not found. Here are some files in your workspace with similar names that you might have meant to access:]")
+								for _, s := range suggs {
+									rel, err := filepath.Rel(a.cfg.Workspace, s)
+									if err == nil && !strings.HasPrefix(rel, "..") {
+										fmt.Fprintf(&sb, "\n- %s", rel)
+									} else {
+										fmt.Fprintf(&sb, "\n- %s", s)
+									}
+								}
+								sb.WriteString("\n[Please check the file name and verify with the suggestions above before trying again.]")
+								result = sb.String()
+							}
+						}
+					}
+
+					// 2. Edit Match Failure Assistance
+					if toolName == "Edit" && strings.Contains(result, "old_string not found") {
+						filePath, _ := params["file_path"].(string)
+						if filePath != "" {
+							content, readErr := tools.ReadFile(a.cfg.Workspace, filePath)
+							if readErr == nil {
+								lines := strings.Split(content, "\n")
+								var sb strings.Builder
+								sb.WriteString(result)
+								sb.WriteString("\n\n[PROACTIVE SYSTEM ASSISTANCE: The target text could not be located in the file. Here is the current content of the file to help you find the correct target block for replacement:]\n")
+								if len(lines) <= 250 {
+									sb.WriteString("```\n")
+									sb.WriteString(content)
+									sb.WriteString("\n```")
+								} else {
+									sb.WriteString("File is too long to display fully. Here are the first 150 lines:\n```\n")
+									for idx, line := range lines {
+										if idx >= 150 {
+											break
+										}
+										fmt.Fprintf(&sb, "%d: %s\n", idx+1, line)
+									}
+									sb.WriteString("\n```\n")
+
+									oldStringVal, _ := params["old_string"].(string)
+									oldLines := strings.Split(oldStringVal, "\n")
+									if len(oldLines) > 0 && strings.TrimSpace(oldLines[0]) != "" {
+										targetLineNorm := strings.TrimSpace(strings.ToLower(oldLines[0]))
+										var matchLines []string
+										for idx, line := range lines {
+											if strings.Contains(strings.ToLower(line), targetLineNorm) {
+												startLine := max(0, idx-5)
+												endLine := min(len(lines)-1, idx+5)
+												var contextBlock strings.Builder
+												for l := startLine; l <= endLine; l++ {
+													fmt.Fprintf(&contextBlock, "  Line %d: %s\n", l+1, lines[l])
+												}
+												matchLines = append(matchLines, contextBlock.String())
+												if len(matchLines) >= 3 {
+													break
+												}
+											}
+										}
+										if len(matchLines) > 0 {
+											sb.WriteString("\nPotential matches for your target text start line:\n")
+											for _, mBlock := range matchLines {
+												sb.WriteString(mBlock)
+												sb.WriteString("\n")
+											}
+										}
+									}
+								}
+								result = sb.String()
+							}
+						}
+					}
 				}
 
 				// Check for repetitive loops

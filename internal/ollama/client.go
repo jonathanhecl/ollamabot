@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 type Client struct {
@@ -62,36 +63,77 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ollama POST /api/chat failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	decoder := json.NewDecoder(resp.Body)
-	for {
-		var chunk ChatResponse
-		if err := decoder.Decode(&chunk); err != nil {
-			if err == io.EOF {
-				return nil
+
+	maxRetries := 3
+	backoff := 500 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
 			}
 			return err
 		}
-		if err := onChunk(chunk); err != nil {
-			return err
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return fmt.Errorf("ollama POST /api/chat failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
-		if chunk.Done {
-			return nil
+
+		decoder := json.NewDecoder(resp.Body)
+		decodedCount := 0
+		var streamErr error
+		for {
+			var chunk ChatResponse
+			if err := decoder.Decode(&chunk); err != nil {
+				if err == io.EOF {
+					resp.Body.Close()
+					return nil
+				}
+				streamErr = err
+				break
+			}
+			decodedCount++
+			if err := onChunk(chunk); err != nil {
+				resp.Body.Close()
+				return err
+			}
+			if chunk.Done {
+				resp.Body.Close()
+				return nil
+			}
+		}
+		resp.Body.Close()
+
+		if streamErr != nil {
+			if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return streamErr
 		}
 	}
+	return fmt.Errorf("max retries exceeded")
 }
 
 func (c *Client) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, error) {
@@ -115,73 +157,146 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 	if err != nil {
 		return err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/generate", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("ollama POST /api/generate failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-	decoder := json.NewDecoder(resp.Body)
-	for {
-		var chunk GenerateResponse
-		if err := decoder.Decode(&chunk); err != nil {
-			if err == io.EOF {
-				return nil
+
+	maxRetries := 3
+	backoff := 500 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/generate", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
 			}
 			return err
 		}
-		if err := onChunk(chunk); err != nil {
-			return err
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return fmt.Errorf("ollama POST /api/generate failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		}
-		if chunk.Done {
-			return nil
+
+		decoder := json.NewDecoder(resp.Body)
+		decodedCount := 0
+		var streamErr error
+		for {
+			var chunk GenerateResponse
+			if err := decoder.Decode(&chunk); err != nil {
+				if err == io.EOF {
+					resp.Body.Close()
+					return nil
+				}
+				streamErr = err
+				break
+			}
+			decodedCount++
+			if err := onChunk(chunk); err != nil {
+				resp.Body.Close()
+				return err
+			}
+			if chunk.Done {
+				resp.Body.Close()
+				return nil
+			}
+		}
+		resp.Body.Close()
+
+		if streamErr != nil {
+			if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return streamErr
 		}
 	}
+	return fmt.Errorf("max retries exceeded")
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, out any) error {
 	var reader io.Reader
+	var payload []byte
+	var err error
 	if body != nil {
-		payload, err := json.Marshal(body)
+		payload, err = json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
-	if err != nil {
-		return err
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	maxRetries := 3
+	backoff := 500 * time.Millisecond
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 
-	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
+		if body != nil {
+			reader = bytes.NewReader(payload)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+		if err != nil {
+			return err
+		}
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return err
+		}
+
+		respBody, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return err
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return fmt.Errorf("ollama %s %s failed: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+		}
+
+		if out == nil {
+			return nil
+		}
+		return json.Unmarshal(respBody, out)
 	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("ollama %s %s failed: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(payload)))
-	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(payload, out)
+	return fmt.Errorf("max retries exceeded")
 }
 
 func boolPtr(value bool) *bool {

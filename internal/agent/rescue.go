@@ -21,11 +21,91 @@ func newPathMemory(cwd string) *pathMemory {
 	if err != nil || abs == "" {
 		abs = cwd
 	}
-	return &pathMemory{
+	pm := &pathMemory{
 		cwd:    abs,
 		byName: make(map[string]map[string]struct{}),
 	}
+	pm.populateFromWorkspace()
+	return pm
 }
+
+// populateFromWorkspace scans the workspace and prepopulates path memory with existing files.
+func (m *pathMemory) populateFromWorkspace() {
+	if m.cwd == "" {
+		return
+	}
+	limit := 1000
+	count := 0
+	_ = filepath.WalkDir(m.cwd, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if count >= limit {
+			return filepath.SkipDir
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "node_modules" || name == "dist" || name == "vendor" || name == ".gemini" || name == "tmp" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		// It's a file, add it
+		m.add(path)
+		count++
+		return nil
+	})
+}
+
+// FindSuggestions returns up to 5 paths from pathMemory that match the base name of target path.
+func (m *pathMemory) FindSuggestions(p string) []string {
+	base := filepath.Base(p)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var suggestions []string
+	seen := make(map[string]struct{})
+
+	// 1. Direct basename match
+	if set, ok := m.byName[base]; ok {
+		for path := range set {
+			if _, exists := seen[path]; !exists {
+				seen[path] = struct{}{}
+				suggestions = append(suggestions, path)
+			}
+		}
+	}
+
+	// 2. Fuzzy/substring match on basename
+	if len(suggestions) < 5 {
+		lowerBase := strings.ToLower(base)
+		for b, set := range m.byName {
+			if b == base {
+				continue
+			}
+			if strings.Contains(strings.ToLower(b), lowerBase) || strings.Contains(lowerBase, strings.ToLower(b)) {
+				for path := range set {
+					if _, exists := seen[path]; !exists {
+						seen[path] = struct{}{}
+						suggestions = append(suggestions, path)
+						if len(suggestions) >= 5 {
+							break
+						}
+					}
+				}
+			}
+			if len(suggestions) >= 5 {
+				break
+			}
+		}
+	}
+
+	return suggestions
+}
+
 
 // add stores an absolute path under its basename.
 func (m *pathMemory) add(p string) {
