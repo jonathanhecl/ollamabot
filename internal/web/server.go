@@ -728,6 +728,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		ollamaMessages = injectAttachmentsContext(cfg.SessionsPath, input.SessionID, ollamaMessages)
 	}
 
+	// Intercept /image command and force image generation
+	lastIdx := len(ollamaMessages) - 1
+	if lastIdx >= 0 && ollamaMessages[lastIdx].Role == "user" {
+		msgContent := strings.TrimSpace(ollamaMessages[lastIdx].Content)
+		if strings.HasPrefix(strings.ToLower(msgContent), "/image ") {
+			prompt := strings.TrimSpace(msgContent[len("/image "):])
+			ollamaMessages[lastIdx].Content = fmt.Sprintf("[SYSTEM FORCE IMAGE GENERATION: You MUST immediately call the 'generate_image' tool. The user has explicitly requested to imagine: %q. Translate this to an optimized, detailed English prompt for the image generation model. Do not return plain text response or start explaining; call the tool first.]", prompt)
+		}
+	}
+
 	var cancel context.CancelFunc
 	var agentCtx context.Context
 	if input.SessionID != "" {

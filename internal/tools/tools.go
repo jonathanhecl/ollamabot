@@ -568,13 +568,13 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "generate_image",
-			Description: "Generate an image using a diffusion model (Flux, etc.). Use this when the user explicitly or implicitly requests image generation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'). The agent should choose appropriate resolution: 512x512 for square/portrait, 1024x512 for landscape, 512x1024 for tall/portrait. Returns the attachment reference of the generated image.",
+			Description: "Generate an image using a diffusion model (Flux, etc.). Use this when the user explicitly or implicitly requests image generation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'). The prompt MUST be in English for best quality and effectiveness (translate user prompt to English if necessary). The agent should choose appropriate resolution: 512x512 for square/portrait, 1024x512 for landscape, 512x1024 for tall/portrait. Returns the attachment reference of the generated image.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"prompt": map[string]any{
 						"type":        "string",
-						"description": "Detailed description of the image to generate. Be specific about subject, style, lighting, mood, colors.",
+						"description": "Detailed description of the image to generate. MUST be in English for the diffusion model to produce optimal results (translate to English if the user input is in another language). Be specific about subject, style, lighting, mood, colors.",
 					},
 					"width": map[string]any{
 						"type":        "integer",

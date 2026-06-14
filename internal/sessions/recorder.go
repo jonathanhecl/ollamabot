@@ -386,9 +386,13 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 				orig = historyUserMsgs[userMsgIdx]
 				userMsgIdx++
 			}
+			contentToSave := msg.Content
+			if orig.Content != "" {
+				contentToSave = orig.Content
+			}
 			rm := RawMsg{
 				Role:        msg.Role,
-				Content:     msg.Content,
+				Content:     contentToSave,
 				Name:        msg.Name,
 				Images:      orig.Images,
 				ImageKinds:  orig.ImageKinds,

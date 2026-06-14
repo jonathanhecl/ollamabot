@@ -421,12 +421,16 @@ func (b *Bot) handleMessage(msg *Message) {
 	if msg.Text != "" && strings.HasPrefix(msg.Text, "/") {
 		parts := strings.Fields(msg.Text)
 		cmd := parts[0]
-		args := ""
-		if len(parts) > 1 {
-			args = strings.Join(parts[1:], " ")
+		if cmd == "/image" {
+			// Do NOT handle as an administrative command, fall through to regular message processing!
+		} else {
+			args := ""
+			if len(parts) > 1 {
+				args = strings.Join(parts[1:], " ")
+			}
+			b.handleCommand(chatID, cmd, args)
+			return
 		}
-		b.handleCommand(chatID, cmd, args)
-		return
 	}
 
 	// Retrieve or initialize current session ID
@@ -541,7 +545,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/image <prompt>` - Force generate an image\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
@@ -1053,6 +1057,16 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	// Inject uploaded-files context if any files have been uploaded to this session
 	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
 	ollamaMessages = b.injectTelegramAttachmentsContext(sessionID, ollamaMessages)
+
+	// Intercept /image command and force image generation
+	lastIdx := len(ollamaMessages) - 1
+	if lastIdx >= 0 && ollamaMessages[lastIdx].Role == "user" {
+		msgContent := strings.TrimSpace(ollamaMessages[lastIdx].Content)
+		if strings.HasPrefix(strings.ToLower(msgContent), "/image ") {
+			prompt := strings.TrimSpace(msgContent[len("/image "):])
+			ollamaMessages[lastIdx].Content = fmt.Sprintf("[SYSTEM FORCE IMAGE GENERATION: You MUST immediately call the 'generate_image' tool. The user has explicitly requested to imagine: %q. Translate this to an optimized, detailed English prompt for the image generation model. Do not return plain text response or start explaining; call the tool first.]", prompt)
+		}
+	}
 
 	think := agent.ShouldThink(b.cfg.OllamaDefaultModel, true, snapshotPath())
 	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
