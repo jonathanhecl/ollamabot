@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -273,4 +274,68 @@ func TestGoalManager_ResumeActiveGoals(t *testing.T) {
 
 	// Stop loop context clean up
 	_ = goalMgr.ClearGoal("active_session")
+}
+
+func TestGoalManager_EvaluateProgress(t *testing.T) {
+	tests := []struct {
+		name          string
+		modelResponse string
+		wantAchieved  bool
+		wantReasoning string
+		wantErr       bool
+	}{
+		{
+			name:          "valid json",
+			modelResponse: `{"achieved": true, "reasoning": "Tasks are complete."}`,
+			wantAchieved:  true,
+			wantReasoning: "Tasks are complete.",
+			wantErr:       false,
+		},
+		{
+			name:          "valid json with code fences",
+			modelResponse: "```json\n{\"achieved\": false, \"reasoning\": \"Missing database configuration.\"}\n```",
+			wantAchieved:  false,
+			wantReasoning: "Missing database configuration.",
+			wantErr:       false,
+		},
+		{
+			name:          "invalid json",
+			modelResponse: `Not a JSON response`,
+			wantErr:       true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+				resp := ollama.ChatResponse{
+					Message: ollama.Message{
+						Role:    "assistant",
+						Content: tt.modelResponse,
+					},
+					Done: true,
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer server.Close()
+
+			cfg := config.Config{}
+			client := ollama.NewClient(server.URL)
+			goalMgr := NewGoalManager(cfg, client)
+
+			achieved, reasoning, err := goalMgr.evaluateProgress(context.Background(), "some objective", nil)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("expected error: %v, got: %v", tt.wantErr, err)
+			}
+			if !tt.wantErr {
+				if achieved != tt.wantAchieved {
+					t.Errorf("expected achieved=%v, got=%v", tt.wantAchieved, achieved)
+				}
+				if reasoning != tt.wantReasoning {
+					t.Errorf("expected reasoning=%q, got=%q", tt.wantReasoning, reasoning)
+				}
+			}
+		})
+	}
 }

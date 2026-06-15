@@ -229,6 +229,36 @@ func (am *AutonomousManager) CreateProject(ctx context.Context, name, goal strin
 	return proj, nil
 }
 
+var initialTodosSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"todos": map[string]any{
+			"type": "array",
+			"items": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":      map[string]any{"type": "string"},
+					"content": map[string]any{"type": "string"},
+				},
+				"required": []string{"id", "content"},
+			},
+		},
+	},
+	"required": []string{"todos"},
+}
+
+type initialTodosResponse struct {
+	Todos []struct {
+		ID      string `json:"id"`
+		Content string `json:"content"`
+	} `json:"todos"`
+}
+
+type rawTodo struct {
+	ID      string `json:"id"`
+	Content string `json:"content"`
+}
+
 // generateInitialTodos calls Ollama to design a checklist of tasks
 func (am *AutonomousManager) generateInitialTodos(ctx context.Context, name, goal string) ([]ProjectTodo, error) {
 	model := am.cfg.OllamaDefaultModel
@@ -245,18 +275,14 @@ Deconstruct this goal into a sequential checklist of 3 to 6 logical development 
 Each task must be concrete, specific, and actionable for an AI coding assistant.
 Examples of tasks: "Create index.html layout and premium styled container with CSS", "Write game logic in app.js including scoring and collisions", "Add particle effects and high-score saving in local storage".
 
-Return ONLY a raw JSON array of task objects, formatted exactly as:
-[
-  {"id": "task-1", "content": "detailed task description..."},
-  {"id": "task-2", "content": "detailed task description..."}
-]
-Do NOT write any conversational text, markdown formatting blocks, or packaging. Return only valid JSON.`, name, goal)
+Respond with a JSON object containing the "todos" array of task objects conforming to the schema.`, name, goal)
 
 	req := ollama.ChatRequest{
 		Model: model,
 		Messages: []ollama.Message{
 			{Role: "user", Content: prompt},
 		},
+		Format: initialTodosSchema, // Enforce structured output from Ollama with schema
 	}
 
 	var sb strings.Builder
@@ -277,26 +303,35 @@ Do NOT write any conversational text, markdown formatting blocks, or packaging. 
 	rawText = strings.TrimSuffix(rawText, "```")
 	rawText = strings.TrimSpace(rawText)
 
-	type rawTodo struct {
-		ID      string `json:"id"`
-		Content string `json:"content"`
-	}
-
-	var rawList []rawTodo
-	if err := json.Unmarshal([]byte(rawText), &rawList); err != nil {
-		// Log response for debugging
-		log.Printf("[autonomous] Error parsing JSON todos: %v. Raw text was: %s", err, rawText)
-		return nil, err
-	}
-
 	var list []ProjectTodo
-	for _, rt := range rawList {
-		list = append(list, ProjectTodo{
-			ID:        rt.ID,
-			Content:   rt.Content,
-			Status:    "pending",
-			UpdatedAt: time.Now(),
-		})
+
+	// Attempt 1: Unmarshal matching the structured JSON schema
+	var respObj initialTodosResponse
+	if err := json.Unmarshal([]byte(rawText), &respObj); err == nil {
+		for _, t := range respObj.Todos {
+			list = append(list, ProjectTodo{
+				ID:        t.ID,
+				Content:   t.Content,
+				Status:    "pending",
+				UpdatedAt: time.Now(),
+			})
+		}
+	} else {
+		// Attempt 2: Fallback to direct array unmarshal (backwards compatibility / non-compliant models)
+		var rawList []rawTodo
+		if err := json.Unmarshal([]byte(rawText), &rawList); err == nil {
+			for _, rt := range rawList {
+				list = append(list, ProjectTodo{
+					ID:        rt.ID,
+					Content:   rt.Content,
+					Status:    "pending",
+					UpdatedAt: time.Now(),
+				})
+			}
+		} else {
+			log.Printf("[autonomous] Error parsing JSON todos: %v. Raw text was: %s", err, rawText)
+			return nil, fmt.Errorf("failed to parse JSON todos: %w", err)
+		}
 	}
 
 	if len(list) == 0 {

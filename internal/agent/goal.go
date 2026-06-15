@@ -450,6 +450,21 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 	}
 }
 
+var progressEvaluationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"achieved": map[string]any{
+			"type":        "boolean",
+			"description": "True if the objective has been fully achieved, false otherwise.",
+		},
+		"reasoning": map[string]any{
+			"type":        "string",
+			"description": "A concise explanation of why the objective is or is not fully achieved, detailing what is missing if false.",
+		},
+	},
+	"required": []string{"achieved", "reasoning"},
+}
+
 type progressEvaluation struct {
 	Achieved  bool   `json:"achieved"`
 	Reasoning string `json:"reasoning"`
@@ -480,12 +495,7 @@ Analyze the conversation history and the actions executed so far.
 The user's objective is: "%s"
 
 Your task is to determine whether the objective has been fully achieved.
-Return ONLY a valid JSON object matching the schema below:
-{
-  "achieved": true/false,
-  "reasoning": "A concise explanation of why the objective is or is not fully achieved, detailing what is missing if false."
-}
-Do NOT include any markdown code blocks, packaging, or conversational filler. Return only valid JSON.`, objective)
+Respond with a JSON object conforming to the schema.`, objective)
 
 	req := ollama.ChatRequest{
 		Model: modelToUse,
@@ -493,7 +503,7 @@ Do NOT include any markdown code blocks, packaging, or conversational filler. Re
 			{Role: "system", Content: evalPrompt},
 			{Role: "user", Content: fmt.Sprintf("Analyze conversation history:\n\n%s\n\nReturn evaluation JSON.", historyText.String())},
 		},
-		Format: "json", // Enforce structured output from Ollama if supported
+		Format: progressEvaluationSchema, // Enforce structured output from Ollama with schema
 	}
 
 	resp, err := g.client.Chat(ctx, req)
