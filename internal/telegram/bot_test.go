@@ -76,3 +76,23 @@ func TestCaptionMappingToText(t *testing.T) {
 		t.Errorf("Expected Text to remain empty, got %q", msg3.Text)
 	}
 }
+
+func TestGetNumberEmoji(t *testing.T) {
+	tests := []struct {
+		input    int
+		expected string
+	}{
+		{1, "1️⃣"},
+		{5, "5️⃣"},
+		{10, "🔟"},
+		{0, "[0]"},
+		{11, "[11]"},
+	}
+
+	for _, tt := range tests {
+		got := getNumberEmoji(tt.input)
+		if got != tt.expected {
+			t.Errorf("getNumberEmoji(%d) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}

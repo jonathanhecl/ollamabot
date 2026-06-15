@@ -1980,6 +1980,14 @@ func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
 	return wavBytes, nil
 }
 
+func getNumberEmoji(num int) string {
+	emojis := []string{"1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"}
+	if num >= 1 && num <= 10 {
+		return emojis[num-1]
+	}
+	return fmt.Sprintf("[%d]", num)
+}
+
 type telegramClarificationHandler struct {
 	bot    *Bot
 	chatID int64
@@ -2002,21 +2010,55 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 		h.bot.clarificationsMu.Unlock()
 	}()
 
+	// Check if any option is long (exceeds 20 runes)
+	useNumbers := false
+	for _, opt := range options {
+		if len([]rune(opt)) > 20 {
+			useNumbers = true
+			break
+		}
+	}
+
 	var rows [][]InlineKeyboardButton
-	for idx, opt := range options {
-		rows = append(rows, []InlineKeyboardButton{
-			{
-				Text:         opt,
+	var text string
+	if useNumbers {
+		var sb strings.Builder
+		sb.WriteString(fmt.Sprintf("❓ *Clarification Required*\n\n%s\n\n", question))
+		var buttonRow []InlineKeyboardButton
+		for idx, opt := range options {
+			emoji := getNumberEmoji(idx + 1)
+			sb.WriteString(fmt.Sprintf("%s %s\n", emoji, opt))
+			buttonRow = append(buttonRow, InlineKeyboardButton{
+				Text:         emoji,
 				CallbackData: fmt.Sprintf("clarify:%s:%d", clarifyID, idx),
-			},
-		})
+			})
+		}
+		text = sb.String()
+
+		const buttonsPerRow = 5
+		for i := 0; i < len(buttonRow); i += buttonsPerRow {
+			end := i + buttonsPerRow
+			if end > len(buttonRow) {
+				end = len(buttonRow)
+			}
+			rows = append(rows, buttonRow[i:end])
+		}
+	} else {
+		text = fmt.Sprintf("❓ *Clarification Required*\n\n%s", question)
+		for idx, opt := range options {
+			rows = append(rows, []InlineKeyboardButton{
+				{
+					Text:         opt,
+					CallbackData: fmt.Sprintf("clarify:%s:%d", clarifyID, idx),
+				},
+			})
+		}
 	}
 
 	markup := &InlineKeyboardMarkup{
 		InlineKeyboard: rows,
 	}
 
-	text := fmt.Sprintf("❓ *Clarification Required*\n\n%s", question)
 	msgID, err := h.bot.sendMessageWithMarkup(h.chatID, text, 0, "Markdown", markup)
 	if err != nil {
 		return "", fmt.Errorf("failed to send Telegram clarification request: %w", err)
