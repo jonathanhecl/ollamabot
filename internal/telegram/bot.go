@@ -492,6 +492,36 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	return sessionID
 }
 
+var relationshipCheckSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"related": map[string]any{
+			"type":        "boolean",
+			"description": "True if the New User Message continues, refers to, or follows up on the context/topics of the Conversation History. False if it starts a completely different topic, transition to a different task, or a fresh start.",
+		},
+	},
+	"required": []string{"related"},
+}
+
+type relationshipResponse struct {
+	Related bool `json:"related"`
+}
+
+var titleGenerationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"title": map[string]any{
+			"type":        "string",
+			"description": "An extremely short title (2 to 4 words) summarizing the main topic of the conversation context, without quotes, punctuation, or explanations.",
+		},
+	},
+	"required": []string{"title"},
+}
+
+type titleResponse struct {
+	Title string `json:"title"`
+}
+
 func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, newMessage string) bool {
 	if len(history) == 0 {
 		return false
@@ -519,9 +549,7 @@ func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, n
 
 	prompt := fmt.Sprintf(`Analyze if the New User Message is related to the existing Conversation History.
 Does the New User Message continue, refer to, or follow up on the context/topics of the Conversation History?
-
-Respond with exactly "yes" if it is related, or "no" if it is NOT related (e.g., a new topic, a transition to a different task, or a fresh start).
-Do not provide any explanation, preamble, or punctuation. Just "yes" or "no".
+Respond with a JSON object containing the "related" boolean field.
 
 Conversation History:
 %s
@@ -537,6 +565,7 @@ New User Message:
 				Content: prompt,
 			},
 		},
+		Format:  relationshipCheckSchema,
 		Options: map[string]any{"temperature": 0},
 	})
 	if err != nil {
@@ -544,9 +573,17 @@ New User Message:
 		return false // fallback: not related, start new session
 	}
 
-	ans := strings.ToLower(strings.TrimSpace(resp.Message.Content))
-	log.Printf("[Telegram Relation Check] Model response: %q", ans)
-	return strings.Contains(ans, "yes")
+	rawText := strings.TrimSpace(resp.Message.Content)
+	log.Printf("[Telegram Relation Check] Model response: %q", rawText)
+
+	var relResp relationshipResponse
+	if err := json.Unmarshal([]byte(rawText), &relResp); err == nil {
+		return relResp.Related
+	}
+
+	// Fallback parsing for backwards compatibility or model non-compliance
+	ans := strings.ToLower(rawText)
+	return strings.Contains(ans, "yes") || strings.Contains(ans, "true")
 }
 
 func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assistantContent string) {
@@ -560,20 +597,34 @@ func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assis
 		Messages: []ollama.Message{
 			{
 				Role:    "system",
-				Content: "Summarize the main topic of the response in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with only the title.",
+				Content: "Summarize the main topic of the text in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with a JSON object containing the title.",
 			},
 			{
 				Role:    "user",
 				Content: assistantContent,
 			},
 		},
+		Format:  titleGenerationSchema,
 		Options: map[string]any{"temperature": 0},
 	})
 	if err != nil {
 		log.Printf("[Telegram Auto-Name] FAILED: %v", err)
 		return
 	}
-	generatedTitle := strings.TrimSpace(resp.Message.Content)
+
+	rawText := strings.TrimSpace(resp.Message.Content)
+	log.Printf("[Telegram Auto-Name] Model response: %q", rawText)
+
+	var generatedTitle string
+	var titResp titleResponse
+	if err := json.Unmarshal([]byte(rawText), &titResp); err == nil {
+		generatedTitle = titResp.Title
+	} else {
+		// Fallback for non-compliant models
+		generatedTitle = rawText
+	}
+
+	generatedTitle = strings.TrimSpace(generatedTitle)
 	generatedTitle = strings.Trim(generatedTitle, `"'`)
 	generatedTitle = strings.TrimRight(generatedTitle, ".!?")
 	if generatedTitle != "" {

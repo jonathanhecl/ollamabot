@@ -9,6 +9,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func TestCheckMessagesRelationship(t *testing.T) {
@@ -18,22 +19,32 @@ func TestCheckMessagesRelationship(t *testing.T) {
 		expected      bool
 	}{
 		{
-			name:          "related response yes",
+			name:          "related response JSON true",
+			modelResponse: `{"related": true}`,
+			expected:      true,
+		},
+		{
+			name:          "unrelated response JSON false",
+			modelResponse: `{"related": false}`,
+			expected:      false,
+		},
+		{
+			name:          "related response fallback yes",
 			modelResponse: "Yes, they are related.",
 			expected:      true,
 		},
 		{
-			name:          "related response contains yes lowercase",
+			name:          "related response fallback yes lowercase",
 			modelResponse: "yes",
 			expected:      true,
 		},
 		{
-			name:          "unrelated response no",
+			name:          "unrelated response fallback no",
 			modelResponse: "no",
 			expected:      false,
 		},
 		{
-			name:          "unrelated response other word",
+			name:          "unrelated response fallback other word",
 			modelResponse: "completely different topic",
 			expected:      false,
 		},
@@ -73,6 +84,71 @@ func TestCheckMessagesRelationship(t *testing.T) {
 			got := bot.checkMessagesRelationship(context.Background(), history, newMessage)
 			if got != tt.expected {
 				t.Errorf("checkMessagesRelationship() = %v, want %v (model response was %q)", got, tt.expected, tt.modelResponse)
+			}
+		})
+	}
+}
+
+func TestAutoGenerateSessionTitle(t *testing.T) {
+	tests := []struct {
+		name          string
+		modelResponse string
+		expectedTitle string
+	}{
+		{
+			name:          "JSON title",
+			modelResponse: `{"title": "Go Concurrency Model"}`,
+			expectedTitle: "Go Concurrency Model",
+		},
+		{
+			name:          "raw text title fallback",
+			modelResponse: "Intro to Go Programming",
+			expectedTitle: "Intro to Go Programming",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/api/chat" {
+					t.Errorf("expected POST /api/chat, got %s", r.URL.Path)
+				}
+				w.WriteHeader(http.StatusOK)
+				resp := ollama.ChatResponse{
+					Message: ollama.Message{
+						Role:    "assistant",
+						Content: tt.modelResponse,
+					},
+				}
+				_ = json.NewEncoder(w).Encode(resp)
+			}))
+			defer server.Close()
+
+			tempDir := t.TempDir()
+			cfg := config.Config{
+				OllamaBaseURL:      server.URL,
+				OllamaDefaultModel: "test-model",
+				SessionsPath:       tempDir,
+			}
+			client := ollama.NewClient(server.URL)
+			bot := NewBot(cfg, client)
+
+			sessID := "test-session-id"
+			sess := sessions.Session{
+				ID:    sessID,
+				Title: "Original Title",
+			}
+			_ = bot.sessions.Save(sess)
+
+			bot.autoGenerateSessionTitle(context.Background(), sessID, "Some assistant content.")
+
+			updated, err := bot.sessions.Get(sessID)
+			if err != nil {
+				t.Fatalf("failed to retrieve updated session: %v", err)
+			}
+
+			if updated.Title != tt.expectedTitle {
+				t.Errorf("expected title to be %q, got %q", tt.expectedTitle, updated.Title)
 			}
 		})
 	}
