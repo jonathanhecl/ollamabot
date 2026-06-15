@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -27,6 +28,9 @@ type StreamHandler interface {
 	OnToolResult(name string, result string)
 	OnMediaPreProcessing(content string)
 	OnDone(resp ollama.ChatResponse)
+	OnContextOptimizationStart(tokensBefore int, percentBefore float64)
+	OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64)
+	OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int)
 }
 
 type Agent struct {
@@ -236,10 +240,117 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		activeMessages = append(activeMessages, systemPrefix...)
 		activeMessages = append(activeMessages, messages...)
 
+		// --- CONTEXT OPTIMIZATION CHECK ---
+		formattedActiveMessages := make([]ollama.Message, len(activeMessages))
+		for idx, msg := range activeMessages {
+			formattedActiveMessages[idx] = msg
+			if msg.Role == "assistant" && msg.Thinking != "" && !strings.Contains(msg.Content, "<think>") {
+				formattedActiveMessages[idx].Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
+			}
+		}
+
+		limit := a.getContextLimit(ctx, model)
+		totalTokens := estimateTokens(formattedActiveMessages)
+		threshold := int(float64(limit) * 0.9)
+
+		if limit > 0 && totalTokens >= threshold {
+			// Find the last user message in 'messages' to split history
+			lastUserIndex := -1
+			for idx := len(messages) - 1; idx >= 0; idx-- {
+				if messages[idx].Role == "user" {
+					lastUserIndex = idx
+					break
+				}
+			}
+
+			if lastUserIndex > 0 {
+				startTime := time.Now()
+				tokensBefore := totalTokens
+				percentBefore := (float64(tokensBefore) / float64(limit)) * 100
+
+				if handler != nil {
+					handler.OnContextOptimizationStart(tokensBefore, percentBefore)
+				}
+
+				// Run optimization/summarization
+				modelToUse := a.cfg.OllamaModelSubagent
+				if strings.TrimSpace(modelToUse) == "" {
+					modelToUse = model
+				}
+
+				summaryPrompt := ollama.Message{
+					Role:    "system",
+					Content: "Please summarize the conversation history above. Focus on goals achieved, decisions made, the state of any files modified, and key context. Keep the summary extremely concise but detailed enough for an AI agent to continue the work. Respond with ONLY the summary, no introductory or concluding remarks.",
+				}
+
+				summarizingMessages := make([]ollama.Message, lastUserIndex)
+				for idx := 0; idx < lastUserIndex; idx++ {
+					msg := messages[idx]
+					if msg.Role == "assistant" && msg.Thinking != "" && !strings.Contains(msg.Content, "<think>") {
+						msg.Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
+					}
+					summarizingMessages[idx] = msg
+				}
+
+				summaryReq := ollama.ChatRequest{
+					Model:    modelToUse,
+					Messages: append(summarizingMessages, summaryPrompt),
+				}
+
+				summaryResp, err := a.client.Chat(ctx, summaryReq)
+				if err == nil && strings.TrimSpace(summaryResp.Message.Content) != "" {
+					summaryText := strings.TrimSpace(summaryResp.Message.Content)
+					summaryMsg := ollama.Message{
+						Role:    "system",
+						Content: fmt.Sprintf("This is a summary of the optimized previous context:\n%s", summaryText),
+					}
+
+					// Update messages slice: replace messages[0 : lastUserIndex] with summaryMsg
+					messages = append([]ollama.Message{summaryMsg}, messages[lastUserIndex:]...)
+
+					// Notify handler to update recorder/session store
+					if handler != nil {
+						handler.OnContextOptimized(messages, summaryMsg.Content, len(messages)-1)
+					}
+
+					// Rebuild activeMessages with optimized messages
+					activeMessages = make([]ollama.Message, 0, len(systemPrefix)+len(messages))
+					activeMessages = append(activeMessages, systemPrefix...)
+					activeMessages = append(activeMessages, messages...)
+
+					// Calculate tokens after optimization
+					newFormattedActive := make([]ollama.Message, len(activeMessages))
+					for idx, msg := range activeMessages {
+						newFormattedActive[idx] = msg
+						if msg.Role == "assistant" && msg.Thinking != "" && !strings.Contains(msg.Content, "<think>") {
+							newFormattedActive[idx].Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
+						}
+					}
+					tokensAfter := estimateTokens(newFormattedActive)
+					percentAfter := (float64(tokensAfter) / float64(limit)) * 100
+					durationSeconds := time.Since(startTime).Seconds()
+
+					if handler != nil {
+						handler.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
+					}
+				} else if err != nil {
+					log.Printf("[Agent Run] Context optimization failed: %v", err)
+				}
+			}
+		}
+
 		// 3. Prepare the request
+		requestMessages := make([]ollama.Message, len(activeMessages))
+		for idx, msg := range activeMessages {
+			requestMessages[idx] = msg
+			if msg.Role == "assistant" && msg.Thinking != "" && !strings.Contains(msg.Content, "<think>") {
+				requestMessages[idx].Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
+			}
+		}
+
 		req := ollama.ChatRequest{
 			Model:    model,
-			Messages: activeMessages,
+			Messages: requestMessages,
 			Think:    think,
 		}
 		a.mu.RLock()
@@ -559,4 +670,41 @@ func buildTodoProgressNote(snap []tools.TodoItem) string {
 	}
 	b.WriteString("Use data from earlier tool results to complete pending steps. Do not repeat what is already done.")
 	return b.String()
+}
+
+func (a *Agent) getContextLimit(ctx context.Context, model string) int64 {
+	show, err := a.client.Show(ctx, model)
+	if err == nil {
+		for key, value := range show.ModelInfo {
+			if strings.HasSuffix(key, ".context_length") {
+				switch typed := value.(type) {
+				case float64:
+					return int64(typed)
+				case int64:
+					return typed
+				case int:
+					return int64(typed)
+				}
+			}
+		}
+	}
+	return 2048
+}
+
+func estimateTokens(messages []ollama.Message) int {
+	chars := 0
+	for _, msg := range messages {
+		chars += len(msg.Content)
+		chars += len(msg.Thinking)
+		chars += len(msg.Role)
+		chars += len(msg.Name)
+		for _, tc := range msg.ToolCalls {
+			chars += len(tc.Function.Name)
+			chars += len(tc.Function.Arguments)
+		}
+		if len(msg.Images) > 0 {
+			chars += len(msg.Images) * 4000
+		}
+	}
+	return (chars + 3) / 4
 }

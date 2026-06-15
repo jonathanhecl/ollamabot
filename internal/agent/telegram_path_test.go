@@ -20,6 +20,9 @@ func (d *discardHandler) OnToolStart(string, any)             {}
 func (d *discardHandler) OnToolResult(string, string)       {}
 func (d *discardHandler) OnMediaPreProcessing(string)       {}
 func (d *discardHandler) OnDone(ollama.ChatResponse)        {}
+func (d *discardHandler) OnContextOptimizationStart(int, float64) {}
+func (d *discardHandler) OnContextOptimizationEnd(int, float64, float64) {}
+func (d *discardHandler) OnContextOptimized([]ollama.Message, string, int) {}
 
 func TestRun_textOnlyTelegramPath(t *testing.T) {
 	client := ollama.NewClient("http://127.0.0.1:11434")

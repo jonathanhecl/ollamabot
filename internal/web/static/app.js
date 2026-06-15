@@ -2487,6 +2487,16 @@ async function processNextQueueItem() {
         }
         renderMessages();
       },
+      context_optimization_start: (value) => {
+        addSystemMessage(`🔄 **Optimizing context...**\nCurrently using ${value.tokens} tokens (${value.percent.toFixed(1)}% of model capacity). Synthesizing previous history to free up space...`);
+        renderMessages();
+        updateContextBar();
+      },
+      context_optimization_end: (value) => {
+        addSystemMessage(`✅ **Context optimized!**\nNew context size: ${value.tokens} tokens (${value.percent.toFixed(1)}% of capacity).\nOptimization took: ${value.duration.toFixed(2)}s.`);
+        renderMessages();
+        updateContextBar();
+      },
       error: (value) => {
         assistant.waiting = false;
         assistant.streaming = false;
@@ -2710,7 +2720,13 @@ function renderMessages() {
 
   let msgIdx = 0;
   for (const message of grouped) {
-    if (message.role === "system") continue;
+    if (message.role === "system") {
+      const div = document.createElement("article");
+      div.className = `message system`;
+      div.innerHTML = `<div class="message-content">${renderMarkdown(message.content)}</div>`;
+      els.messages.appendChild(div);
+      continue;
+    }
     const div = document.createElement("article");
     const isQueued = message.role === "user" && message.processed === false;
     const isPreProcessing = message.role === "assistant" && message.content && (

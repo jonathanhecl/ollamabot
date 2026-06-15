@@ -1664,6 +1664,18 @@ func (h *telegramStreamAdapter) OnDone(resp ollama.ChatResponse) {
 	h.recorder.OnDone(resp)
 }
 
+func (h *telegramStreamAdapter) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔄 *Optimizing context...*\nCurrently using %d tokens (%.1f%% of model capacity). Synthesizing previous history to free up space...", tokensBefore, percentBefore), 0, "Markdown")
+}
+
+func (h *telegramStreamAdapter) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("✅ *Context optimized!*\nNew context size: %d tokens (%.1f%% of capacity).\nOptimization took: %.2fs.", tokensAfter, percentAfter, durationSeconds), 0, "Markdown")
+}
+
+func (h *telegramStreamAdapter) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
+	h.recorder.UpdateHistory(optimizedMessages, summary, numKept)
+}
+
 type rawMsg = sessions.RawMsg
 type msgStep = sessions.Step
 type attachmentMeta = sessions.AttachmentMeta

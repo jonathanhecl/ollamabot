@@ -3580,3 +3580,27 @@ textarea {
 .plan-steps-list li {
   margin-bottom: 6px;
 }
+
+/* System Notification Messages */
+.message.system {
+  align-self: center;
+  margin: 12px auto;
+  max-width: 90%;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 10px 14px;
+  text-align: center;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  animation: systemMsgFadeIn 0.3s ease;
+  min-width: 0;
+}
+
+@keyframes systemMsgFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}

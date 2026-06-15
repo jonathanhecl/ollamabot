@@ -323,6 +323,9 @@ func (d *sleepStreamHandler) OnToolStart(name string, args any)       {}
 func (d *sleepStreamHandler) OnToolResult(name string, result string) {}
 func (d *sleepStreamHandler) OnMediaPreProcessing(content string)     {}
 func (d *sleepStreamHandler) OnDone(resp ollama.ChatResponse)         {}
+func (d *sleepStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
+func (d *sleepStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {}
+func (d *sleepStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {}
 
 func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 	modelToUse, err := sm.checkHardwareAndSelectModel(parentCtx)

@@ -591,6 +591,21 @@ func (h *goalStreamHandler) OnToolResult(name string, result string) {
 func (h *goalStreamHandler) OnMediaPreProcessing(content string) {}
 func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     {}
 
+func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
+func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {}
+func (h *goalStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	summaryRawMsg := sessions.RawMsg{
+		Role:      "system",
+		Content:   summary,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+	rawSummary, _ := json.Marshal(summaryRawMsg)
+	h.baseMessages = []json.RawMessage{rawSummary}
+}
+
 func (h *goalStreamHandler) syncSession() {
 	sess, err := h.sessionStore.Get(h.sessionID)
 	if err != nil {

@@ -246,6 +246,50 @@ func (r *Recorder) NotifyUpdate(force bool) {
 	go r.saveSnapshot(gen, messages)
 }
 
+// UpdateHistory replaces the recorded conversation history with the optimized/summarized version.
+// It prefixes the kept user message and subsequent turn activity with the summary message.
+func (r *Recorder) UpdateHistory(newMessages []ollama.Message, summaryContent string, numKept int) {
+	if r == nil || r.store == nil || r.sessionID == "" {
+		return
+	}
+
+	r.mu.Lock()
+	summaryRawMsg := RawMsg{
+		Role:      "system",
+		Content:   summaryContent,
+		Timestamp: time.Now().Format(time.RFC3339),
+	}
+
+	allOriginalMsgs := append([]RawMsg{}, r.baseHistory...)
+	allOriginalMsgs = append(allOriginalMsgs, r.activeMessages...)
+
+	if numKept > len(allOriginalMsgs) {
+		numKept = len(allOriginalMsgs)
+	}
+	var keptMsgs []RawMsg
+	if numKept > 0 {
+		keptMsgs = allOriginalMsgs[len(allOriginalMsgs)-numKept:]
+	}
+
+	// Create new history
+	newHistory := append([]RawMsg{summaryRawMsg}, keptMsgs...)
+
+	// Split into baseHistory and activeMessages
+	// The current turn starts at the last user message, which is the first message in keptMsgs.
+	// Since summaryRawMsg is at index 0, the current turn messages are from index 1.
+	r.baseHistory = []RawMsg{summaryRawMsg}
+	r.activeMessages = make([]RawMsg, len(newHistory)-1)
+	copy(r.activeMessages, newHistory[1:])
+
+	// Increment save generation and write snapshot
+	r.saveGen++
+	gen := r.saveGen
+	messages := r.snapshotMessagesLocked()
+	r.mu.Unlock()
+
+	go r.saveSnapshot(gen, messages)
+}
+
 func (r *Recorder) FinalizeAndSave(finalHistory []ollama.Message) ([]json.RawMessage, error) {
 	if r == nil || r.store == nil || r.sessionID == "" {
 		return nil, nil

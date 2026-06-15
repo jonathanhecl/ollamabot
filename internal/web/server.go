@@ -901,6 +901,33 @@ func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
 	h.turnEnded = true
 }
 
+func (h *sseStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	writeSSE(h.w, "context_optimization_start", map[string]any{
+		"tokens":  tokensBefore,
+		"percent": percentBefore,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
+func (h *sseStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	writeSSE(h.w, "context_optimization_end", map[string]any{
+		"tokens":   tokensAfter,
+		"percent":  percentAfter,
+		"duration": durationSeconds,
+	})
+	if h.flusher != nil {
+		h.flusher.Flush()
+	}
+}
+
+func (h *sseStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
+	if h.recorder != nil {
+		h.recorder.UpdateHistory(optimizedMessages, summary, numKept)
+	}
+}
+
 // runChatStream handles the chat streaming loop by delegating to the iterative agent.
 func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher, recorder *sessions.Recorder) ([]ollama.Message, error) {
 	a := agent.NewAgent(cfg, client, registry)

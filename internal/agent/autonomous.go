@@ -373,6 +373,9 @@ func (d *dummyStreamHandler) OnToolStart(name string, args any)       {}
 func (d *dummyStreamHandler) OnToolResult(name string, result string) {}
 func (d *dummyStreamHandler) OnMediaPreProcessing(content string)     {}
 func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)         {}
+func (d *dummyStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
+func (d *dummyStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {}
+func (d *dummyStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {}
 
 // ExecuteTask runs a single step for the project
 func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, taskIdx int) error {
