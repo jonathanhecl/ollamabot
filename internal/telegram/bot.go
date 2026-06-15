@@ -444,19 +444,11 @@ func (b *Bot) handleMessage(msg *Message) {
 		sessionID = b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "👋 Hello! I have initialized a new conversation session for you. Ask me anything, send me a photo, or send a voice message!", msg.MessageID, "Markdown")
 	} else {
-		// Confirm session exists on disk and has not expired (30-minute inactivity limit)
-		sess, err := b.sessions.Get(sessionID)
+		// Confirm session exists on disk. Expiry and relationship checks
+		// are deferred to processMessageInput after media pre-processing/transcription.
+		_, err := b.sessions.Get(sessionID)
 		if err != nil {
 			sessionID = b.startNewSession(chatIDStr)
-		} else {
-			expiryMin := b.cfg.TelegramSessionExpiryMin
-			if expiryMin <= 0 {
-				expiryMin = 30
-			}
-			if time.Since(sess.UpdatedAt) > time.Duration(expiryMin)*time.Minute {
-				sessionID = b.startNewSession(chatIDStr)
-				b.sendMessage(chatID, fmt.Sprintf("⏰ *Session expired due to %d minutes of inactivity.* Started a new session!", expiryMin), msg.MessageID, "Markdown")
-			}
 		}
 	}
 
@@ -498,6 +490,63 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	b.sessManager.Set(chatIDStr, sessionID)
 	sessions.NotifyUpdate(sessionID)
 	return sessionID
+}
+
+func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, newMessage string) bool {
+	if len(history) == 0 {
+		return false
+	}
+
+	modelToUse := b.cfg.OllamaModelSubagent
+	if strings.TrimSpace(modelToUse) == "" {
+		modelToUse = b.cfg.OllamaDefaultModel
+	}
+
+	var sb strings.Builder
+	// Get last N messages (e.g. 8)
+	start := 0
+	if len(history) > 8 {
+		start = len(history) - 8
+	}
+	for i := start; i < len(history); i++ {
+		msg := history[i]
+		if msg.Role == "user" {
+			sb.WriteString(fmt.Sprintf("User: %s\n", msg.Content))
+		} else if msg.Role == "assistant" {
+			sb.WriteString(fmt.Sprintf("Assistant: %s\n", msg.Content))
+		}
+	}
+
+	prompt := fmt.Sprintf(`Analyze if the New User Message is related to the existing Conversation History.
+Does the New User Message continue, refer to, or follow up on the context/topics of the Conversation History?
+
+Respond with exactly "yes" if it is related, or "no" if it is NOT related (e.g., a new topic, a transition to a different task, or a fresh start).
+Do not provide any explanation, preamble, or punctuation. Just "yes" or "no".
+
+Conversation History:
+%s
+
+New User Message:
+%s`, sb.String(), newMessage)
+
+	resp, err := b.client.Chat(ctx, ollama.ChatRequest{
+		Model: modelToUse,
+		Messages: []ollama.Message{
+			{
+				Role:    "user",
+				Content: prompt,
+			},
+		},
+		Options: map[string]any{"temperature": 0},
+	})
+	if err != nil {
+		log.Printf("[Telegram Relation Check] FAILED: %v", err)
+		return false // fallback: not related, start new session
+	}
+
+	ans := strings.ToLower(strings.TrimSpace(resp.Message.Content))
+	log.Printf("[Telegram Relation Check] Model response: %q", ans)
+	return strings.Contains(ans, "yes")
 }
 
 func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assistantContent string) {
@@ -937,21 +986,12 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}
 	}
 
-	history = append(history, userMsg)
-
-	// Save the user message immediately so that the Web UI gets notified in real-time
-	var initialRawMessages []json.RawMessage
-	for _, hm := range history {
-		rawBytes, _ := json.Marshal(hm)
-		initialRawMessages = append(initialRawMessages, rawBytes)
-	}
-	sess.Messages = initialRawMessages
-	_ = b.sessions.Save(sess)
-	sessions.NotifyUpdate(sessionID)
+	// Prepare history for resolution (do not modify history yet until we check relationship)
+	tempHistory := append(history, userMsg)
 
 	// 3. Convert session raw messages to runtime format
 	var mediaMessages []MediaMessage
-	for _, h := range history {
+	for _, h := range tempHistory {
 		var toolCalls []ollama.ToolCall
 		for _, tcRaw := range h.ToolCalls {
 			var tc ollama.ToolCall
@@ -1000,6 +1040,40 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 	ollamaMessages := mediaRes.Messages
 
+	// Check if session has expired (inactivity limit) and if new message is related to history
+	expiryMin := b.cfg.TelegramSessionExpiryMin
+	if expiryMin <= 0 {
+		expiryMin = 30
+	}
+	isExpired := len(sess.Messages) > 0 && time.Since(sess.UpdatedAt) > time.Duration(expiryMin)*time.Minute
+	if isExpired {
+		related := b.checkMessagesRelationship(ctx, history, ollamaMessages[len(ollamaMessages)-1].Content)
+		if !related {
+			sessionID = b.startNewSession(chatIDStr)
+			sess, _ = b.sessions.Get(sessionID)
+			b.sendMessage(chatID, fmt.Sprintf("⏰ *Session expired due to %d minutes of inactivity.* Started a new session!", expiryMin), msg.MessageID, "Markdown")
+
+			// Reset history to contain only the new user message
+			history = []rawMsg{userMsg}
+
+			// Reconstruct ollamaMessages
+			if mediaRes.ContextNote != "" {
+				ollamaMessages = []ollama.Message{
+					{Role: "assistant", Content: mediaRes.ContextNote},
+					ollamaMessages[len(ollamaMessages)-1],
+				}
+			} else {
+				ollamaMessages = []ollama.Message{
+					ollamaMessages[len(ollamaMessages)-1],
+				}
+			}
+		} else {
+			history = tempHistory
+		}
+	} else {
+		history = tempHistory
+	}
+
 	// Persist media pre-processing metadata on the just-sent user message
 	// attachments so the session records which model processed each file.
 	if len(mediaRes.Attachments) > 0 && len(history) > 0 {
@@ -1021,6 +1095,17 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		}
 	}
+
+	// Save the user message immediately so that the Web UI gets notified in real-time
+	var initialRawMessages []json.RawMessage
+	for _, hm := range history {
+		rawBytes, _ := json.Marshal(hm)
+		initialRawMessages = append(initialRawMessages, rawBytes)
+	}
+	sess.Messages = initialRawMessages
+	_ = b.sessions.Save(sess)
+	sessions.NotifyUpdate(sessionID)
+
 	// 8. Instantiate agent registry and loop
 	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    b.cfg.SearchProviders,
