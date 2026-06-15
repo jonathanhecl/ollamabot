@@ -93,6 +93,7 @@ type Message struct {
 	From      *User       `json:"from,omitempty"`
 	Chat      Chat        `json:"chat"`
 	Text      string      `json:"text,omitempty"`
+	Caption   string      `json:"caption,omitempty"`
 	Date      int64       `json:"date"`
 	Photo     []PhotoSize `json:"photo,omitempty"`
 	Voice     *Voice      `json:"voice,omitempty"`
@@ -401,6 +402,10 @@ func (b *Bot) handleUpdate(update Update) {
 }
 
 func (b *Bot) handleMessage(msg *Message) {
+	if msg.Text == "" && msg.Caption != "" {
+		msg.Text = msg.Caption
+	}
+
 	chatID := msg.Chat.ID
 	chatIDStr := fmt.Sprintf("%d", chatID)
 
