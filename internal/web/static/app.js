@@ -1476,6 +1476,7 @@ async function saveRoleModels() {
       brave_search_api_key: state.settings.brave_search_api_key || "",
       tavily_search_api_key: state.settings.tavily_search_api_key || "",
       server_expose_network: state.settings.server_expose_network || false,
+      server_enabled: state.settings.server_enabled !== false,
       session_auto_name: state.settings.session_auto_name !== false,
       server_port: state.settings.server_port || "8080",
       sleep_mode_enabled: state.settings.sleep_mode_enabled || false,
