@@ -138,16 +138,43 @@ func run(args []string) error {
 	ctx := context.Background()
 
 	if len(remaining) == 0 {
-		if cfg.ServerEnabled {
-			var sleepMgr *learning.SleepManager
-			if cfg.SleepModeEnabled {
-				ms := memory.NewStore(cfg.MemoryPath)
-				sleepMgr = learning.NewSleepManager(cfg, client, ms)
-				sleepMgr.Start(ctx)
+		var sleepMgr *learning.SleepManager
+		if cfg.SleepModeEnabled {
+			ms := memory.NewStore(cfg.MemoryPath)
+			sleepMgr = learning.NewSleepManager(cfg, client, ms)
+			sleepMgr.Start(ctx)
+		}
+		goalMgr := agent.NewGoalManager(cfg, client)
+		_ = goalMgr.ResumeActiveGoals()
+
+		hasServer := cfg.ServerEnabled
+		hasTelegram := cfg.TelegramBotToken != ""
+
+		if !hasServer && !hasTelegram {
+			return fmt.Errorf("both Web Server and Telegram Bot are disabled.\n\n" +
+				"To resolve this, edit your .env file at %q and configure at least one of the following:\n" +
+				"  1. Enable the web server by setting: SERVER_ENABLED=true\n" +
+				"  2. Enable the Telegram bot by setting: TELEGRAM_BOT_TOKEN=your_bot_token_here\n", *envPath)
+		}
+
+		if hasTelegram {
+			if hasServer {
+				startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr)
+			} else {
+				fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
+				fmt.Println("Server disabled in .env (SERVER_ENABLED=false). Starting Telegram bot service in foreground...")
+				bot := telegram.NewBotWithEnv(cfg, client, *envPath)
+				if sleepMgr != nil {
+					bot.SetSleepManager(sleepMgr)
+				}
+				if goalMgr != nil {
+					bot.SetGoalManager(goalMgr)
+				}
+				return bot.Start(ctx)
 			}
-			goalMgr := agent.NewGoalManager(cfg, client)
-			_ = goalMgr.ResumeActiveGoals()
-			startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr)
+		}
+
+		if hasServer {
 			fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
@@ -157,8 +184,7 @@ func run(args []string) error {
 			srv.SetGoalManager(goalMgr)
 			return srv.ListenAndServe()
 		}
-		fmt.Println("Server disabled in .env (SERVER_ENABLED=false).")
-		usage()
+
 		return nil
 	}
 
