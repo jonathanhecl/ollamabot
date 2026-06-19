@@ -221,7 +221,20 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		if planMode == "" {
 			planMode = "smart"
 		}
-		if planMode == "always" {
+		activePlan, _ := a.registry.ActiveSessionPlan()
+		if activePlan != nil && activePlan.Status == "active" {
+			currentIdx := activePlan.Completed
+			if currentIdx >= len(activePlan.Steps) {
+				currentIdx = len(activePlan.Steps) - 1
+			}
+			currentStep := activePlan.Steps[currentIdx]
+			planReinforce := fmt.Sprintf("An approved execution plan is already active.\nSummary: %s\nCurrent step %d of %d: %s\nDo NOT call present_plan again. Execute the current step using the appropriate tools, then call complete_plan_step exactly once when the full top-level step is finished before moving to the next step.",
+				activePlan.Summary, activePlan.Completed+1, len(activePlan.Steps), currentStep)
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: planReinforce,
+			})
+		} else if planMode == "always" {
 			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions."
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",

@@ -168,13 +168,24 @@ func (r *Recorder) OnToolStart(name string, args any) {
 	r.getOrCreateCurrentAssistantMsg()
 	if name == "present_plan" {
 		summary, steps := decodePlanStepArgs(args)
-		r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+		planStep := Step{
 			Type:      "plan",
 			Name:      name,
 			Content:   summary,
 			PlanSteps: steps,
 			Status:    "running",
-		})
+		}
+		updated := false
+		for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
+			if r.currentTurn.Steps[i].Type == "plan" {
+				r.currentTurn.Steps[i] = planStep
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			r.currentTurn.Steps = append(r.currentTurn.Steps, planStep)
+		}
 		r.mu.Unlock()
 		r.NotifyUpdate(false)
 		return
@@ -221,7 +232,23 @@ func decodePlanStepArgs(args any) (string, []string) {
 	if err := json.Unmarshal(bytes, &payload); err != nil {
 		return "", nil
 	}
-	return payload.Summary, cleanPlanSteps(payload.Steps)
+	return payload.Summary, NormalizePlanSteps(payload.Steps)
+}
+
+// UpdatePlanProgress syncs the latest plan progress into the current turn timeline.
+func (r *Recorder) UpdatePlanProgress(plan SessionPlan) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
+		if r.currentTurn.Steps[i].Type == "plan" {
+			r.currentTurn.Steps[i].Content = plan.Summary
+			r.currentTurn.Steps[i].PlanSteps = append([]string(nil), plan.Steps...)
+			r.currentTurn.Steps[i].Completed = plan.Completed
+			r.currentTurn.Steps[i].Status = plan.Status
+			break
+		}
+	}
+	r.NotifyUpdate(false)
 }
 
 func (r *Recorder) OnMediaPreProcessing(content string) {}

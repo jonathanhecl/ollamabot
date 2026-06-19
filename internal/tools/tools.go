@@ -137,6 +137,26 @@ func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
 	r.planProgressHandler = h
 }
 
+// ActiveSessionPlan returns the current session plan, if any.
+func (r *Registry) ActiveSessionPlan() (*sessions.SessionPlan, error) {
+	store := r.sessionStore
+	if store == nil && strings.TrimSpace(r.sessionsPath) != "" {
+		store = sessions.NewStore(r.sessionsPath)
+	}
+	if store == nil || strings.TrimSpace(r.sessionID) == "" {
+		return nil, nil
+	}
+	sess, err := store.Get(r.sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if sess.ActivePlan == nil {
+		return nil, nil
+	}
+	plan := *sess.ActivePlan
+	return &plan, nil
+}
+
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string, searchCfg SearchConfig) *Registry {
 	r := &Registry{
@@ -1014,8 +1034,17 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if err := json.Unmarshal(bytes, &steps); err != nil {
 			return "", fmt.Errorf("failed to decode steps: %w", err)
 		}
+		steps = sessions.NormalizePlanSteps(steps)
 		if len(steps) == 0 {
 			return "", fmt.Errorf("present_plan requires at least 1 step")
+		}
+		if activePlan, planErr := r.ActiveSessionPlan(); planErr == nil && activePlan != nil && activePlan.Status == sessions.PlanStatusActive {
+			current := activePlan.Completed + 1
+			if current > len(activePlan.Steps) {
+				current = len(activePlan.Steps)
+			}
+			stepText := activePlan.Steps[activePlan.Completed]
+			return fmt.Sprintf("Plan already approved (step %d of %d: %s). Proceed with execution; do not call present_plan again.", current, len(activePlan.Steps), stepText), nil
 		}
 		if r.planConfirmationHandler == nil {
 			return "Plan auto-approved (no client handler configured). Proceeding with execution.", nil

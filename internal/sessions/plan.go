@@ -2,7 +2,13 @@ package sessions
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+)
+
+var (
+	planStepMarkerPattern = regexp.MustCompile(`(?:^|\s)(\d+\.\s)`)
+	planStepNumberPrefix  = regexp.MustCompile(`^\d+\.\s*`)
 )
 
 const (
@@ -43,7 +49,7 @@ func ActivatePlan(store *Store, sessionID string, summary string, steps []string
 	if summary == "" {
 		return SessionPlan{}, fmt.Errorf("plan summary is required")
 	}
-	cleanSteps := cleanPlanSteps(steps)
+	cleanSteps := NormalizePlanSteps(steps)
 	if len(cleanSteps) == 0 {
 		return SessionPlan{}, fmt.Errorf("plan requires at least 1 step")
 	}
@@ -137,4 +143,46 @@ func cleanPlanSteps(steps []string) []string {
 		}
 	}
 	return out
+}
+
+// NormalizePlanSteps cleans plan steps and splits single-string numbered lists into separate steps.
+func NormalizePlanSteps(steps []string) []string {
+	cleaned := cleanPlanSteps(steps)
+	if len(cleaned) != 1 {
+		return cleaned
+	}
+	return splitNumberedPlanSteps(cleaned[0])
+}
+
+func splitNumberedPlanSteps(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	markers := planStepMarkerPattern.FindAllStringIndex(text, -1)
+	if len(markers) < 2 {
+		return []string{text}
+	}
+
+	out := make([]string, 0, len(markers))
+	for i, startLoc := range markers {
+		start := startLoc[0]
+		if start > 0 && text[start] == ' ' {
+			start++
+		}
+		end := len(text)
+		if i+1 < len(markers) {
+			end = markers[i+1][0]
+		}
+		chunk := strings.TrimSpace(text[start:end])
+		chunk = planStepNumberPrefix.ReplaceAllString(chunk, "")
+		chunk = strings.TrimSpace(chunk)
+		if chunk != "" {
+			out = append(out, chunk)
+		}
+	}
+	if len(out) >= 2 {
+		return out
+	}
+	return []string{text}
 }

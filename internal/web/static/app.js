@@ -2785,7 +2785,10 @@ function renderMessages() {
 
     // Build steps HTML (interleaved thinking / tool blocks).
     const steps = message.steps || [];
-    const stepsHtml = steps.map((s, idx) => {
+    const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && state.activePlan && state.activePlan.status === "active";
+    const stepsHtml = steps
+      .filter((s) => !(hideInlinePlanSteps && s.type === "plan"))
+      .map((s, idx) => {
       const isLastStep = idx === steps.length - 1;
       return renderStep(s, effectiveStreaming, isLastStep);
     }).join("");

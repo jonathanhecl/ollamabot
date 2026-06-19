@@ -3,9 +3,11 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 type mockPlanConfirmationHandler struct {
@@ -94,5 +96,51 @@ func TestPlanConfirmationHandler(t *testing.T) {
 	}
 	if handler.called {
 		t.Error("expected PlanConfirmationHandler NOT to be called for invalid arguments")
+	}
+}
+
+func TestPresentPlanSkipsWhenActivePlanExists(t *testing.T) {
+	store := sessions.NewStore(t.TempDir())
+	sess := sessions.Session{
+		ID:    sessions.GenerateID(),
+		Title: "Plan session",
+		Model: "test-model",
+	}
+	raw, _ := json.Marshal(sessions.RawMsg{Role: "user", Content: "do work"})
+	sess.Messages = []json.RawMessage{raw}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if _, err := sessions.ActivatePlan(store, sess.ID, "Do work", []string{"First", "Second"}); err != nil {
+		t.Fatalf("ActivatePlan failed: %v", err)
+	}
+
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSessionID(sess.ID)
+	registry.SetSessionStore(store)
+	handler := &mockPlanConfirmationHandler{response: true}
+	registry.SetPlanConfirmationHandler(handler)
+
+	argsBytes, _ := json.Marshal(map[string]any{
+		"summary": "Another plan",
+		"steps":   []string{"Step A", "Step B"},
+	})
+	call := ollama.ToolCall{
+		Type: "function",
+		Function: ollama.ToolFunction{
+			Name:      "present_plan",
+			Arguments: argsBytes,
+		},
+	}
+
+	res, err := registry.Execute(context.Background(), call)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if handler.called {
+		t.Fatal("expected PlanConfirmationHandler NOT to be called when plan is already active")
+	}
+	if !strings.Contains(res, "Plan already approved") {
+		t.Fatalf("expected guard response, got %q", res)
 	}
 }

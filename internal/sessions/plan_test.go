@@ -95,3 +95,36 @@ func TestFormatPlanChecklist(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizePlanSteps(t *testing.T) {
+	got := NormalizePlanSteps([]string{"1. First step 2. Second step 3. Third step"})
+	if len(got) != 3 {
+		t.Fatalf("expected 3 steps, got %d: %#v", len(got), got)
+	}
+	if got[0] != "First step" || got[1] != "Second step" || got[2] != "Third step" {
+		t.Fatalf("unexpected normalized steps: %#v", got)
+	}
+
+	unchanged := NormalizePlanSteps([]string{"Alpha", "Beta"})
+	if len(unchanged) != 2 || unchanged[0] != "Alpha" || unchanged[1] != "Beta" {
+		t.Fatalf("expected unchanged steps, got %#v", unchanged)
+	}
+}
+
+func TestActivatePlanNormalizesNumberedSteps(t *testing.T) {
+	store := NewStore(t.TempDir())
+	sess := Session{ID: GenerateID(), Title: "Plan session", Model: "test-model"}
+	raw, _ := json.Marshal(RawMsg{Role: "user", Content: "do work"})
+	sess.Messages = []json.RawMessage{raw}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	plan, err := ActivatePlan(store, sess.ID, "Summary", []string{"1. One 2. Two 3. Three"})
+	if err != nil {
+		t.Fatalf("ActivatePlan failed: %v", err)
+	}
+	if len(plan.Steps) != 3 {
+		t.Fatalf("expected 3 steps, got %#v", plan.Steps)
+	}
+}

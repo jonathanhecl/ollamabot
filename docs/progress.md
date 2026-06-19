@@ -120,3 +120,10 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - El probe de chat con `qwen3:8b` respondio `ok /think`; el transporte funciona, pero hay que limpiar tokens de control si aparecen en respuestas finales.
 - El acceso a `192.168.0.121:11434` no se valido desde el sandbox en la primera exploracion; queda cubierto por `OLLAMA_BASE_URL`, pero requiere prueba en entorno normal.
 - La web usa datos vivos cuando Ollama responde y puede caer al snapshot cacheado si el inventario vivo falla.
+
+## Fix modo plan repetitivo (2026-06-19)
+
+- El loop del agente ahora detecta un plan aprobado activo y deja de reforzar `present_plan` en cada iteracion.
+- `present_plan` rechaza llamadas duplicadas cuando ya hay un plan activo en la sesion.
+- `NormalizePlanSteps` divide listas numeradas mal formadas en pasos individuales.
+- Web UI: un solo widget de progreso vivo; el recorder actualiza el step de plan en lugar de acumular bloques.

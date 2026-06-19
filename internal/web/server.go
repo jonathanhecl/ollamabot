@@ -653,6 +653,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	sm := s.sleepMgr
 	s.mu.RUnlock()
 
+	var turnRecorder *sessions.Recorder
 	result, err := engine.ProcessTurn(agentCtx, engine.Deps{
 		Config:       cfg,
 		Client:       client,
@@ -676,6 +677,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			sessionID: input.SessionID,
 		},
 		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
+			turnRecorder = recorder
 			return &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
 		},
 		ImageProgressFactory: func(recorder *sessions.Recorder) tools.ImageProgressHandler {
@@ -708,6 +710,9 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		OnPlanProgress: func(sessionID string, plan sessions.SessionPlan) {
+			if turnRecorder != nil {
+				turnRecorder.UpdatePlanProgress(plan)
+			}
 			writeSSE(w, "plan_progress", map[string]any{
 				"session_id":  sessionID,
 				"active_plan": plan,

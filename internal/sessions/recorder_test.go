@@ -45,6 +45,40 @@ func TestRecorderStoresPresentPlanAsPlanStep(t *testing.T) {
 	}
 }
 
+func TestRecorderUpdatesExistingPlanStep(t *testing.T) {
+	rec := &Recorder{}
+	rec.OnToolStart("present_plan", map[string]any{
+		"summary": "First proposal",
+		"steps":   []string{"One", "Two"},
+	})
+	rec.OnToolStart("present_plan", map[string]any{
+		"summary": "Second proposal",
+		"steps":   []string{"1. Alpha 2. Beta"},
+	})
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one plan step after update, got %d", len(rec.currentTurn.Steps))
+	}
+	step := rec.currentTurn.Steps[0]
+	if step.Content != "Second proposal" {
+		t.Fatalf("expected updated summary, got %#v", step)
+	}
+	if len(step.PlanSteps) != 2 || step.PlanSteps[0] != "Alpha" || step.PlanSteps[1] != "Beta" {
+		t.Fatalf("expected normalized updated steps, got %#v", step.PlanSteps)
+	}
+
+	rec.UpdatePlanProgress(SessionPlan{
+		Summary:   "Second proposal",
+		Steps:     []string{"Alpha", "Beta"},
+		Completed: 1,
+		Status:    PlanStatusActive,
+	})
+	step = rec.currentTurn.Steps[0]
+	if step.Completed != 1 || step.Status != PlanStatusActive {
+		t.Fatalf("expected synced plan progress, got %#v", step)
+	}
+}
+
 func TestFinalizeStepsWithThinkingDeduplicatesLegacyThinking(t *testing.T) {
 	steps := []Step{
 		{Type: "thinking", Content: "streamed", Status: "running"},
