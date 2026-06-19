@@ -5,9 +5,35 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/skills"
 )
+
+// SkillSummary is a compact skill listing for APIs.
+type SkillSummary struct {
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Homepage    string    `json:"homepage"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// SkillStepView is one parsed instruction step.
+type SkillStepView struct {
+	Index       int    `json:"index"`
+	Instruction string `json:"instruction"`
+}
+
+// SkillDetail is the full skill payload for read/edit APIs.
+type SkillDetail struct {
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	Homepage     string          `json:"homepage"`
+	Instructions string          `json:"instructions"`
+	Content      string          `json:"content"`
+	Steps        []SkillStepView `json:"steps"`
+	UpdatedAt    time.Time       `json:"updated_at"`
+}
 
 // cleanSkillName sanitizes a input name into a safe directory name.
 func cleanSkillName(name string) string {
@@ -38,6 +64,106 @@ func formatInstructions(inst string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+// ListSkillSummaries returns structured metadata for all skills.
+func ListSkillSummaries(skillsPath string) ([]SkillSummary, error) {
+	cat, err := skills.NewCatalog(skillsPath)
+	if err != nil {
+		return nil, err
+	}
+	metaList, err := cat.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SkillSummary, 0, len(metaList))
+	for _, m := range metaList {
+		out = append(out, SkillSummary{
+			Name:        filepath.Base(m.Dir),
+			Description: m.Description,
+			Homepage:    m.Homepage,
+			UpdatedAt:   m.UpdatedAt,
+		})
+	}
+	return out, nil
+}
+
+// GetSkillDetail loads and parses a skill for API responses.
+func GetSkillDetail(skillsPath, name string) (SkillDetail, error) {
+	safeName := cleanSkillName(name)
+	if safeName == "" {
+		return SkillDetail{}, fmt.Errorf("invalid skill name")
+	}
+	path := filepath.Join(skillsPath, safeName, "SKILL.md")
+	contentBytes, err := os.ReadFile(path)
+	if err != nil {
+		return SkillDetail{}, fmt.Errorf("skill not found: %w", err)
+	}
+	content := string(contentBytes)
+	parsed, err := skills.ParseSkillMarkdown(content)
+	if err != nil {
+		return SkillDetail{}, fmt.Errorf("parse skill: %w", err)
+	}
+
+	var homepage string
+	parts := strings.SplitN(content, "---", 3)
+	if len(parts) >= 3 {
+		for _, line := range strings.Split(parts[1], "\n") {
+			line = strings.TrimSpace(line)
+			colon := strings.Index(line, ":")
+			if colon <= 0 {
+				continue
+			}
+			key := strings.TrimSpace(line[:colon])
+			val := strings.TrimSpace(line[colon+1:])
+			if key == "homepage" {
+				homepage = strings.Trim(val, "\"'")
+			}
+		}
+	}
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		return SkillDetail{}, err
+	}
+
+	steps := make([]SkillStepView, 0, len(parsed.Steps))
+	for _, step := range parsed.Steps {
+		steps = append(steps, SkillStepView{
+			Index:       step.Index,
+			Instruction: step.Instruction,
+		})
+	}
+
+	return SkillDetail{
+		Name:         safeName,
+		Description:  parsed.Description,
+		Homepage:     homepage,
+		Instructions: extractSkillInstructions(content),
+		Content:      content,
+		Steps:        steps,
+		UpdatedAt:    fileInfo.ModTime(),
+	}, nil
+}
+
+func extractSkillInstructions(content string) string {
+	parts := strings.SplitN(content, "---", 3)
+	body := content
+	if len(parts) >= 3 {
+		body = parts[2]
+	}
+	instIdx := strings.Index(strings.ToLower(body), "## instructions")
+	if instIdx == -1 {
+		instIdx = strings.Index(strings.ToLower(body), "## steps")
+	}
+	if instIdx == -1 {
+		return strings.TrimSpace(body)
+	}
+	lines := strings.Split(body[instIdx:], "\n")
+	if len(lines) <= 1 {
+		return ""
+	}
+	return strings.TrimSpace(strings.Join(lines[1:], "\n"))
 }
 
 // ListSkills returns a summary of all loaded skills.

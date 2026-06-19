@@ -127,3 +127,8 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - `present_plan` rechaza llamadas duplicadas cuando ya hay un plan activo en la sesion.
 - `NormalizePlanSteps` divide listas numeradas mal formadas en pasos individuales.
 - Web UI: un solo widget de progreso vivo; el recorder actualiza el step de plan en lugar de acumular bloques.
+
+## Web Skills Explorer (2026-06-19)
+
+- API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.
+- Boton **Skills** en la Web UI con modales de listado, detalle y edicion (patron Memory Explorer).

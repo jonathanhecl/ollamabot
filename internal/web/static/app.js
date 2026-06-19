@@ -238,6 +238,25 @@ const els = {
   currentEmbeddingModel: document.querySelector("#currentEmbeddingModel"),
   memoryListBody: document.querySelector("#memoryListBody"),
 
+  // Skills DOM Elements
+  openSkills: document.querySelector("#openSkills"),
+  skillsDialog: document.querySelector("#skillsDialog"),
+  skillsCount: document.querySelector("#skillsCount"),
+  skillsPathLabel: document.querySelector("#skillsPathLabel"),
+  skillsListBody: document.querySelector("#skillsListBody"),
+  skillViewDialog: document.querySelector("#skillViewDialog"),
+  skillViewTitle: document.querySelector("#skillViewTitle"),
+  skillViewDescription: document.querySelector("#skillViewDescription"),
+  skillViewHomepage: document.querySelector("#skillViewHomepage"),
+  skillViewSteps: document.querySelector("#skillViewSteps"),
+  skillViewContent: document.querySelector("#skillViewContent"),
+  skillEditDialog: document.querySelector("#skillEditDialog"),
+  skillEditTitle: document.querySelector("#skillEditTitle"),
+  skillEditForm: document.querySelector("#skillEditForm"),
+  skillEditDescription: document.querySelector("#skillEditDescription"),
+  skillEditHomepage: document.querySelector("#skillEditHomepage"),
+  skillEditInstructions: document.querySelector("#skillEditInstructions"),
+
   // Projects DOM Elements
   openProjects: document.querySelector("#openProjects"),
   projectsDialog: document.querySelector("#projectsDialog"),
@@ -271,6 +290,10 @@ const els = {
 // Bind Memory click handler
 els.openMemory.addEventListener("click", () => {
   openMemoryExplorer();
+});
+
+els.openSkills.addEventListener("click", () => {
+  openSkillsExplorer();
 });
 
 // Bind Projects click handler
@@ -615,6 +638,9 @@ setupBackdropClose(els.modelsDialog);
 setupBackdropClose(els.settingsDialog);
 setupBackdropClose(els.memoryDialog);
 setupBackdropClose(els.memoryTextDialog);
+setupBackdropClose(els.skillsDialog);
+setupBackdropClose(els.skillViewDialog);
+setupBackdropClose(els.skillEditDialog);
 setupBackdropClose(els.projectsDialog);
 
 
@@ -4711,6 +4737,176 @@ els.reindexMemoryBtn.addEventListener("click", async () => {
   } finally {
     els.reindexStatusArea.style.display = "none";
     els.reindexMemoryBtn.disabled = false;
+  }
+});
+
+// --- CUSTOM SKILLS EXPLORER ---
+
+let editingSkillName = null;
+
+async function openSkillsExplorer() {
+  els.skillsDialog.showModal();
+  await loadAndRenderSkills();
+}
+
+async function loadAndRenderSkills() {
+  try {
+    els.skillsPathLabel.textContent = `Path: ${state.settings.skills_path || "skills"}`;
+    const res = await fetch("/api/skills");
+    if (!res.ok) throw new Error("Failed to fetch skills");
+    const data = await res.json();
+    const skills = data.skills || [];
+    els.skillsCount.textContent = `Total Skills: ${data.count || skills.length}`;
+
+    els.skillsListBody.innerHTML = "";
+    if (skills.length === 0) {
+      els.skillsListBody.innerHTML = `
+        <tr>
+          <td colspan="4" style="text-align: center; padding: 20px; color: var(--muted);">
+            No custom skills found.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    skills.forEach((skill) => {
+      const name = skill.name || "";
+      const description = skill.description || "";
+      const updatedAt = skill.updated_at ? new Date(skill.updated_at).toLocaleString() : "";
+      const preview = description.length > 80 ? `${description.slice(0, 80)}…` : description;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><code>${escapeHtml(name)}</code></td>
+        <td title="${escapeAttr(description)}">${escapeHtml(preview)}</td>
+        <td style="color: var(--muted); font-size: 11.5px;">${escapeHtml(updatedAt)}</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <button class="ghost-button view-skill-btn" data-name="${escapeAttr(name)}" type="button" style="font-size: 11px; padding: 2px 8px;">View</button>
+          <button class="ghost-button edit-skill-btn" data-name="${escapeAttr(name)}" type="button" style="font-size: 11px; padding: 2px 8px;">Edit</button>
+          <button class="ghost-button delete-skill-btn" data-name="${escapeAttr(name)}" type="button" style="color: #ff6b6b; border-color: rgba(255,107,107,0.3); font-size: 11px; padding: 2px 8px;">Delete</button>
+        </td>
+      `;
+      els.skillsListBody.appendChild(tr);
+    });
+
+    els.skillsListBody.querySelectorAll(".view-skill-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openSkillView(btn.dataset.name));
+    });
+    els.skillsListBody.querySelectorAll(".edit-skill-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openSkillEdit(btn.dataset.name));
+    });
+    els.skillsListBody.querySelectorAll(".delete-skill-btn").forEach((btn) => {
+      btn.addEventListener("click", () => deleteSkill(btn.dataset.name));
+    });
+  } catch (err) {
+    console.error(err);
+    els.skillsListBody.innerHTML = `
+      <tr>
+        <td colspan="4" style="text-align: center; padding: 20px; color: #ff6b6b;">
+          Error loading skills: ${escapeHtml(err.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+async function fetchSkillDetail(name) {
+  const res = await fetch(`/api/skills/${encodeURIComponent(name)}`);
+  if (!res.ok) {
+    throw new Error("Failed to load skill details");
+  }
+  return res.json();
+}
+
+async function openSkillView(name) {
+  try {
+    const detail = await fetchSkillDetail(name);
+    els.skillViewTitle.textContent = detail.name || name;
+    els.skillViewDescription.textContent = detail.description || "";
+    const homepage = detail.homepage || "";
+    if (homepage) {
+      els.skillViewHomepage.href = homepage;
+      els.skillViewHomepage.textContent = homepage;
+      els.skillViewHomepage.style.display = "";
+    } else {
+      els.skillViewHomepage.removeAttribute("href");
+      els.skillViewHomepage.textContent = "—";
+      els.skillViewHomepage.style.display = "inline";
+    }
+
+    els.skillViewSteps.innerHTML = "";
+    const steps = Array.isArray(detail.steps) ? detail.steps : [];
+    if (steps.length === 0) {
+      const li = document.createElement("li");
+      li.textContent = detail.instructions || "No steps available.";
+      els.skillViewSteps.appendChild(li);
+    } else {
+      steps.forEach((step) => {
+        const li = document.createElement("li");
+        li.textContent = step.instruction || "";
+        els.skillViewSteps.appendChild(li);
+      });
+    }
+
+    els.skillViewContent.textContent = detail.content || "";
+    els.skillViewDialog.showModal();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+async function openSkillEdit(name) {
+  try {
+    const detail = await fetchSkillDetail(name);
+    editingSkillName = detail.name || name;
+    els.skillEditTitle.textContent = editingSkillName;
+    els.skillEditDescription.value = detail.description || "";
+    els.skillEditHomepage.value = detail.homepage || "";
+    els.skillEditInstructions.value = detail.instructions || "";
+    els.skillEditDialog.showModal();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+async function deleteSkill(name) {
+  const okDel = await showConfirm({
+    title: "Delete Skill?",
+    message: `Are you sure you want to delete the skill "${name}"? This action cannot be undone.`,
+    okLabel: "Delete Skill",
+    danger: true,
+  });
+  if (!okDel) return;
+  try {
+    const res = await fetch(`/api/skills/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Could not delete skill");
+    showToast(`Skill "${name}" deleted`, "success");
+    await loadAndRenderSkills();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+els.skillEditForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  if (!editingSkillName) return;
+  try {
+    const res = await fetch(`/api/skills/${encodeURIComponent(editingSkillName)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: els.skillEditDescription.value.trim(),
+        homepage: els.skillEditHomepage.value.trim(),
+        instructions: els.skillEditInstructions.value.trim(),
+      }),
+    });
+    if (!res.ok) throw new Error("Could not save skill");
+    els.skillEditDialog.close();
+    showToast(`Skill "${editingSkillName}" updated`, "success");
+    editingSkillName = null;
+    await loadAndRenderSkills();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
   }
 });
 

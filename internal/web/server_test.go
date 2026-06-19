@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -548,4 +550,127 @@ func TestAuthentication(t *testing.T) {
 	if w.Result().StatusCode != http.StatusOK {
 		t.Errorf("expected static path /index.html to succeed without auth, got %d", w.Result().StatusCode)
 	}
+}
+
+func writeTestSkill(t *testing.T, root, folder, content string) {
+	t.Helper()
+	dir := filepath.Join(root, folder)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSkillsAPI(t *testing.T) {
+	skillsRoot := t.TempDir()
+	writeTestSkill(t, skillsRoot, "weather", `---
+name: weather
+description: Weather helper
+homepage: https://example.com/weather
+---
+
+## Description
+Weather helper
+
+## Instructions
+- [ ] Check current conditions
+- [ ] Summarize forecast
+`)
+
+	s := &Server{
+		cfg: config.Config{
+			SkillsPath:    skillsRoot,
+			SkillsPathRaw: skillsRoot,
+		},
+	}
+
+	t.Run("list", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/skills", nil)
+		w := httptest.NewRecorder()
+		s.handleListSkills(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("list status = %d", w.Result().StatusCode)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		if int(payload["count"].(float64)) != 1 {
+			t.Fatalf("expected count 1, got %#v", payload["count"])
+		}
+	})
+
+	t.Run("get", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/skills/weather", nil)
+		req.SetPathValue("name", "weather")
+		w := httptest.NewRecorder()
+		s.handleGetSkill(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("get status = %d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+		var detail map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail["name"] != "weather" {
+			t.Fatalf("unexpected name: %#v", detail["name"])
+		}
+		steps, ok := detail["steps"].([]any)
+		if !ok || len(steps) != 2 {
+			t.Fatalf("expected 2 steps, got %#v", detail["steps"])
+		}
+	})
+
+	t.Run("update", func(t *testing.T) {
+		body := `{"description":"Updated helper","homepage":"https://example.com/new","instructions":"- [ ] Updated step"}`
+		req := httptest.NewRequest("PUT", "/api/skills/weather", strings.NewReader(body))
+		req.SetPathValue("name", "weather")
+		w := httptest.NewRecorder()
+		s.handleUpdateSkill(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("update status = %d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+		var detail map[string]any
+		if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+			t.Fatal(err)
+		}
+		if detail["description"] != "Updated helper" {
+			t.Fatalf("unexpected description: %#v", detail["description"])
+		}
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		req := httptest.NewRequest("DELETE", "/api/skills/weather", nil)
+		req.SetPathValue("name", "weather")
+		w := httptest.NewRecorder()
+		s.handleDeleteSkill(w, req)
+		if w.Result().StatusCode != http.StatusOK {
+			t.Fatalf("delete status = %d", w.Result().StatusCode)
+		}
+		if _, err := os.Stat(filepath.Join(skillsRoot, "weather")); !os.IsNotExist(err) {
+			t.Fatalf("expected skill directory removed, err=%v", err)
+		}
+	})
+
+	t.Run("get missing", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/skills/missing", nil)
+		req.SetPathValue("name", "missing")
+		w := httptest.NewRecorder()
+		s.handleGetSkill(w, req)
+		if w.Result().StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", w.Result().StatusCode)
+		}
+	})
+
+	t.Run("invalid name", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/skills/../../etc", nil)
+		req.SetPathValue("name", "../../etc")
+		w := httptest.NewRecorder()
+		s.handleGetSkill(w, req)
+		if w.Result().StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404 for invalid name, got %d", w.Result().StatusCode)
+		}
+	})
 }

@@ -203,6 +203,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/memory/search", s.handleSearchMemory)
 	mux.HandleFunc("POST /api/memory/reindex", s.handleReindexMemory)
 	mux.HandleFunc("DELETE /api/memory/{id}", s.handleDeleteMemory)
+	mux.HandleFunc("GET /api/skills", s.handleListSkills)
+	mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
+	mux.HandleFunc("PUT /api/skills/{name}", s.handleUpdateSkill)
+	mux.HandleFunc("DELETE /api/skills/{name}", s.handleDeleteSkill)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
@@ -1700,6 +1704,96 @@ func (s *Server) handleReindexMemory(w http.ResponseWriter, r *http.Request) {
 		"count":  len(newEmbeddings),
 		"model":  embedModel,
 	})
+}
+
+func (s *Server) skillsPath() string {
+	cfg := s.config()
+	path := strings.TrimSpace(cfg.SkillsPath)
+	if path == "" {
+		path = "skills"
+	}
+	return path
+}
+
+func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
+	summaries, err := tools.ListSkillSummaries(s.skillsPath())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"skills": summaries,
+		"count":  len(summaries),
+		"path":   s.config().SkillsPathRaw,
+	})
+}
+
+func (s *Server) handleGetSkill(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("skill name is required"))
+		return
+	}
+	detail, err := tools.GetSkillDetail(s.skillsPath(), name)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "invalid skill name") {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+type updateSkillRequest struct {
+	Description  string `json:"description"`
+	Homepage     string `json:"homepage"`
+	Instructions string `json:"instructions"`
+}
+
+func (s *Server) handleUpdateSkill(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("skill name is required"))
+		return
+	}
+	var req updateSkillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if err := tools.EditSkill(s.skillsPath(), name, req.Description, req.Homepage, req.Instructions); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "invalid skill name") {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	detail, err := tools.GetSkillDetail(s.skillsPath(), name)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, detail)
+}
+
+func (s *Server) handleDeleteSkill(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("skill name is required"))
+		return
+	}
+	if err := tools.DeleteSkill(s.skillsPath(), name); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "does not exist") || strings.Contains(strings.ToLower(err.Error()), "invalid skill name") {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
 
 func writeSSE(w http.ResponseWriter, event string, value any) {
