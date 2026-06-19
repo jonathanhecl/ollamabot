@@ -515,20 +515,21 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "ask_clarification",
-			Description: "Ask the user a clarifying question with a list of pre-defined affirmative options (at least 2) to resolve ambiguity in their instruction and plan the next action better.",
+			Description: "Ask the user ONE clarifying question, then provide clickable affirmative option statements (at least 2). The question goes in 'question'; each option must be a statement the user selects, never another question.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"question": map[string]any{
 						"type":        "string",
-						"description": "The clarifying question to ask the user.",
+						"description": "The single clarifying question to ask the user.",
 					},
 					"options": map[string]any{
 						"type": "array",
 						"items": map[string]any{
-							"type": "string",
+							"type":        "string",
+							"description": "An affirmative statement the user can click to choose. Must NOT be a question. Good: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad: \"Do you want a plan?\", \"¿Quieres iniciar un plan?\".",
 						},
-						"description": "A list of at least 3 affirmative option statements for the user to choose from. Each option must be a statement, not a question.",
+						"description": "At least 2 affirmative option statements (not questions). Write them as first-person or imperative choices the user can pick.",
 					},
 				},
 				"required": []string{"question", "options"},
@@ -957,6 +958,9 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		if len(options) < 2 {
 			return "", fmt.Errorf("ask_clarification requires at least 2 options")
+		}
+		if err := validateClarificationOptions(options); err != nil {
+			return "", err
 		}
 		if r.clarificationHandler == nil {
 			return "", fmt.Errorf("no clarification handler configured")

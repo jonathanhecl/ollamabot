@@ -210,7 +210,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		// Inject reinforcement for clarification
-		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool to present a clear question with at least 2 proposed options. Do not assume or guess if key details are missing."
+		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool. Put the question only in 'question'. Every entry in 'options' must be an affirmative statement the user can click, never another question. Good options: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad options: \"Do you want a plan?\", \"¿Quieres que revise tus gustos?\". Do not assume or guess if key details are missing."
 		systemPrefix = append(systemPrefix, ollama.Message{
 			Role:    "system",
 			Content: clarificationReinforce,
