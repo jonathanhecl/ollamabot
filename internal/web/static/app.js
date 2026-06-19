@@ -138,8 +138,6 @@ const els = {
   version: document.querySelector("#version"),
   cacheState: document.querySelector("#cacheState"),
   memoryState: document.querySelector("#memoryState"),
-  think: document.querySelector("#thinkToggle"),
-  thinkControl: document.querySelector("#thinkControl"),
   imageControl: document.querySelector("#imageControl"),
   audioControl: document.querySelector("#audioControl"),
   fileControl: document.querySelector("#fileControl"),
@@ -162,6 +160,7 @@ const els = {
   ollamaUrl: document.querySelector("#ollamaUrl"),
   ollamaProbeModels: document.querySelector("#ollamaProbeModels"),
   ollamaImageSteps: document.querySelector("#ollamaImageSteps"),
+  ollamaThinkToggle: document.querySelector("#ollamaThinkToggle"),
   workspacePath: document.querySelector("#workspacePath"),
   sessionsPath: document.querySelector("#sessionsPath"),
   memoryPath: document.querySelector("#memoryPath"),
@@ -334,6 +333,7 @@ els.openSettings.addEventListener("click", async () => {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.ollamaProbeModels.value = state.settings.ollama_probe_models || "";
   els.ollamaImageSteps.value = state.settings.image_steps || 4;
+  els.ollamaThinkToggle.checked = state.settings.ollama_think_enabled !== false;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
@@ -1299,6 +1299,7 @@ async function loadSettings() {
   els.ollamaUrl.value = state.settings.ollama_base_url || "";
   els.ollamaProbeModels.value = state.settings.ollama_probe_models || "";
   els.ollamaImageSteps.value = state.settings.image_steps || 4;
+  els.ollamaThinkToggle.checked = state.settings.ollama_think_enabled !== false;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
   els.memoryPath.value = state.settings.memory_path || "";
@@ -1407,6 +1408,7 @@ async function saveSettings(event) {
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
       image_steps: parseInt(els.ollamaImageSteps.value.trim(), 10) || 4,
+      ollama_think_enabled: els.ollamaThinkToggle.checked,
       web_search_enabled: webSearchEnabled,
       web_search_priority: searchProvidersCsv,
       brave_search_api_key: braveKey,
@@ -1482,6 +1484,7 @@ async function saveRoleModels() {
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
       image_steps: state.imageSteps || 4,
+      ollama_think_enabled: state.settings.ollama_think_enabled !== false,
       web_search_enabled: state.settings.web_search_enabled || false,
       web_search_priority: state.settings.web_search_priority || "ddg",
       brave_search_api_key: state.settings.brave_search_api_key || "",
@@ -1619,15 +1622,11 @@ function renderActive() {
 }
 
 function setCapabilityVisibility() {
-  const caps = activeModel()?.capabilities || {};
-  const canThink = caps.thinking === "comprobado";
   const canImage = modelForRole("vision") !== null;
   const canAudio = modelForRole("audio") !== null;
-  els.thinkControl.hidden = !canThink;
   els.imageControl.hidden = !canImage;
   els.audioControl.hidden = !canAudio;
   els.recordControl.hidden = !canAudio;
-  if (!canThink) els.think.checked = false;
   state.attachments = state.attachments.filter((attachment) => attachment.kind === "file" || capabilityFor(attachment.kind));
   renderAttachments();
 }
@@ -2320,7 +2319,6 @@ async function processNextQueueItem() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         messages: outboundMessages,
-        think: els.think.checked,
         session_id: state.activeSessionId || "",
       }),
       signal: state.currentAbortController.signal,

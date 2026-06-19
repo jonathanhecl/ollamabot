@@ -97,6 +97,7 @@ type SettingsResponse struct {
 	ModelEmbeddings              string `json:"model_embeddings"`
 	ModelImage                   string `json:"model_image"`
 	ImageSteps                   int    `json:"image_steps"`
+	OllamaThinkEnabled           bool   `json:"ollama_think_enabled"`
 	PlanConfirmation             string `json:"plan_confirmation"`
 	Workspace                    string `json:"workspace"`
 	SessionsPath                 string `json:"sessions_path"`
@@ -125,7 +126,6 @@ type MediaMessage = router.MediaMessage
 type ChatRequest struct {
 	Model     string         `json:"model"`
 	Messages  []MediaMessage `json:"messages"`
-	Think     bool           `json:"think"`
 	SessionID string         `json:"session_id,omitempty"`
 }
 
@@ -386,6 +386,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.OllamaImageSteps <= 0 {
 		s.cfg.OllamaImageSteps = 4
 	}
+	s.cfg.OllamaThinkEnabled = input.OllamaThinkEnabled
 	s.cfg.WebSearchEnabled = input.WebSearchEnabled
 	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
 	s.cfg.SessionAutoName = input.SessionAutoName
@@ -624,7 +625,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	imageCount := len(lastMsg.Images)
 	model := config.ResolveModel(cfg, config.ModelRoleMain)
 	log.Printf("[Web] Chat request model=%q think=%v text_len=%d messages=%d images=%d",
-		model, input.Think, len(lastMsg.Content), len(input.Messages), imageCount)
+		model, cfg.OllamaThinkEnabled, len(lastMsg.Content), len(input.Messages), imageCount)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -702,7 +703,6 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		SessionID: input.SessionID,
 		Channel:   "web",
 		Messages:  input.Messages,
-		Think:     input.Think,
 	})
 	if err != nil {
 		log.Printf("[Web] Agent error: %v", err)
@@ -1718,6 +1718,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelEmbeddings:              cfg.OllamaModelEmbed,
 		ModelImage:                   cfg.OllamaModelImage,
 		ImageSteps:                   cfg.OllamaImageSteps,
+		OllamaThinkEnabled:           cfg.OllamaThinkEnabled,
 		PlanConfirmation:             cfg.PlanConfirmation,
 		Workspace:                    workspace,
 		SessionsPath:                 sessionsPath,

@@ -48,7 +48,6 @@ type TurnRequest struct {
 	SessionID   string
 	Channel     string
 	Messages    []router.MediaMessage
-	Think       bool
 	BaseHistory []sessions.RawMsg
 }
 
@@ -106,7 +105,7 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		handler = deps.StreamHandlerFactory(recorder, model)
 	}
 
-	think := agent.ShouldThink(model, req.Think, SnapshotPath(deps.CachePath))
+	think := agent.ShouldThink(model, cfg.OllamaThinkEnabled, SnapshotPath(deps.CachePath))
 	log.Printf("[Engine] Running turn channel=%q model=%q think=%v messages=%d", req.Channel, model, think, len(ollamaMessages))
 	a := agent.NewAgent(cfg, deps.Client, registry)
 	finalHistory, runErr := a.Run(ctx, model, ollamaMessages, think, handler)

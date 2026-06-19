@@ -98,6 +98,7 @@ Configured in `.env` and editable from the web **Manage Models & Roles** UI (wri
 | Learning | `OLLAMA_MODEL_LEARNING` | Sleep-mode reflection; falls back to main |
 | Embeddings | `OLLAMA_MODEL_EMBED` | Long-term memory search |
 | Image gen | `OLLAMA_MODEL_IMAGE` | `generate_image` tool |
+| Thinking | `OLLAMA_THINK_ENABLED` | Reasoning phase when main model supports it |
 
 Capabilities are probed via `internal/probe`; missing roles disable features gracefully without user-facing errors.
 

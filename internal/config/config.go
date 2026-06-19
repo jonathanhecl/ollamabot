@@ -46,6 +46,7 @@ type Config struct {
 	TavilyAPIKey                 string
 	SleepModeSubagentsEnabled    bool
 	OllamaModelSubagent          string
+	OllamaThinkEnabled           bool
 	ServerPassword               string
 	PlanConfirmation             string
 }
@@ -92,6 +93,7 @@ func Load(path string) (Config, error) {
 		TavilyAPIKey:                 "",
 		SleepModeSubagentsEnabled:    false,
 		OllamaModelSubagent:          "",
+		OllamaThinkEnabled:           true,
 		ServerPassword:               "",
 		TelegramSessionExpiryMin:     30,
 		PlanConfirmation:             "smart",
@@ -184,6 +186,9 @@ func Load(path string) (Config, error) {
 	}
 	if value := apply("OLLAMA_MODEL_SUBAGENT"); value != "" {
 		cfg.OllamaModelSubagent = value
+	}
+	if value := apply("OLLAMA_THINK_ENABLED"); value != "" {
+		cfg.OllamaThinkEnabled = parseBool(value)
 	}
 	if value := apply("SERVER_PASSWORD"); value != "" {
 		cfg.ServerPassword = value
@@ -283,7 +288,8 @@ func SaveBasic(path string, cfg Config) error {
 			"OLLAMA_MODEL_IMAGE=%s\n"+
 			"OLLAMA_MODEL_LEARNING=%s\n"+
 			"OLLAMA_MODEL_SUBAGENT=%s\n"+
-			"OLLAMA_IMAGE_STEPS=%d\n\n"+
+			"OLLAMA_IMAGE_STEPS=%d\n"+
+			"OLLAMA_THINK_ENABLED=%t\n\n"+
 			"# Telegram\n"+
 			"TELEGRAM_BOT_TOKEN=%s\n"+
 			"TELEGRAM_AUTHORIZED_IDS=%s\n"+
@@ -320,6 +326,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.OllamaModelLearning,
 		cfg.OllamaModelSubagent,
 		cfg.OllamaImageSteps,
+		cfg.OllamaThinkEnabled,
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		cfg.TelegramStartupNotification,

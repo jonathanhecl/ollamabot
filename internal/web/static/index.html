@@ -77,10 +77,6 @@
           <button id="recordControl" class="tool-button recording-btn" type="button" hidden>
             <span class="record-icon">🎤</span> <span class="record-label">Record</span>
           </button>
-          <label id="thinkControl" class="think-toggle">
-            <input id="thinkToggle" type="checkbox" checked />
-            <span>think</span>
-          </label>
         </div>
         <textarea id="prompt" rows="3" placeholder="Message the selected model. Paste images/audio or attach files when supported."></textarea>
         <div class="composer-submit-group" style="display: flex; gap: 8px; flex-direction: column-reverse; align-items: stretch;">
@@ -364,6 +360,12 @@
               Image Generation Steps
               <input id="ollamaImageSteps" type="number" placeholder="4" min="1" />
             </label>
+            <div class="checkbox-row" style="margin-top: 14px;">
+              <label class="think-toggle">
+                <input id="ollamaThinkToggle" type="checkbox" />
+                <span>Enable thinking (when main model supports it)</span>
+              </label>
+            </div>
             <label style="margin-top: 10px;">
               Default Microphone
               <select id="micSelect">

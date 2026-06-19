@@ -44,6 +44,8 @@ Background services started once in `cmd/ollamabot/main.go` and shared by channe
 - **Graceful fallback**: if no model supports a capability, that feature is disabled silently for users.
 - **Server-authoritative config**: runtime models and roles come from `config.Config` (`.env`).
   Channels must not send or override `OLLAMA_DEFAULT_MODEL` on chat requests.
+  Thinking is controlled by `OLLAMA_THINK_ENABLED` in settings, applied only when the main model
+  supports the `thinking` capability (`agent.ShouldThink`).
 - **No agent-global conversation state**: history lives in `internal/sessions` keyed by session ID
   (web session or Telegram `chat_id` mapping). The agent loop is stateless between turns.
 

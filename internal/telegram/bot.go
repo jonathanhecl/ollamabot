@@ -1052,7 +1052,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		SessionID:   sessionID,
 		Channel:     "telegram",
 		Messages:    engine.MediaMessagesFromRaw(history),
-		Think:       true,
 		BaseHistory: history,
 	})
 	if err != nil {
