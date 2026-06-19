@@ -311,12 +311,8 @@ els.reloadModelsBtn.addEventListener("click", async () => {
       return;
     }
     state.models = data.models || [];
-    if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
-      const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
-      state.activeModel = preferred?.name || "";
-    }
+    syncActiveModel();
     updateOllamaStatus(true, data.ollama_version, data.from_cache);
-    renderActive();
     renderModels();
   } catch (err) {
     console.error("Reload models failed:", err);
@@ -1551,17 +1547,30 @@ async function loadModels() {
       throw new Error(data.error || "Failed to load models");
     }
     state.models = data.models || [];
-    if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
-      const preferred = state.models.find((m) => m.is_default && canBeMain(m)) || state.models.find((m) => canBeMain(m));
-      state.activeModel = preferred?.name || "";
-    }
+    syncActiveModel();
     updateOllamaStatus(true, data.ollama_version, data.from_cache);
-    renderActive();
     renderModels();
   } catch (err) {
     els.modelsBody.innerHTML = `<div class="empty">${escapeHtml(err.message || err)}</div>`;
     updateOllamaStatus(false);
   }
+}
+
+function syncActiveModel() {
+  const fromSettings = state.settings?.model_default;
+  if (fromSettings) {
+    state.activeModel = fromSettings;
+  }
+  if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
+    const preferred = state.models.find((m) => m.is_default && canBeMain(m))
+      || state.models.find((m) => m.name === fromSettings && canBeMain(m))
+      || state.models.find((m) => canBeMain(m));
+    state.activeModel = preferred?.name || state.activeModel || "";
+  }
+  if (state.activeModel) {
+    localStorage.setItem("ollamabot.mainModel", state.activeModel);
+  }
+  renderActive();
 }
 
 function activeModel() {
@@ -1798,15 +1807,15 @@ function renderModels() {
   }
 
   document.querySelectorAll(".choose:not([disabled])").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const role = button.dataset.role;
       const model = button.dataset.model;
       if (role === "main") {
         state.activeModel = model;
         localStorage.setItem("ollamabot.mainModel", state.activeModel);
-        saveRoleModels();
+        await saveRoleModels();
         if (state.activeSessionId) {
-          saveSession();
+          await saveSession();
         }
         renderActive();
         renderModels();
@@ -2138,6 +2147,7 @@ async function sendMessage(event) {
   if (state.attachments.length > 0) {
     console.log("[sendMessage] Attachment kinds:", state.attachments.map(a => a.kind), "data_lens:", state.attachments.map(a => a.data?.length || 0));
   }
+  syncActiveModel();
   if ((!content && state.attachments.length === 0) || !state.activeModel) return;
 
   // Ensure we have an active session before sending
@@ -2286,6 +2296,8 @@ async function processNextQueueItem() {
       image_kinds: currentMsg?.image_kinds,
     }
   });
+
+  syncActiveModel();
 
   try {
     const response = await fetch("/api/chat/stream", {
@@ -2557,7 +2569,12 @@ async function processNextQueueItem() {
     if (state.settings && state.settings.session_auto_name !== false) {
       const activeSess = state.sessions.find(s => s.id === state.activeSessionId);
       const isDefault = activeSess ? isDefaultTitle(activeSess.title) : true;
-      if (isDefault && assistant.content) {
+      const hadError = assistant.content && (
+        assistant.content.startsWith("Error:") ||
+        assistant.content.includes("\nError:") ||
+        /not found/i.test(assistant.content)
+      );
+      if (isDefault && assistant.content && !hadError) {
         autoGenerateSessionTitle(assistant.content);
       }
     }
@@ -3813,7 +3830,8 @@ async function loadSession(id) {
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.messages = normalizeRawMessages(sess.messages || []);
-    if (sess.model) state.activeModel = sess.model;
+    syncActiveModel();
+    await syncSessionModel();
     renderMessages();
     renderAttachments();
     updateContextBar();
@@ -3821,6 +3839,24 @@ async function loadSession(id) {
     els.prompt.focus();
   } catch (e) {
     console.warn("loadSession failed:", e);
+  }
+}
+
+async function syncSessionModel() {
+  if (!state.activeSessionId || state.activeSessionId.startsWith("client_") || !state.activeModel) return;
+  const session = state.sessions.find((s) => s.id === state.activeSessionId);
+  if (!session || session.model === state.activeModel) return;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: state.activeModel }),
+    });
+    if (response.ok) {
+      session.model = state.activeModel;
+    }
+  } catch (e) {
+    console.warn("syncSessionModel failed:", e);
   }
 }
 
@@ -4044,7 +4080,11 @@ async function autoGenerateSessionTitle(assistantContent) {
   const id = state.activeSessionId;
   console.log("[Auto-Name] Triggered for session ID:", id, "Content length:", assistantContent?.length);
   try {
-    const modelToUse = state.settings.model_subagent || state.activeModel;
+    const modelToUse = state.settings?.model_subagent || state.settings?.model_default || state.activeModel;
+    if (!modelToUse || !state.models.some((m) => m.name === modelToUse)) {
+      console.warn("[Auto-Name] Skipping: model not available:", modelToUse);
+      return;
+    }
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
