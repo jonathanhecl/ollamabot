@@ -2089,11 +2089,13 @@ textarea {
   margin-top: 10px;
 }
 
-/* Toast notifications */
+/* Toast notifications (non-modal dialog so it stacks above modal dialogs) */
 .toast {
   position: fixed;
-  bottom: 28px;
-  left: 50%;
+  inset: auto auto 28px 50%;
+  margin: 0;
+  width: max-content;
+  max-width: min(480px, calc(100vw - 32px));
   transform: translateX(-50%) translateY(20px);
   background: #1e1e1e;
   color: var(--text);
@@ -2103,13 +2105,14 @@ textarea {
   font-size: 13.5px;
   font-family: inherit;
   line-height: 1.4;
-  max-width: min(480px, calc(100vw - 32px));
   text-align: center;
   box-shadow: 0 6px 24px rgba(0,0,0,0.5);
-  z-index: 9999;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.22s ease, transform 0.22s ease;
+}
+.toast::backdrop {
+  display: none;
 }
 .toast.visible {
   opacity: 1;

@@ -556,12 +556,19 @@ function showToast(message, type = "info", duration = 3500) {
   if (!els.toast) return;
   els.toast.textContent = message;
   els.toast.className = "toast" + (type === "error" ? " toast-error" : type === "success" ? " toast-success" : "");
+  // Non-modal dialog so the toast renders in the browser top layer above open modals.
+  if (!els.toast.open) {
+    els.toast.show();
+  }
   // force reflow so transition re-triggers on consecutive calls
   void els.toast.offsetWidth;
   els.toast.classList.add("visible");
   if (_toastTimer) clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => {
     els.toast.classList.remove("visible");
+    if (els.toast.open) {
+      els.toast.close();
+    }
   }, duration);
 }
 
