@@ -139,6 +139,12 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 - La lista de sesiones se ordena por `last_message_at` (timestamp del ultimo mensaje), no por `updated_at` del archivo.
 
+## Cache de listado de sesiones (2026-06-19)
+
+- `Store` precarga un indice en memoria al inicializar (`warmListCache`).
+- `List()` sirve desde cache sin releer disco; `Save`/`Delete` actualizan solo la entrada afectada.
+- Endpoint ligero `GET /api/sessions/{id}/entry` y SSE `session_updated` refrescan una sola sesion en la UI.
+
 ## Web Skills Explorer (2026-06-19)
 
 - API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.

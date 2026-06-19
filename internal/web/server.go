@@ -188,6 +188,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/sessions", s.handleListSessions)
 	mux.HandleFunc("POST /api/sessions", s.handleCreateSession)
 	mux.HandleFunc("GET /api/sessions/{id}", s.handleGetSession)
+	mux.HandleFunc("GET /api/sessions/{id}/entry", s.handleGetSessionEntry)
 	mux.HandleFunc("PUT /api/sessions/{id}", s.handleUpdateSession)
 	mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
 	mux.HandleFunc("GET /api/sessions/{id}/uploads", s.handleListSessionUploads)
@@ -1106,6 +1107,16 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		sess.Messages = resolved
 	}
 	writeJSON(w, http.StatusOK, sess)
+}
+
+func (s *Server) handleGetSessionEntry(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	entry, err := s.sessionStore.GetListEntry(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, entry)
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {

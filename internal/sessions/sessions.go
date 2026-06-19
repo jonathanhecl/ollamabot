@@ -196,9 +196,29 @@ var (
 	emptySessions   = make(map[string]Session)
 
 	cacheMu      sync.RWMutex
-	sessionCache = make(map[string]map[string]*Session)
-	cacheLoaded  = make(map[string]bool)
+	sessionCache = make(map[string]map[string]*Session) // full sessions for Get()
+	listCache    = make(map[string]*listCacheState)    // metadata-only list index
 )
+
+type listCacheState struct {
+	byID   map[string]Session
+	sorted []string
+}
+
+func rebuildListSorted(state *listCacheState) {
+	if state == nil || len(state.byID) == 0 {
+		state.sorted = nil
+		return
+	}
+	ids := make([]string, 0, len(state.byID))
+	for id := range state.byID {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return sessionSortTime(state.byID[ids[i]]).After(sessionSortTime(state.byID[ids[j]]))
+	})
+	state.sorted = ids
+}
 
 func cloneSession(s Session) Session {
 	var msgsCopy []json.RawMessage
@@ -241,9 +261,9 @@ type Store struct {
 
 func NewStore(sessionsPath string) *Store {
 	_ = os.MkdirAll(sessionsPath, 0o755)
-	return &Store{
-		dir: sessionsPath,
-	}
+	s := &Store{dir: sessionsPath}
+	s.warmListCache()
+	return s
 }
 
 func (s *Store) sessionDir(id string) string {
@@ -262,47 +282,111 @@ func (s *Store) attachmentsDir(id string) string {
 	return filepath.Join(s.sessionDir(id), "attachments")
 }
 
+func (s *Store) warmListCache() {
+	state := &listCacheState{byID: make(map[string]Session)}
+	entries, err := os.ReadDir(s.dir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			id := e.Name()
+			sess, err := s.readMeta(id)
+			if err != nil {
+				continue
+			}
+			sess.Messages = nil
+			if sess.LastMessageAt.IsZero() {
+				if t := s.lastMessageAtFromFile(id); !t.IsZero() {
+					sess.LastMessageAt = t
+				}
+			}
+			state.byID[id] = sess
+		}
+	}
+	rebuildListSorted(state)
+
+	cacheMu.Lock()
+	listCache[s.dir] = state
+	cacheMu.Unlock()
+}
+
+func (s *Store) upsertListEntry(meta Session) {
+	meta.Messages = nil
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	state := listCache[s.dir]
+	if state == nil {
+		state = &listCacheState{byID: make(map[string]Session)}
+		listCache[s.dir] = state
+	}
+	state.byID[meta.ID] = meta
+	rebuildListSorted(state)
+}
+
+func (s *Store) removeListEntry(id string) {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
+	state := listCache[s.dir]
+	if state == nil {
+		return
+	}
+	delete(state.byID, id)
+	rebuildListSorted(state)
+}
+
+func (s *Store) listCacheSnapshot() []Session {
+	cacheMu.RLock()
+	state := listCache[s.dir]
+	if state == nil || len(state.sorted) == 0 {
+		cacheMu.RUnlock()
+		return nil
+	}
+	out := make([]Session, len(state.sorted))
+	for i, id := range state.sorted {
+		out[i] = cloneSession(state.byID[id])
+	}
+	cacheMu.RUnlock()
+	return out
+}
+
 // List returns all sessions ordered by last_message_at descending.
 func (s *Store) List() ([]Session, error) {
-	cacheMu.Lock()
-	loaded := cacheLoaded[s.dir]
-	if !loaded {
-		if sessionCache[s.dir] == nil {
-			sessionCache[s.dir] = make(map[string]*Session)
-		}
-		entries, err := os.ReadDir(s.dir)
-		if err == nil {
-			for _, e := range entries {
-				if !e.IsDir() {
-					continue
-				}
-				sess, err := s.readMeta(e.Name())
-				if err == nil {
-					sess.Messages = nil
-					sessionCache[s.dir][e.Name()] = &sess
-				}
-			}
-			cacheLoaded[s.dir] = true
+	out := s.listCacheSnapshot()
+	if out == nil {
+		s.warmListCache()
+		out = s.listCacheSnapshot()
+	}
+	if out == nil {
+		return []Session{}, nil
+	}
+	return out, nil
+}
+
+// GetListEntry returns list metadata for a single session from the in-memory index.
+func (s *Store) GetListEntry(id string) (Session, error) {
+	cacheMu.RLock()
+	state := listCache[s.dir]
+	if state != nil {
+		if sess, ok := state.byID[id]; ok {
+			cacheMu.RUnlock()
+			return cloneSession(sess), nil
 		}
 	}
+	cacheMu.RUnlock()
 
-	var list []Session
-	for _, cachedPtr := range sessionCache[s.dir] {
-		cloned := cloneSession(*cachedPtr)
-		cloned.Messages = nil
-		if cloned.LastMessageAt.IsZero() {
-			if t := s.lastMessageAtFromFile(cloned.ID); !t.IsZero() {
-				cloned.LastMessageAt = t
-			}
-		}
-		list = append(list, cloned)
+	sess, err := s.readMeta(id)
+	if err != nil {
+		return Session{}, fmt.Errorf("session not found")
 	}
-	cacheMu.Unlock()
-
-	sort.Slice(list, func(i, j int) bool {
-		return sessionSortTime(list[i]).After(sessionSortTime(list[j]))
-	})
-	return list, nil
+	sess.Messages = nil
+	if sess.LastMessageAt.IsZero() {
+		if t := s.lastMessageAtFromFile(id); !t.IsZero() {
+			sess.LastMessageAt = t
+		}
+	}
+	s.upsertListEntry(sess)
+	return sess, nil
 }
 
 func (s *Store) lastMessageAtFromFile(id string) time.Time {
@@ -388,6 +472,7 @@ func (s *Store) Save(sess Session) error {
 			delete(sessionCache[s.dir], sess.ID)
 		}
 		cacheMu.Unlock()
+		s.removeListEntry(sess.ID)
 
 		// Clean up from disk if it was previously saved
 		_ = os.RemoveAll(s.sessionDir(sess.ID))
@@ -398,7 +483,7 @@ func (s *Store) Save(sess Session) error {
 	delete(emptySessions, sess.ID)
 	emptySessionsMu.Unlock()
 
-	// Update cache
+	// Update caches
 	cacheMu.Lock()
 	if sessionCache[s.dir] == nil {
 		sessionCache[s.dir] = make(map[string]*Session)
@@ -406,6 +491,9 @@ func (s *Store) Save(sess Session) error {
 	cachedSess := cloneSession(sess)
 	sessionCache[s.dir][sess.ID] = &cachedSess
 	cacheMu.Unlock()
+	listMeta := sess
+	listMeta.Messages = nil
+	s.upsertListEntry(listMeta)
 
 	sd := s.sessionDir(sess.ID)
 	if err := os.MkdirAll(sd, 0o755); err != nil {
@@ -449,6 +537,7 @@ func (s *Store) Delete(id string) error {
 		delete(sessionCache[s.dir], id)
 	}
 	cacheMu.Unlock()
+	s.removeListEntry(id)
 
 	return os.RemoveAll(s.sessionDir(id))
 }

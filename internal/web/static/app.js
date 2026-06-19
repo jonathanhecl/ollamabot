@@ -1011,10 +1011,10 @@ function startRealtimeEvents() {
     }
     sessionUpdateDebounce = setTimeout(async () => {
       sessionUpdateDebounce = null;
-      // 1. Refresh session list
-      await loadSessions();
+      // Refresh only the changed session in the sidebar list
+      await refreshSessionEntry(sessionID);
 
-      // 2. If it's the active session, reload it
+      // If it's the active session, reload it
       if (state.activeSessionId === sessionID) {
         if (!state.isProcessing) {
           await loadSession(sessionID);
@@ -3948,6 +3948,41 @@ function groupMessagesAndTools(messages) {
 
 // ----- Sessions -----
 
+function sortSessionsByActivity(sessions) {
+  return [...(sessions || [])].sort((a, b) => {
+    const ta = new Date(a.last_message_at || a.updated_at || 0).getTime();
+    const tb = new Date(b.last_message_at || b.updated_at || 0).getTime();
+    return tb - ta;
+  });
+}
+
+async function refreshSessionEntry(sessionID) {
+  if (!sessionID) return;
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionID)}/entry`);
+    if (response.status === 404) {
+      state.sessions = (state.sessions || []).filter((s) => s.id !== sessionID);
+      renderSessions();
+      updateComposerUI();
+      return;
+    }
+    if (!response.ok) return;
+    const entry = await response.json();
+    const sessions = [...(state.sessions || [])];
+    const idx = sessions.findIndex((s) => s.id === sessionID);
+    if (idx >= 0) {
+      sessions[idx] = entry;
+    } else {
+      sessions.push(entry);
+    }
+    state.sessions = sortSessionsByActivity(sessions);
+    renderSessions();
+    updateComposerUI();
+  } catch (e) {
+    console.warn("refreshSessionEntry failed:", e);
+  }
+}
+
 async function loadSessions() {
   try {
     const response = await fetch("/api/sessions");
@@ -3962,7 +3997,7 @@ async function loadSessions() {
       const stub = localCopy || { id: state.activeSessionId, title: "New session", updated_at: new Date().toISOString() };
       state.sessions = [stub, ...serverSessions.filter((s) => s.id !== state.activeSessionId)];
     } else {
-      state.sessions = serverSessions;
+      state.sessions = sortSessionsByActivity(serverSessions);
     }
 
     renderSessions();

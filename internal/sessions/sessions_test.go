@@ -392,3 +392,52 @@ func TestListOrdersByLastMessageAt(t *testing.T) {
 	}
 	_ = older
 }
+
+func TestListCacheUpdatesSingleEntry(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	raw, err := json.Marshal(map[string]any{
+		"role":      "user",
+		"content":   "first",
+		"timestamp": "2026-01-01T10:00:00Z",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := Session{ID: GenerateID(), Title: "Chat", Model: "test", Messages: []json.RawMessage{raw}}
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	list1, err := store.List()
+	if err != nil || len(list1) != 1 {
+		t.Fatalf("expected 1 cached session, got %v err=%v", list1, err)
+	}
+
+	raw2, _ := json.Marshal(map[string]any{
+		"role":      "user",
+		"content":   "second",
+		"timestamp": "2026-06-01T12:00:00Z",
+	})
+	sess.Messages = append(sess.Messages, raw2)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	entry, err := store.GetListEntry(sess.ID)
+	if err != nil {
+		t.Fatalf("GetListEntry failed: %v", err)
+	}
+	if !entry.LastMessageAt.Equal(time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)) {
+		t.Fatalf("unexpected last_message_at: %v", entry.LastMessageAt)
+	}
+
+	list2, err := store.List()
+	if err != nil || len(list2) != 1 {
+		t.Fatalf("expected 1 cached session after update, got %v", list2)
+	}
+	if list2[0].LastMessageAt != entry.LastMessageAt {
+		t.Fatalf("list cache out of sync with entry")
+	}
+}
