@@ -85,7 +85,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
 const state = {
   models: [],
-  activeModel: localStorage.getItem("ollamabot.mainModel") || "",
+  activeModel: "",
   visionModel: localStorage.getItem("ollamabot.visionModel") || "",
   audioModel: localStorage.getItem("ollamabot.audioModel") || "",
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
@@ -121,7 +121,14 @@ const state = {
   isProcessing: false,
   currentAbortController: null,
   currentApprovalId: null,
+  bootstrapReady: false,
 };
+
+let bootstrapPromise = null;
+
+function waitForBootstrap() {
+  return bootstrapPromise || Promise.resolve();
+}
 
 const els = {
   messages: document.querySelector("#messages"),
@@ -630,7 +637,11 @@ dropZone.addEventListener("drop", (e) => {
   if (files.length > 0) addFiles(files);
 });
 
-els.newSessionBtn.addEventListener("click", () => createSession());
+els.newSessionBtn.addEventListener("click", async () => {
+  await waitForBootstrap();
+  syncActiveModel();
+  await createSession();
+});
 
 if (els.messages) {
   els.messages.addEventListener("click", async (e) => {
@@ -985,20 +996,26 @@ function startRealtimeEvents() {
 }
 
 bootstrap();
+updateComposerUI();
 
 async function bootstrap() {
-  await loadSettings();
-  await loadModels();
-  applySidebarState();
-  requestAnimationFrame(() => document.body.classList.remove("first-load"));
-  await loadSessions();
-  
-  // Ensure at least one session exists - create one if needed
-  await ensureActiveSession();
-  
-  startHealthCheck();
-  startRealtimeEvents();
-  startSessionPolling();
+  bootstrapPromise = (async () => {
+    await loadSettings();
+    await loadModels();
+    applySidebarState();
+    requestAnimationFrame(() => document.body.classList.remove("first-load"));
+    await loadSessions();
+
+    // Ensure at least one session exists - create one if needed
+    await ensureActiveSession();
+
+    startHealthCheck();
+    startRealtimeEvents();
+    startSessionPolling();
+    state.bootstrapReady = true;
+    updateComposerUI();
+  })();
+  await bootstrapPromise;
 }
 
 // Ensures there's always an active session, creating one if necessary
@@ -1558,15 +1575,21 @@ async function loadModels() {
 
 function syncActiveModel() {
   const fromSettings = state.settings?.model_default;
+  const defaultFromList = state.models.find((m) => m.is_default && canBeMain(m))?.name;
+
   if (fromSettings) {
     state.activeModel = fromSettings;
+  } else if (defaultFromList) {
+    state.activeModel = defaultFromList;
   }
+
   if (!state.activeModel || !state.models.some((m) => m.name === state.activeModel)) {
     const preferred = state.models.find((m) => m.is_default && canBeMain(m))
-      || state.models.find((m) => m.name === fromSettings && canBeMain(m))
+      || (fromSettings ? state.models.find((m) => m.name === fromSettings && canBeMain(m)) : null)
       || state.models.find((m) => canBeMain(m));
     state.activeModel = preferred?.name || state.activeModel || "";
   }
+
   if (state.activeModel) {
     localStorage.setItem("ollamabot.mainModel", state.activeModel);
   }
@@ -2081,6 +2104,7 @@ async function sendMessage(event) {
   if (state.isRecording) {
     await stopRecording();
   }
+  await waitForBootstrap();
   const content = els.prompt.value.trim();
   if (content.startsWith("/goal")) {
     els.prompt.value = "";
@@ -2190,6 +2214,9 @@ async function processNextQueueItem() {
     return;
   }
 
+  await waitForBootstrap();
+  syncActiveModel();
+
   state.isProcessing = true;
   updateComposerUI();
 
@@ -2266,6 +2293,8 @@ async function processNextQueueItem() {
   if (!state.activeSessionId || state.activeSessionId.startsWith("client_")) {
     await ensureActiveSession();
   }
+
+  syncActiveModel();
   await saveSession();
 
   let assistant = { role: "assistant", model: state.activeModel || "", channel: "web", content: "", steps: [], streaming: true, waiting: true, metrics: null };
@@ -2606,6 +2635,19 @@ function isAnyAssistantInProgress() {
 
 function updateComposerUI() {
   const processing = state.isProcessing || isAnyAssistantInProgress();
+  const bootstrapping = !state.bootstrapReady;
+  if (els.sendBtn) {
+    els.sendBtn.disabled = bootstrapping;
+    els.sendBtn.title = bootstrapping ? "Loading settings..." : "";
+  }
+  if (bootstrapping) {
+    if (els.cacheState) {
+      els.cacheState.textContent = "loading...";
+      els.cacheState.style.borderColor = "var(--muted)";
+      els.cacheState.style.color = "var(--muted)";
+    }
+    return;
+  }
   if (processing) {
     if (els.skipBtn) els.skipBtn.style.display = "inline-flex";
     if (els.sendBtn) els.sendBtn.textContent = "Queue";
@@ -3753,6 +3795,7 @@ async function loadSessions() {
 
 async function createSession(title = "New session") {
   try {
+    syncActiveModel();
     const response = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -3790,6 +3833,7 @@ async function createSession(title = "New session") {
 // Creates a temporary client-side only session as fallback
 // This ensures the UI always has a session to work with
 async function createClientSession() {
+  syncActiveModel();
   const tempId = "client_" + Date.now();
   const sess = {
     id: tempId,
