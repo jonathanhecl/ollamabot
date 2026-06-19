@@ -1775,6 +1775,14 @@ func simplifyLatex(s string) string {
 	return strings.TrimSpace(s)
 }
 
+const telegramHorizontalRule = "────────────────────"
+
+var reHorizontalRule = regexp.MustCompile(`^\s*(\*{3,}|-{3,}|_{3,})\s*$`)
+
+func isHorizontalRuleLine(line string) bool {
+	return reHorizontalRule.MatchString(line)
+}
+
 // toTelegramHTML converts standard Markdown constructs to Telegram HTML format.
 func toTelegramHTML(text string) string {
 	log.Printf("[Telegram] toTelegramHTML input preview: %s", truncate(text, 120))
@@ -1818,6 +1826,10 @@ func toTelegramHTML(text string) string {
 	// 5. Convert bold
 	reBold := regexp.MustCompile(`\*\*(.+?)\*\*`)
 	text = reBold.ReplaceAllString(text, `<b>$1</b>`)
+
+	// 5b. Convert horizontal rules before italic — ___ would otherwise match _italic_
+	reHR := regexp.MustCompile(`(?m)^\s*(\*{3,}|-{3,}|_{3,})\s*$`)
+	text = reHR.ReplaceAllString(text, telegramHorizontalRule)
 
 	// 6. Convert italic (_italic_)
 	reItalic := regexp.MustCompile(`_(.+?)_`)

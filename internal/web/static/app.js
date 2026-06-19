@@ -3041,6 +3041,10 @@ function renderMarkdown(text) {
       html.push(`${line}\n`);
       continue;
     }
+    if (isHorizontalRule(line)) {
+      html.push("<hr>");
+      continue;
+    }
     if (line.startsWith("### ")) html.push(`<h3>${inlineMd(line.slice(4))}</h3>`);
     else if (line.startsWith("## ")) html.push(`<h2>${inlineMd(line.slice(3))}</h2>`);
     else if (line.startsWith("# ")) html.push(`<h1>${inlineMd(line.slice(2))}</h1>`);
@@ -3093,6 +3097,10 @@ function sanitizeMath(text) {
   // Inline: \(...\)
   text = text.replace(/\\\((.+?)\\\)/g, (_, inner) => simplifyLatex(inner));
   return text;
+}
+
+function isHorizontalRule(line) {
+  return /^\s*(\*{3,}|-{3,}|_{3,})\s*$/.test(line);
 }
 
 function inlineMd(text) {
@@ -4329,6 +4337,9 @@ function renderSimpleMarkdown(md) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
   
+  // Horizontal rules
+  html = html.replace(/^\s*(\*{3,}|-{3,}|_{3,})\s*$/gm, "<hr>");
+
   // Titles
   html = html.replace(/^# (.*?)$/gm, "<h1>$1</h1>");
   html = html.replace(/^## (.*?)$/gm, "<h2>$1</h2>");

@@ -1060,6 +1060,12 @@ pre {
   margin: 0 0 8px;
 }
 
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--line);
+  margin: 12px 0;
+}
+
 .markdown h1,
 .markdown h2,
 .markdown h3 {

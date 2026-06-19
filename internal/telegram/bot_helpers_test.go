@@ -125,12 +125,40 @@ func TestToTelegramHTML(t *testing.T) {
 		{"Escape & < > symbols", "Escape &amp; &lt; &gt; symbols"},
 		{"Inline code `code & < >`", "Inline code <code>code &amp; &lt; &gt;</code>"},
 		{"Code block:\n```go\nfmt.Println(\"<hello>\")\n```", "Code block:\n<pre><code>fmt.Println(\"&lt;hello&gt;\")\n</code></pre>"},
+		{"***", telegramHorizontalRule},
+		{"---", telegramHorizontalRule},
+		{"___", telegramHorizontalRule},
+		{"Before\n***\nAfter", "Before\n" + telegramHorizontalRule + "\nAfter"},
 	}
 
 	for _, tt := range tests {
 		got := toTelegramHTML(tt.input)
 		if got != tt.expected {
 			t.Errorf("toTelegramHTML(%q) = %q; want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestIsHorizontalRuleLine(t *testing.T) {
+	tests := []struct {
+		line string
+		want bool
+	}{
+		{"***", true},
+		{"---", true},
+		{"___", true},
+		{"  ***  ", true},
+		{"****", true},
+		{"**", false},
+		{"* * *", false},
+		{"*** bold", false},
+		{"- item", false},
+	}
+
+	for _, tt := range tests {
+		got := isHorizontalRuleLine(tt.line)
+		if got != tt.want {
+			t.Errorf("isHorizontalRuleLine(%q) = %v; want %v", tt.line, got, tt.want)
 		}
 	}
 }
