@@ -95,6 +95,7 @@ const state = {
   subagentModel: localStorage.getItem("ollamabot.subagentModel") || "",
   messages: [],
   attachments: [],
+  activePlan: null,
   settings: {},
   sessions: [],
   activeSessionId: localStorage.getItem("ollamabot.activeSessionId") || null,
@@ -492,7 +493,7 @@ els.prompt.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("click", (e) => {
-  const preview = e.target.closest(".media-preview.image");
+  const preview = e.target.closest(".media-preview.image, .generated-image[data-url]");
   if (!preview) return;
   const url = preview.dataset.url;
   if (!url) return;
@@ -2340,6 +2341,10 @@ async function processNextQueueItem() {
       tool_plan_confirmation: (value) => {
         showPlanConfirmationCard(value.id, value.summary, value.steps);
       },
+      plan_progress: (value) => {
+        state.activePlan = value?.active_plan || null;
+        renderMessages();
+      },
       media_pre_processing: (value) => {
         // Structured payload: { summary, attachments: [{index, kind, action,
         // model, transcription, language, unreadable, note, description}] }.
@@ -2529,6 +2534,9 @@ async function processNextQueueItem() {
         renderMessages();
       },
       done: (value) => {
+        if (value && Object.prototype.hasOwnProperty.call(value, "active_plan")) {
+          state.activePlan = value.active_plan || null;
+        }
         // Accumulate performance metrics from intermediate Ollama done payloads
         if (value && value.total_duration) {
           if (!assistant.metrics) {
@@ -2781,6 +2789,9 @@ function renderMessages() {
       const isLastStep = idx === steps.length - 1;
       return renderStep(s, effectiveStreaming, isLastStep);
     }).join("");
+    const activePlanHtml = message.role === "assistant" && isLastMsg && state.activePlan && state.activePlan.status === "active"
+      ? renderPlanChecklist(state.activePlan, "progress")
+      : "";
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
     let legacyHtml = "";
     if (!message.steps?.length) {
@@ -2830,7 +2841,7 @@ function renderMessages() {
         ${timeHtml}
       </div>
     `;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${activePlanHtml}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
   }
@@ -2860,13 +2871,22 @@ function renderStep(step, isLive = false, isLastStep = false) {
       const statusLabel = showRunning ? "running..." : "";
       const statusClass = showRunning ? "running" : "";
       let argsText = "";
+      let parsedArgs = null;
       if (step.arguments) {
         try {
-          const parsed = typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments;
-          argsText = JSON.stringify(parsed, null, 2);
+          parsedArgs = typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments;
+          argsText = JSON.stringify(parsedArgs, null, 2);
         } catch {
           argsText = String(step.arguments || "");
         }
+      }
+      if (step.name === "present_plan" && parsedArgs) {
+        return renderPlanChecklist({
+          summary: parsedArgs.summary || "",
+          steps: parsedArgs.steps || [],
+          completed: 0,
+          status: "active",
+        }, "inline");
       }
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
@@ -2878,6 +2898,14 @@ function renderStep(step, isLive = false, isLastStep = false) {
       ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
       return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
+    }
+    case "plan": {
+      return renderPlanChecklist({
+        summary: step.content || "",
+        steps: step.plan_steps || [],
+        completed: step.completed || 0,
+        status: step.status || "active",
+      }, "inline");
     }
     case "image_progress": {
       let status = step.status;
@@ -2892,7 +2920,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
         return `
           <div class="step step-image-progress done">
             <div class="image-gen-completed" style="aspect-ratio: ${w} / ${h};">
-              <img src="${escapeHtml(step.imageURL)}" alt="Generated image" class="generated-image media-preview image" data-url="${escapeHtml(step.imageURL)}" style="aspect-ratio: ${w} / ${h};" />
+              <img src="${escapeHtml(step.imageURL)}" alt="Generated image" class="generated-image" data-url="${escapeHtml(step.imageURL)}" />
             </div>
           </div>
         `;
@@ -3483,19 +3511,48 @@ async function respondToClarification(id, option) {
 
 let planConfirmationInterval = null;
 
+function renderPlanChecklist(plan, variant = "inline") {
+  const summary = plan?.summary || "";
+  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+  const completed = Math.max(0, Math.min(Number(plan?.completed || 0), steps.length));
+  const status = plan?.status || "active";
+  const items = steps.map((step, idx) => {
+    let itemStatus = "pending";
+    if (idx < completed) itemStatus = "done";
+    else if (idx === completed && status === "active") itemStatus = "current";
+    const marker = itemStatus === "done" ? "✓" : itemStatus === "current" ? "●" : "";
+    return `
+      <li class="plan-checklist-item ${itemStatus}">
+        <span class="plan-checklist-marker">${marker}</span>
+        <span class="plan-checklist-text">${escapeHtml(step)}</span>
+      </li>
+    `;
+  }).join("");
+  const summaryHtml = summary ? `<p class="plan-checklist-summary">${escapeHtml(summary)}</p>` : "";
+  const statusHtml = status === "completed"
+    ? `<span class="plan-checklist-status done">Completed</span>`
+    : status === "rejected"
+      ? `<span class="plan-checklist-status rejected">Rejected</span>`
+      : `<span class="plan-checklist-status">Step ${Math.min(completed + 1, steps.length || 1)} of ${steps.length || 1}</span>`;
+  return `
+    <section class="plan-checklist ${variant}">
+      <div class="plan-checklist-head">
+        <span class="plan-checklist-title">Execution Plan</span>
+        ${statusHtml}
+      </div>
+      ${summaryHtml}
+      <ol class="plan-checklist-list">${items}</ol>
+    </section>
+  `;
+}
+
 function showPlanConfirmationCard(id, summary, steps) {
   if (planConfirmationInterval) {
     clearInterval(planConfirmationInterval);
   }
   state.currentPlanConfirmationId = id;
   els.planSummaryText.textContent = summary;
-  els.planStepsContainer.innerHTML = "";
-  
-  steps.forEach(step => {
-    const li = document.createElement("li");
-    li.textContent = step;
-    els.planStepsContainer.appendChild(li);
-  });
+  els.planStepsContainer.innerHTML = renderPlanChecklist({ summary, steps, completed: 0, status: "active" }, "approval");
   
   els.planRejectBtn.onclick = () => {
     respondToPlanConfirmation(id, false);
@@ -3548,11 +3605,18 @@ function clearPlanConfirmation() {
 async function respondToPlanConfirmation(id, approved) {
   clearPlanConfirmation();
   try {
-    await fetch("/api/tools/plan-confirm", {
+    const res = await fetch("/api/tools/plan-confirm", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ id, approved }),
     });
+    if (res.ok) {
+      const data = await res.json();
+      if (Object.prototype.hasOwnProperty.call(data, "active_plan")) {
+        state.activePlan = data.active_plan || null;
+        renderMessages();
+      }
+    }
   } catch (err) {
     console.error("Failed to send plan confirmation response:", err);
   } finally {
@@ -3833,6 +3897,7 @@ async function loadSession(id) {
         localStorage.removeItem("ollamabot.activeSessionId");
         state.messages = [];
         state.attachments = [];
+        state.activePlan = null;
         await createSession();
       }
       return;
@@ -3840,6 +3905,7 @@ async function loadSession(id) {
     const sess = await response.json();
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
+    state.activePlan = sess.active_plan || null;
     state.messages = normalizeRawMessages(sess.messages || []);
     syncActiveModel();
     renderMessages();

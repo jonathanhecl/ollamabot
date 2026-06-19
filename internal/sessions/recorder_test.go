@@ -25,6 +25,26 @@ func TestAppendThinkingStep(t *testing.T) {
 	}
 }
 
+func TestRecorderStoresPresentPlanAsPlanStep(t *testing.T) {
+	rec := &Recorder{}
+	rec.OnToolStart("present_plan", map[string]any{
+		"summary": "Do work",
+		"steps":   []string{"One", "Two"},
+	})
+	rec.OnToolResult("present_plan", "Plan approved by the user. Proceed with the steps.")
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one step, got %d", len(rec.currentTurn.Steps))
+	}
+	step := rec.currentTurn.Steps[0]
+	if step.Type != "plan" || step.Content != "Do work" || step.Status != "done" {
+		t.Fatalf("unexpected plan step: %#v", step)
+	}
+	if len(step.PlanSteps) != 2 || step.PlanSteps[0] != "One" || step.PlanSteps[1] != "Two" {
+		t.Fatalf("unexpected plan steps: %#v", step.PlanSteps)
+	}
+}
+
 func TestFinalizeStepsWithThinkingDeduplicatesLegacyThinking(t *testing.T) {
 	steps := []Step{
 		{Type: "thinking", Content: "streamed", Status: "running"},

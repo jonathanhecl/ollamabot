@@ -20,6 +20,7 @@ var toolNameMapping = map[string]string{
 	"executecommand":         "execute_command",
 	"askclarification":       "ask_clarification",
 	"presentplan":            "present_plan",
+	"completeplanstep":       "complete_plan_step",
 	"generateimage":          "generate_image",
 	"listsessionattachments": "list_session_attachments",
 	"viewsessionattachment":  "view_session_attachment",

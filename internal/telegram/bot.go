@@ -212,50 +212,63 @@ type pendingClarification struct {
 }
 
 type pendingPlanConfirmation struct {
-	ch chan bool
+	ch        chan bool
+	summary   string
+	steps     []string
+	sessionID string
+	chatID    int64
+	messageID int64
+}
+
+type telegramPlanMessage struct {
+	chatID    int64
+	messageID int64
 }
 
 // Bot represents the Telegram polling bot
 type Bot struct {
-	cfg                 config.Config
-	client              *ollama.Client
-	sessions            *sessions.Store
-	sessManager         *SessionManager
-	memoryStore         *memory.Store
-	autoMgr             *agent.AutonomousManager
-	goalMgr             *agent.GoalManager
-	apiBase             string
-	httpClient          *http.Client
-	approvalsMu         sync.Mutex
-	approvals           map[string]chan bool
-	clarificationsMu    sync.Mutex
-	clarifications      map[string]pendingClarification
-	planConfirmationsMu sync.Mutex
-	planConfirmations   map[string]pendingPlanConfirmation
-	sleepMgr            *learning.SleepManager
-	envPath             string
-	msgIDMu             sync.RWMutex
-	msgIDMap            map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
+	cfg                  config.Config
+	client               *ollama.Client
+	sessions             *sessions.Store
+	sessManager          *SessionManager
+	memoryStore          *memory.Store
+	autoMgr              *agent.AutonomousManager
+	goalMgr              *agent.GoalManager
+	apiBase              string
+	httpClient           *http.Client
+	approvalsMu          sync.Mutex
+	approvals            map[string]chan bool
+	clarificationsMu     sync.Mutex
+	clarifications       map[string]pendingClarification
+	planConfirmationsMu  sync.Mutex
+	planConfirmations    map[string]pendingPlanConfirmation
+	planProgressMu       sync.Mutex
+	planProgressMessages map[string]telegramPlanMessage
+	sleepMgr             *learning.SleepManager
+	envPath              string
+	msgIDMu              sync.RWMutex
+	msgIDMap             map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
 }
 
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	token := cfg.TelegramBotToken
 	ms := memory.NewStore(cfg.MemoryPath)
 	return &Bot{
-		cfg:               cfg,
-		client:            client,
-		sessions:          sessions.NewStore(cfg.SessionsPath),
-		sessManager:       NewSessionManager(cfg.SessionsPath),
-		memoryStore:       ms,
-		autoMgr:           agent.NewAutonomousManager(cfg, client, ms),
-		goalMgr:           agent.NewGoalManager(cfg, client),
-		apiBase:           "https://api.telegram.org/bot" + token,
-		httpClient:        &http.Client{Timeout: 40 * time.Second},
-		approvals:         make(map[string]chan bool),
-		clarifications:    make(map[string]pendingClarification),
-		planConfirmations: make(map[string]pendingPlanConfirmation),
-		msgIDMap:          make(map[string]map[int64]int),
-		envPath:           ".env",
+		cfg:                  cfg,
+		client:               client,
+		sessions:             sessions.NewStore(cfg.SessionsPath),
+		sessManager:          NewSessionManager(cfg.SessionsPath),
+		memoryStore:          ms,
+		autoMgr:              agent.NewAutonomousManager(cfg, client, ms),
+		goalMgr:              agent.NewGoalManager(cfg, client),
+		apiBase:              "https://api.telegram.org/bot" + token,
+		httpClient:           &http.Client{Timeout: 40 * time.Second},
+		approvals:            make(map[string]chan bool),
+		clarifications:       make(map[string]pendingClarification),
+		planConfirmations:    make(map[string]pendingPlanConfirmation),
+		planProgressMessages: make(map[string]telegramPlanMessage),
+		msgIDMap:             make(map[string]map[int64]int),
+		envPath:              ".env",
 	}
 }
 
@@ -1021,8 +1034,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			chatID: chatID,
 		},
 		PlanConfirmationHandler: &telegramPlanConfirmationHandler{
-			bot:    b,
-			chatID: chatID,
+			bot:       b,
+			chatID:    chatID,
+			sessionID: sessionID,
 		},
 		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
 			return &telegramStreamAdapter{
@@ -1047,6 +1061,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			if b.sleepMgr != nil {
 				b.sleepMgr.NotifyUserActivity()
 			}
+		},
+		OnPlanProgress: func(sessionID string, plan sessions.SessionPlan) {
+			b.notifyPlanProgress(sessionID, plan)
 		},
 	}, engine.TurnRequest{
 		SessionID:   sessionID,
@@ -2036,8 +2053,9 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 }
 
 type telegramPlanConfirmationHandler struct {
-	bot    *Bot
-	chatID int64
+	bot       *Bot
+	chatID    int64
+	sessionID string
 }
 
 func (h *telegramPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error) {
@@ -2046,7 +2064,11 @@ func (h *telegramPlanConfirmationHandler) RequestPlanApproval(ctx context.Contex
 
 	h.bot.planConfirmationsMu.Lock()
 	h.bot.planConfirmations[planID] = pendingPlanConfirmation{
-		ch: ch,
+		ch:        ch,
+		summary:   summary,
+		steps:     append([]string(nil), steps...),
+		sessionID: h.sessionID,
+		chatID:    h.chatID,
 	}
 	h.bot.planConfirmationsMu.Unlock()
 
@@ -2072,35 +2094,104 @@ func (h *telegramPlanConfirmationHandler) RequestPlanApproval(ctx context.Contex
 		InlineKeyboard: rows,
 	}
 
-	var sb strings.Builder
-	sb.WriteString("📋 *Execution Plan Proposed*\n\n")
-	sb.WriteString(summary)
-	sb.WriteString("\n\n*Steps:*\n")
-	for i, step := range steps {
-		fmt.Fprintf(&sb, "%d. %s\n", i+1, step)
-	}
-
-	text := sb.String()
+	text := sessions.FormatPlanChecklist(summary, steps, 0)
 	msgID, err := h.bot.sendMessageWithMarkup(h.chatID, text, 0, "Markdown", markup)
 	if err != nil {
 		return false, fmt.Errorf("failed to send Telegram plan confirmation request: %w", err)
 	}
+	h.bot.planConfirmationsMu.Lock()
+	pending := h.bot.planConfirmations[planID]
+	pending.messageID = msgID
+	h.bot.planConfirmations[planID] = pending
+	h.bot.planConfirmationsMu.Unlock()
 
 	select {
 	case approved := <-ch:
 		statusText := "❌ *Plan Rejected*"
 		if approved {
+			plan, err := sessions.ActivatePlan(h.bot.sessions, h.sessionID, summary, steps)
+			if err != nil {
+				return false, err
+			}
+			h.bot.rememberPlanMessage(h.sessionID, h.chatID, msgID)
+			text = sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
 			statusText = "✅ *Plan Approved*"
+		} else {
+			_ = sessions.ClearActivePlan(h.bot.sessions, h.sessionID)
+			h.bot.forgetPlanMessage(h.sessionID)
 		}
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "Markdown", nil)
 		return approved, nil
 	case <-ctx.Done():
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* plan proposal cancelled.", "", nil)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* plan proposal cancelled.", "Markdown", nil)
 		return false, ctx.Err()
 	case <-time.After(5 * time.Minute):
+		plan, err := sessions.ActivatePlan(h.bot.sessions, h.sessionID, summary, steps)
+		if err != nil {
+			return false, err
+		}
+		h.bot.rememberPlanMessage(h.sessionID, h.chatID, msgID)
+		text = sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
 		statusText := "⚠️ *Timed out:* auto-approving plan."
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "Markdown", nil)
 		return true, nil
+	}
+}
+
+func (b *Bot) rememberPlanMessage(sessionID string, chatID int64, messageID int64) {
+	if strings.TrimSpace(sessionID) == "" || messageID <= 0 {
+		return
+	}
+	b.planProgressMu.Lock()
+	b.planProgressMessages[sessionID] = telegramPlanMessage{chatID: chatID, messageID: messageID}
+	b.planProgressMu.Unlock()
+}
+
+func (b *Bot) forgetPlanMessage(sessionID string) {
+	b.planProgressMu.Lock()
+	delete(b.planProgressMessages, sessionID)
+	b.planProgressMu.Unlock()
+}
+
+func (b *Bot) notifyPlanProgress(sessionID string, plan sessions.SessionPlan) {
+	text := sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
+	if plan.Status == sessions.PlanStatusCompleted {
+		text += "\n\n✅ *Plan completed*"
+	} else {
+		text += "\n\n➡️ *Progress updated*"
+	}
+
+	b.planProgressMu.Lock()
+	msg, ok := b.planProgressMessages[sessionID]
+	b.planProgressMu.Unlock()
+	if ok && msg.messageID > 0 {
+		if err := b.editMessageText(msg.chatID, msg.messageID, text, "Markdown", nil); err == nil {
+			if plan.Status == sessions.PlanStatusCompleted {
+				b.forgetPlanMessage(sessionID)
+			}
+			return
+		}
+	}
+
+	chatIDStr := ""
+	b.sessManager.mu.RLock()
+	for candidateChatID, mappedSessionID := range b.sessManager.mapping {
+		if mappedSessionID == sessionID {
+			chatIDStr = candidateChatID
+			break
+		}
+	}
+	b.sessManager.mu.RUnlock()
+	if chatIDStr == "" {
+		return
+	}
+	chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+	if err != nil {
+		return
+	}
+	sentID, _ := b.sendMessage(chatID, text, 0, "Markdown")
+	if sentID > 0 && plan.Status != sessions.PlanStatusCompleted {
+		b.rememberPlanMessage(sessionID, chatID, sentID)
 	}
 }
 

@@ -51,10 +51,17 @@ type Server struct {
 	clarificationsMu    sync.Mutex
 	clarifications      map[string]chan string
 	planConfirmationsMu sync.Mutex
-	planConfirmations   map[string]chan bool
+	planConfirmations   map[string]pendingWebPlanConfirmation
 	sleepMgr            *learning.SleepManager
 	activeSessionsMu    sync.Mutex
 	activeSessions      map[string]context.CancelFunc
+}
+
+type pendingWebPlanConfirmation struct {
+	ch        chan bool
+	summary   string
+	steps     []string
+	sessionID string
 }
 
 type ModelView struct {
@@ -148,7 +155,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		memoryStore:       ms,
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]chan string),
-		planConfirmations: make(map[string]chan bool),
+		planConfirmations: make(map[string]pendingWebPlanConfirmation),
 		activeSessions:    make(map[string]context.CancelFunc),
 	}
 }
@@ -663,9 +670,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher: flusher,
 		},
 		PlanConfirmationHandler: &webPlanConfirmationHandler{
-			server:  s,
-			w:       w,
-			flusher: flusher,
+			server:    s,
+			w:         w,
+			flusher:   flusher,
+			sessionID: input.SessionID,
 		},
 		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
 			return &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
@@ -699,6 +707,19 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 				flusher.Flush()
 			}
 		},
+		OnPlanProgress: func(sessionID string, plan sessions.SessionPlan) {
+			writeSSE(w, "plan_progress", map[string]any{
+				"session_id":  sessionID,
+				"active_plan": plan,
+				"completed":   plan.Completed,
+				"status":      plan.Status,
+				"summary":     plan.Summary,
+				"steps":       plan.Steps,
+			})
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
 	}, engine.TurnRequest{
 		SessionID: input.SessionID,
 		Channel:   "web",
@@ -711,9 +732,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	} else {
+		var activePlan *sessions.SessionPlan
+		if input.SessionID != "" {
+			if sess, sessErr := s.sessionStore.Get(input.SessionID); sessErr == nil {
+				activePlan = sess.ActivePlan
+			}
+		}
 		writeSSE(w, "done", map[string]any{
-			"model":  result.ModelUsed,
-			"reason": "stop",
+			"model":       result.ModelUsed,
+			"reason":      "stop",
+			"active_plan": activePlan,
 		})
 		if flusher != nil {
 			flusher.Flush()
@@ -2110,7 +2138,7 @@ func (s *Server) handlePlanConfirm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.planConfirmationsMu.Lock()
-	ch, ok := s.planConfirmations[req.ID]
+	pending, ok := s.planConfirmations[req.ID]
 	s.planConfirmationsMu.Unlock()
 
 	if !ok {
@@ -2118,19 +2146,37 @@ func (s *Server) handlePlanConfirm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var activePlan *sessions.SessionPlan
+	if req.Approved {
+		plan, err := sessions.ActivatePlan(s.sessionStore, pending.sessionID, pending.summary, pending.steps)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		activePlan = &plan
+	} else if strings.TrimSpace(pending.sessionID) != "" {
+		if err := sessions.ClearActivePlan(s.sessionStore, pending.sessionID); err != nil {
+			log.Printf("[Web] Failed to clear rejected plan for session %s: %v", pending.sessionID, err)
+		}
+	}
+
 	// Notify the waiting block
 	select {
-	case ch <- req.Approved:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "processed"})
+	case pending.ch <- req.Approved:
+		writeJSON(w, http.StatusOK, map[string]any{
+			"status":      "processed",
+			"active_plan": activePlan,
+		})
 	default:
 		writeError(w, http.StatusGone, fmt.Errorf("plan confirmation channel was closed or already answered"))
 	}
 }
 
 type webPlanConfirmationHandler struct {
-	server  *Server
-	w       http.ResponseWriter
-	flusher http.Flusher
+	server    *Server
+	w         http.ResponseWriter
+	flusher   http.Flusher
+	sessionID string
 }
 
 func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error) {
@@ -2138,7 +2184,12 @@ func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, su
 	ch := make(chan bool, 1)
 
 	h.server.planConfirmationsMu.Lock()
-	h.server.planConfirmations[planID] = ch
+	h.server.planConfirmations[planID] = pendingWebPlanConfirmation{
+		ch:        ch,
+		summary:   summary,
+		steps:     append([]string(nil), steps...),
+		sessionID: h.sessionID,
+	}
 	h.server.planConfirmationsMu.Unlock()
 
 	defer func() {
@@ -2173,8 +2224,10 @@ func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, su
 				h.flusher.Flush()
 			}
 		case <-ctx.Done():
-			log.Printf("[Web] Plan confirmation cancelled. Defaulting to reject.")
-			return false, ctx.Err()
+			// Keep waiting for the user's card response when possible. The SSE
+			// request may be interrupted while the UI still has the approval card.
+			log.Printf("[Web] Plan confirmation request context closed; continuing until response or timeout.")
+			ctx = context.Background()
 		case <-timeout:
 			log.Printf("[Web] Plan confirmation timed out. Auto-approving.")
 			return true, nil

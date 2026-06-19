@@ -24,6 +24,7 @@ import (
 type StreamHandlerFactory func(recorder *sessions.Recorder, model string) agent.StreamHandler
 type ImageProgressHandlerFactory func(recorder *sessions.Recorder) tools.ImageProgressHandler
 type AttachmentHandlerFactory func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler
+type PlanProgressHandler func(sessionID string, plan sessions.SessionPlan)
 
 type Deps struct {
 	Config       config.Config
@@ -42,6 +43,7 @@ type Deps struct {
 
 	OnSleepActivity func()
 	OnMediaResolved func(router.ResolveResult)
+	OnPlanProgress  func(sessionID string, plan sessions.SessionPlan)
 }
 
 type TurnRequest struct {
@@ -163,6 +165,10 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	}
 	registry.SetSessionsPath(cfg.SessionsPath)
 	registry.SetSessionID(sessionID)
+	registry.SetSessionStore(deps.SessionStore)
+	if deps.OnPlanProgress != nil {
+		registry.SetPlanProgressHandler(deps.OnPlanProgress)
+	}
 	return registry
 }
 

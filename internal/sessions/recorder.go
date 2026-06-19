@@ -166,6 +166,19 @@ func (r *Recorder) OnToolCall(call ollama.ToolCall) {
 func (r *Recorder) OnToolStart(name string, args any) {
 	r.mu.Lock()
 	r.getOrCreateCurrentAssistantMsg()
+	if name == "present_plan" {
+		summary, steps := decodePlanStepArgs(args)
+		r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+			Type:      "plan",
+			Name:      name,
+			Content:   summary,
+			PlanSteps: steps,
+			Status:    "running",
+		})
+		r.mu.Unlock()
+		r.NotifyUpdate(false)
+		return
+	}
 	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{Type: "tool_exec", Name: name, Arguments: args, Status: "running"})
 	r.mu.Unlock()
 	r.NotifyUpdate(false)
@@ -173,6 +186,18 @@ func (r *Recorder) OnToolStart(name string, args any) {
 
 func (r *Recorder) OnToolResult(name string, result string) {
 	r.mu.Lock()
+	if name == "present_plan" {
+		for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
+			if r.currentTurn.Steps[i].Type == "plan" && r.currentTurn.Steps[i].Status == "running" {
+				r.currentTurn.Steps[i].Result = result
+				r.currentTurn.Steps[i].Status = "done"
+				break
+			}
+		}
+		r.mu.Unlock()
+		r.NotifyUpdate(true)
+		return
+	}
 	for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
 		if r.currentTurn.Steps[i].Type == "tool_exec" && r.currentTurn.Steps[i].Name == name && r.currentTurn.Steps[i].Status == "running" {
 			r.currentTurn.Steps[i].Result = result
@@ -182,6 +207,21 @@ func (r *Recorder) OnToolResult(name string, result string) {
 	}
 	r.mu.Unlock()
 	r.NotifyUpdate(true)
+}
+
+func decodePlanStepArgs(args any) (string, []string) {
+	var payload struct {
+		Summary string   `json:"summary"`
+		Steps   []string `json:"steps"`
+	}
+	bytes, err := json.Marshal(args)
+	if err != nil {
+		return "", nil
+	}
+	if err := json.Unmarshal(bytes, &payload); err != nil {
+		return "", nil
+	}
+	return payload.Summary, cleanPlanSteps(payload.Steps)
 }
 
 func (r *Recorder) OnMediaPreProcessing(content string) {}

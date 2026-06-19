@@ -34,6 +34,7 @@ type Session struct {
 	GoalObjective string            `json:"goal_objective,omitempty"`
 	GoalStatus    string            `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
 	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
+	ActivePlan    *SessionPlan      `json:"active_plan,omitempty"`
 }
 
 // IsEmpty returns true if the session contains no messages, no active goals, and no feedback, AND has a default/empty title.
@@ -63,17 +64,19 @@ func IsDefaultTitle(title string) bool {
 
 // Step represents a single step inside an assistant turn (thinking, tool call, tool result, image progress).
 type Step struct {
-	Type      string `json:"type"`
-	Name      string `json:"name,omitempty"`
-	GenID     string `json:"genID,omitempty"`
-	Content   string `json:"content,omitempty"`
-	ImageURL  string `json:"imageURL,omitempty"`
-	Arguments any    `json:"arguments,omitempty"`
-	Result    string `json:"result,omitempty"`
-	Status    string `json:"status,omitempty"`
-	Call      any    `json:"call,omitempty"` // for tool_call steps with full call object
-	Width     int    `json:"width,omitempty"`
-	Height    int    `json:"height,omitempty"`
+	Type      string   `json:"type"`
+	Name      string   `json:"name,omitempty"`
+	GenID     string   `json:"genID,omitempty"`
+	Content   string   `json:"content,omitempty"`
+	PlanSteps []string `json:"plan_steps,omitempty"`
+	Completed int      `json:"completed,omitempty"`
+	ImageURL  string   `json:"imageURL,omitempty"`
+	Arguments any      `json:"arguments,omitempty"`
+	Result    string   `json:"result,omitempty"`
+	Status    string   `json:"status,omitempty"`
+	Call      any      `json:"call,omitempty"` // for tool_call steps with full call object
+	Width     int      `json:"width,omitempty"`
+	Height    int      `json:"height,omitempty"`
 }
 
 // Metrics mirrors Ollama performance metrics stored per assistant turn.
@@ -155,6 +158,7 @@ func cloneSession(s Session) Session {
 		GoalObjective: s.GoalObjective,
 		GoalStatus:    s.GoalStatus,
 		GoalReasoning: s.GoalReasoning,
+		ActivePlan:    cloneSessionPlan(s.ActivePlan),
 	}
 }
 

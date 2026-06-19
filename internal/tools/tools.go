@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 // ApprovalHandler is implemented by clients wishing to approve or deny execution of risky tools.
@@ -30,16 +31,19 @@ type PlanConfirmationHandler interface {
 	RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error)
 }
 
+// PlanProgressHandler is notified when a session plan advances.
+type PlanProgressHandler func(sessionID string, plan sessions.SessionPlan)
+
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
-	enabled              map[string]bool
-	defs                 []ollama.Tool
-	workspace            string
-	memoryStore          *memory.Store
-	client               *ollama.Client
-	embedModel           string
-	todoStore            *TodoStore
-	approvalHandler      ApprovalHandler
+	enabled                 map[string]bool
+	defs                    []ollama.Tool
+	workspace               string
+	memoryStore             *memory.Store
+	client                  *ollama.Client
+	embedModel              string
+	todoStore               *TodoStore
+	approvalHandler         ApprovalHandler
 	clarificationHandler    ClarificationHandler
 	planConfirmationHandler PlanConfirmationHandler
 	planConfirmMode         string
@@ -51,6 +55,8 @@ type Registry struct {
 	attachmentHandler       AttachmentGeneratedHandler
 	sessionID               string
 	sessionsPath            string
+	sessionStore            *sessions.Store
+	planProgressHandler     PlanProgressHandler
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -121,14 +127,24 @@ func (r *Registry) SetSessionsPath(path string) {
 	r.sessionsPath = path
 }
 
+// SetSessionStore assigns the store used by session-aware tools.
+func (r *Registry) SetSessionStore(store *sessions.Store) {
+	r.sessionStore = store
+}
+
+// SetPlanProgressHandler assigns a callback fired when complete_plan_step advances.
+func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
+	r.planProgressHandler = h
+}
+
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string, searchCfg SearchConfig) *Registry {
 	r := &Registry{
-		enabled:     map[string]bool{},
-		workspace:   workspace,
-		memoryStore: memoryStore,
-		client:      client,
-		embedModel:  embedModel,
+		enabled:         map[string]bool{},
+		workspace:       workspace,
+		memoryStore:     memoryStore,
+		client:          client,
+		embedModel:      embedModel,
 		todoStore:       NewTodoStore(),
 		planConfirmMode: "smart",
 		skillsPath:      "skills",
@@ -542,7 +558,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "present_plan",
-			Description: "Present a structured plan to the user for approval before executing a complex multi-step task.",
+			Description: "Present a structured top-level plan to the user for approval before executing a complex multi-step task. After approval, call complete_plan_step exactly once only when each top-level step is fully finished.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -559,6 +575,24 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					},
 				},
 				"required": []string{"summary", "steps"},
+			},
+		},
+	})
+
+	r.enabled["complete_plan_step"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "complete_plan_step",
+			Description: "Mark exactly one top-level approved plan step as completed. Call this only after finishing all sub-work for the current plan step and before moving to the next step.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"note": map[string]any{
+						"type":        "string",
+						"description": "Optional short note describing what was completed for the current top-level plan step.",
+					},
+				},
 			},
 		},
 	})
@@ -994,6 +1028,26 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "Plan rejected by the user. Please stop and ask the user for clarification or propose a new plan.", nil
 		}
 		return "Plan approved by the user. Proceed with the steps.", nil
+	case "complete_plan_step":
+		note, _ := args["note"].(string)
+		store := r.sessionStore
+		if store == nil && strings.TrimSpace(r.sessionsPath) != "" {
+			store = sessions.NewStore(r.sessionsPath)
+		}
+		if store == nil {
+			return "", fmt.Errorf("session store is required to complete a plan step")
+		}
+		if strings.TrimSpace(r.sessionID) == "" {
+			return "", fmt.Errorf("session ID is required to complete a plan step")
+		}
+		plan, message, err := sessions.CompletePlanStep(store, r.sessionID, note)
+		if err != nil {
+			return "", err
+		}
+		if r.planProgressHandler != nil {
+			r.planProgressHandler(r.sessionID, plan)
+		}
+		return message, nil
 	case "generate_image":
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {

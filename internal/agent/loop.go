@@ -222,13 +222,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			planMode = "smart"
 		}
 		if planMode == "always" {
-			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan."
+			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions."
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
 			})
 		} else if planMode == "smart" {
-			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. For simple questions or single-action tasks, you can respond directly without calling 'present_plan'."
+			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions. For simple questions or single-action tasks, you can respond directly without calling 'present_plan'."
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
