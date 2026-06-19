@@ -135,6 +135,10 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - Web UI: deduplica imagen generada vs attachment; reconstruye imageURL al recargar sesion.
 - Tras F5: `ResolveSessionMessages` limpia placeholders `image_progress` sin imagen final; merge de attachments al agrupar mensajes del asistente.
 
+## Orden de sesiones por ultimo mensaje (2026-06-19)
+
+- La lista de sesiones se ordena por `last_message_at` (timestamp del ultimo mensaje), no por `updated_at` del archivo.
+
 ## Web Skills Explorer (2026-06-19)
 
 - API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.

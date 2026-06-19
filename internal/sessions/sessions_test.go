@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestSaveGetDeleteRoundtrip(t *testing.T) {
@@ -344,4 +345,50 @@ func TestEmptySessions(t *testing.T) {
 	if len(list2) != 1 {
 		t.Fatalf("expected List to return 1 session, got %d", len(list2))
 	}
+}
+
+func TestListOrdersByLastMessageAt(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	saveSession := func(title, timestamp string) Session {
+		t.Helper()
+		sess := Session{
+			ID:    GenerateID(),
+			Title: title,
+			Model: "test-model",
+		}
+		raw, err := json.Marshal(map[string]any{
+			"role":      "user",
+			"content":   title,
+			"timestamp": timestamp,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sess.Messages = []json.RawMessage{raw}
+		if err := store.Save(sess); err != nil {
+			t.Fatalf("Save(%q) failed: %v", title, err)
+		}
+		return sess
+	}
+
+	older := saveSession("Older chat", "2026-01-01T10:00:00Z")
+	time.Sleep(5 * time.Millisecond)
+	newer := saveSession("Newer chat", "2026-06-01T10:00:00Z")
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected 2 sessions, got %d", len(list))
+	}
+	if list[0].ID != newer.ID {
+		t.Fatalf("expected newest message session first, got %q before %q", list[0].Title, list[1].Title)
+	}
+	if list[0].LastMessageAt.IsZero() {
+		t.Fatalf("expected last_message_at on listed session")
+	}
+	_ = older
 }

@@ -910,12 +910,14 @@ function startSessionPolling() {
         const fetchedSessions = (await sessResp.json()) || [];
         const currentSessions = state.sessions || [];
         
-        // Check if session list changed (compare length, IDs, titles, or updated_at)
+        // Check if session list changed (compare length, IDs, titles, or last activity)
         let changed = fetchedSessions.length !== currentSessions.length;
         if (!changed) {
           for (let i = 0; i < fetchedSessions.length; i++) {
+            const fetchedAt = fetchedSessions[i].last_message_at || fetchedSessions[i].updated_at;
+            const currentAt = currentSessions[i].last_message_at || currentSessions[i].updated_at;
             if (fetchedSessions[i].id !== currentSessions[i].id || 
-                fetchedSessions[i].updated_at !== currentSessions[i].updated_at ||
+                fetchedAt !== currentAt ||
                 fetchedSessions[i].title !== currentSessions[i].title) {
               changed = true;
               break;
@@ -4194,8 +4196,9 @@ function renderSessions() {
     const btn = document.createElement("button");
     btn.className = `session-item ${sess.id === state.activeSessionId ? "active" : ""}`;
     btn.dataset.id = sess.id;
-    const fullDate = sess.updated_at ? new Date(sess.updated_at).toLocaleString() : "";
-    const relativeDate = sess.updated_at ? formatRelativeTime(sess.updated_at) : "";
+    const activityAt = sess.last_message_at || sess.updated_at;
+    const fullDate = activityAt ? new Date(activityAt).toLocaleString() : "";
+    const relativeDate = activityAt ? formatRelativeTime(activityAt) : "";
     btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span></div><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span></div><div class="session-actions"><button class="session-rename-btn" type="button" title="Rename session">✏️</button><button class="session-delete" type="button" title="Delete session">×</button></div>`;
     els.sessionList.appendChild(btn);
   }

@@ -32,6 +32,7 @@ type Session struct {
 	Feedback      []Feedback        `json:"feedback,omitempty"`
 	CreatedAt     time.Time         `json:"created_at"`
 	UpdatedAt     time.Time         `json:"updated_at"`
+	LastMessageAt time.Time         `json:"last_message_at,omitempty"`
 	GoalObjective string            `json:"goal_objective,omitempty"`
 	GoalStatus    string            `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
 	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
@@ -61,6 +62,38 @@ func IsDefaultTitle(title string) bool {
 		}
 	}
 	return false
+}
+
+// LastMessageAtFromRaw returns the latest non-system message timestamp in a session.
+func LastMessageAtFromRaw(messages []json.RawMessage) time.Time {
+	var latest time.Time
+	for _, raw := range messages {
+		var msg RawMsg
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			continue
+		}
+		if msg.Role == "system" || strings.TrimSpace(msg.Timestamp) == "" {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, msg.Timestamp)
+		if err != nil {
+			continue
+		}
+		if t.After(latest) {
+			latest = t
+		}
+	}
+	return latest
+}
+
+func sessionSortTime(sess Session) time.Time {
+	if !sess.LastMessageAt.IsZero() {
+		return sess.LastMessageAt
+	}
+	if !sess.UpdatedAt.IsZero() {
+		return sess.UpdatedAt
+	}
+	return sess.CreatedAt
 }
 
 // Step represents a single step inside an assistant turn (thinking, tool call, tool result, image progress).
@@ -189,6 +222,7 @@ func cloneSession(s Session) Session {
 		Feedback:      fbCopy,
 		CreatedAt:     s.CreatedAt,
 		UpdatedAt:     s.UpdatedAt,
+		LastMessageAt: s.LastMessageAt,
 		GoalObjective: s.GoalObjective,
 		GoalStatus:    s.GoalStatus,
 		GoalReasoning: s.GoalReasoning,
@@ -228,7 +262,7 @@ func (s *Store) attachmentsDir(id string) string {
 	return filepath.Join(s.sessionDir(id), "attachments")
 }
 
-// List returns all sessions ordered by updated_at descending.
+// List returns all sessions ordered by last_message_at descending.
 func (s *Store) List() ([]Session, error) {
 	cacheMu.Lock()
 	loaded := cacheLoaded[s.dir]
@@ -256,14 +290,31 @@ func (s *Store) List() ([]Session, error) {
 	for _, cachedPtr := range sessionCache[s.dir] {
 		cloned := cloneSession(*cachedPtr)
 		cloned.Messages = nil
+		if cloned.LastMessageAt.IsZero() {
+			if t := s.lastMessageAtFromFile(cloned.ID); !t.IsZero() {
+				cloned.LastMessageAt = t
+			}
+		}
 		list = append(list, cloned)
 	}
 	cacheMu.Unlock()
 
 	sort.Slice(list, func(i, j int) bool {
-		return list[i].UpdatedAt.After(list[j].UpdatedAt)
+		return sessionSortTime(list[i]).After(sessionSortTime(list[j]))
 	})
 	return list, nil
+}
+
+func (s *Store) lastMessageAtFromFile(id string) time.Time {
+	msgsData, err := os.ReadFile(s.messagesPath(id))
+	if err != nil {
+		return time.Time{}
+	}
+	var rawMessages []json.RawMessage
+	if err := json.Unmarshal(msgsData, &rawMessages); err != nil {
+		return time.Time{}
+	}
+	return LastMessageAtFromRaw(rawMessages)
 }
 
 // Get loads a full session including messages with base64 images restored.
@@ -322,6 +373,9 @@ func (s *Store) Save(sess Session) error {
 	sess.UpdatedAt = time.Now()
 	if sess.CreatedAt.IsZero() {
 		sess.CreatedAt = sess.UpdatedAt
+	}
+	if t := LastMessageAtFromRaw(sess.Messages); !t.IsZero() {
+		sess.LastMessageAt = t
 	}
 
 	if sess.IsEmpty() {
