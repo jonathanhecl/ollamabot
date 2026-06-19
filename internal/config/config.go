@@ -278,24 +278,25 @@ func defaultInteractiveConfig(baseURL string) Config {
 func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 
-	baseURL, err := ask(reader, out, "Ollama URL", "http://localhost:11434")
-	if err != nil {
-		return err
-	}
-	normalized, err := NormalizeBaseURL(baseURL)
-	if err != nil {
-		return err
-	}
-
 	serverEnabled, err := askBool(reader, out, "Enable web server", true)
 	if err != nil {
 		return err
 	}
 
-	cfg := defaultInteractiveConfig(normalized)
+	cfg := defaultInteractiveConfig("http://localhost:11434")
 	cfg.ServerEnabled = serverEnabled
 
 	if serverEnabled {
+		baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
+		if err != nil {
+			return err
+		}
+		normalized, err := NormalizeBaseURL(baseURL)
+		if err != nil {
+			return err
+		}
+		cfg.OllamaBaseURL = normalized
+
 		port, err := ask(reader, out, "Web server port", "8080")
 		if err != nil {
 			return err
@@ -330,6 +331,16 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 		}
 		cfg.TelegramBotToken = strings.TrimSpace(token)
 	} else {
+		baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
+		if err != nil {
+			return err
+		}
+		normalized, err := NormalizeBaseURL(baseURL)
+		if err != nil {
+			return err
+		}
+		cfg.OllamaBaseURL = normalized
+
 		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
 		if err != nil {
 			return err

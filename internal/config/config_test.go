@@ -52,7 +52,7 @@ func TestDefaultEnvPath(t *testing.T) {
 
 func TestCreateInteractiveWebOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("http://localhost:11434\ny\n9090\nn\nn\n\n")
+	input := strings.NewReader("y\nhttp://localhost:11434\n9090\nn\nn\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -76,11 +76,30 @@ func TestCreateInteractiveWebOnly(t *testing.T) {
 	if cfg.TelegramBotToken != "" {
 		t.Fatal("telegram token should be empty")
 	}
+	if cfg.OllamaBaseURL != "http://localhost:11434" {
+		t.Fatalf("ollama base url = %q", cfg.OllamaBaseURL)
+	}
+}
+
+func TestCreateInteractiveWebCustomOllamaURL(t *testing.T) {
+	path := t.TempDir() + "/.env"
+	input := strings.NewReader("y\nhttp://192.168.1.10:11434\n8080\nn\nn\n\n")
+	var output strings.Builder
+	if err := CreateInteractive(path, input, &output); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OllamaBaseURL != "http://192.168.1.10:11434" {
+		t.Fatalf("ollama base url = %q", cfg.OllamaBaseURL)
+	}
 }
 
 func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("http://localhost:11434\ny\n8080\ny\ny\nsecret\nbot-token\n")
+	input := strings.NewReader("y\nhttp://localhost:11434\n8080\ny\ny\nsecret\nbot-token\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -105,7 +124,7 @@ func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 
 func TestCreateInteractiveTelegramOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("http://localhost:11434\nn\nbot-token\n")
+	input := strings.NewReader("n\nhttp://192.168.0.50:11434\nbot-token\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -117,6 +136,9 @@ func TestCreateInteractiveTelegramOnly(t *testing.T) {
 	if cfg.ServerEnabled {
 		t.Fatal("web should be disabled")
 	}
+	if cfg.OllamaBaseURL != "http://192.168.0.50:11434" {
+		t.Fatalf("ollama base url = %q", cfg.OllamaBaseURL)
+	}
 	if cfg.TelegramBotToken != "bot-token" {
 		t.Fatalf("telegram token = %q", cfg.TelegramBotToken)
 	}
@@ -124,7 +146,7 @@ func TestCreateInteractiveTelegramOnly(t *testing.T) {
 
 func TestCreateInteractiveAllDefaultsExplicitNoWebNoTelegram(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("http://localhost:11434\nn\n\n")
+	input := strings.NewReader("n\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
