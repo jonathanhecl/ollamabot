@@ -1096,6 +1096,15 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
+	resolved, changed := sessions.ResolveSessionMessages(id, sess.Messages)
+	if changed {
+		sess.Messages = resolved
+		if err := s.sessionStore.Save(sess); err != nil {
+			log.Printf("[Web] Failed to persist resolved image steps for session %s: %v", id, err)
+		}
+	} else {
+		sess.Messages = resolved
+	}
 	writeJSON(w, http.StatusOK, sess)
 }
 

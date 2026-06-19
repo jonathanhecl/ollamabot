@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -122,6 +123,39 @@ type AttachmentMeta struct {
 	Unreadable    bool   `json:"unreadable,omitempty"`
 	Path          string `json:"path,omitempty"`
 	Size          int64  `json:"size,omitempty"`
+}
+
+// ResolveSessionMessages reconciles persisted image_progress steps with generated
+// attachments and returns whether any message payload changed.
+func ResolveSessionMessages(sessionID string, raw []json.RawMessage) ([]json.RawMessage, bool) {
+	if len(raw) == 0 {
+		return raw, false
+	}
+	out := make([]json.RawMessage, 0, len(raw))
+	changed := false
+	for _, item := range raw {
+		var msg RawMsg
+		if err := json.Unmarshal(item, &msg); err != nil {
+			out = append(out, item)
+			continue
+		}
+		if len(msg.Steps) == 0 {
+			out = append(out, item)
+			continue
+		}
+		resolved := FinalizeSteps(ResolveImageProgressSteps(msg.Steps, msg.Attachments, sessionID))
+		msg.Steps = resolved
+		next, err := json.Marshal(msg)
+		if err != nil {
+			out = append(out, item)
+			continue
+		}
+		if !bytes.Equal(next, item) {
+			changed = true
+		}
+		out = append(out, next)
+	}
+	return out, changed
 }
 
 var (

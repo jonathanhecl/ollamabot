@@ -2946,9 +2946,10 @@ function renderStep(step, isLive = false, isLastStep = false) {
     }
     case "image_progress": {
       let status = step.status;
-      if (!status) {
-        if (step.imageURL) status = "done";
-        else if ((step.content || "").toLowerCase().includes("failed")) status = "error";
+      if (step.imageURL) {
+        status = "done";
+      } else if (!status) {
+        if ((step.content || "").toLowerCase().includes("failed")) status = "error";
         else status = "running";
       }
 
@@ -3681,31 +3682,48 @@ function generatedImageURL(sessionId, filename) {
 }
 
 function hydrateImageProgressSteps(steps, sessionId, attachments) {
-  const generatedNames = new Set(
-    (attachments || [])
-      .filter((att) => att.kind === "image" && att.name)
-      .map((att) => att.name)
-  );
-  return (steps || []).map((step) => {
+  const generatedNames = (attachments || [])
+    .filter((att) => att.kind === "image" && att.name?.startsWith("generated_"))
+    .map((att) => att.name);
+  const used = new Set();
+  const hydrated = (steps || []).map((step) => {
     const next = { ...step };
     if (next.type !== "image_progress") {
       return next;
     }
     if (!next.imageURL) {
       for (const name of generatedNames) {
-        if (name.startsWith("generated_")) {
-          next.imageURL = generatedImageURL(sessionId, name);
-          break;
-        }
+        if (used.has(name)) continue;
+        next.imageURL = generatedImageURL(sessionId, name);
+        used.add(name);
+        break;
+      }
+    } else {
+      try {
+        const name = new URL(next.imageURL, window.location.origin).pathname.split("/").pop();
+        if (name) used.add(name);
+      } catch {
+        // ignore invalid URL
       }
     }
-    if (!next.status) {
-      if (next.imageURL) next.status = "done";
-      else if ((next.content || "").toLowerCase().includes("failed")) next.status = "error";
+    if (next.imageURL) {
+      next.status = "done";
+      if (!next.content || next.content.toLowerCase().includes("generating image")) {
+        next.content = "Image generated!";
+      }
+    } else if (!next.status) {
+      if ((next.content || "").toLowerCase().includes("failed")) next.status = "error";
       else next.status = "running";
     }
     return next;
   });
+  return dedupeImageProgressSteps(hydrated);
+}
+
+function dedupeImageProgressSteps(steps) {
+  const hasDoneImage = (steps || []).some((step) => step.type === "image_progress" && step.imageURL);
+  if (!hasDoneImage) return steps || [];
+  return (steps || []).filter((step) => !(step.type === "image_progress" && !step.imageURL));
 }
 
 function getVisibleMessageAttachments(message) {
@@ -3874,10 +3892,18 @@ function groupMessagesAndTools(messages) {
         lastAssistant.content = msg.content;
       }
 
-      // Merge steps
+      // Merge steps and attachments, then reconcile image progress against all generated files.
+      if (msg.attachments?.length) {
+        lastAssistant.attachments = [...(lastAssistant.attachments || []), ...msg.attachments];
+      }
       if (msg.steps && msg.steps.length > 0) {
         lastAssistant.steps = [...lastAssistant.steps, ...msg.steps.map(s => ({ ...s }))];
       }
+      lastAssistant.steps = hydrateImageProgressSteps(
+        lastAssistant.steps || [],
+        state.activeSessionId,
+        lastAssistant.attachments || []
+      );
 
       // Merge streaming/waiting states
       lastAssistant.streaming = lastAssistant.streaming || msg.streaming;

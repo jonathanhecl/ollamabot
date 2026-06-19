@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -76,6 +77,53 @@ func TestRecorderUpdatesExistingPlanStep(t *testing.T) {
 	step = rec.currentTurn.Steps[0]
 	if step.Completed != 1 || step.Status != PlanStatusActive {
 		t.Fatalf("expected synced plan progress, got %#v", step)
+	}
+}
+
+func TestResolveImageProgressStepsRemovesStaleProgress(t *testing.T) {
+	steps := []Step{
+		{Type: "tool_exec", Name: "generate_image"},
+		{Type: "image_progress", Content: "Generating image... 100% (4/4)", Status: "running"},
+	}
+	attachments := []AttachmentMeta{
+		{Name: "generated_20260102_150405_512x512.png", Mime: "image/png", Kind: "image"},
+	}
+	resolved := ResolveImageProgressSteps(steps, attachments, "sess-1")
+	if len(resolved) != 2 {
+		t.Fatalf("expected 2 steps after resolve, got %d: %#v", len(resolved), resolved)
+	}
+	img := resolved[1]
+	if img.Type != "image_progress" || img.Status != "done" || img.ImageURL == "" {
+		t.Fatalf("expected completed image step, got %#v", img)
+	}
+	if strings.Contains(strings.ToLower(img.Content), "generating image") {
+		t.Fatalf("expected generating text cleared, got %q", img.Content)
+	}
+}
+
+func TestResolveSessionMessages(t *testing.T) {
+	rawMsg, err := json.Marshal(RawMsg{
+		Role: "assistant",
+		Steps: []Step{
+			{Type: "image_progress", Content: "Generating image... 100% (4/4)", Status: "running"},
+		},
+		Attachments: []AttachmentMeta{
+			{Name: "generated_20260102_150405_512x512.png", Mime: "image/png", Kind: "image"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, changed := ResolveSessionMessages("sess-1", []json.RawMessage{rawMsg})
+	if !changed {
+		t.Fatal("expected session messages to change")
+	}
+	var msg RawMsg
+	if err := json.Unmarshal(resolved[0], &msg); err != nil {
+		t.Fatal(err)
+	}
+	if len(msg.Steps) != 1 || msg.Steps[0].Status != "done" || msg.Steps[0].ImageURL == "" {
+		t.Fatalf("expected one completed image step, got %#v", msg.Steps)
 	}
 }
 

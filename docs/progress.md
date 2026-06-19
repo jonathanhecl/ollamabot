@@ -133,6 +133,7 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - `AddOrUpdateImageStep` actualiza el mismo step al completar (no solo cuando status=running).
 - `FinalizeSteps` conserva status done/error en steps `image_progress` con imageURL.
 - Web UI: deduplica imagen generada vs attachment; reconstruye imageURL al recargar sesion.
+- Tras F5: `ResolveSessionMessages` limpia placeholders `image_progress` sin imagen final; merge de attachments al agrupar mensajes del asistente.
 
 ## Web Skills Explorer (2026-06-19)
 

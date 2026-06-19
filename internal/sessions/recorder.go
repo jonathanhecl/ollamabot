@@ -73,6 +73,9 @@ func FinalizeSteps(steps []Step) []Step {
 		switch {
 		case step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) != "":
 			out[i].Status = "done"
+			if strings.TrimSpace(out[i].Content) == "" || strings.Contains(strings.ToLower(out[i].Content), "generating image") {
+				out[i].Content = "Image generated!"
+			}
 		case step.Type == "image_progress" && step.Status == "error":
 			out[i].Status = "error"
 		case step.Type == "image_progress":
@@ -82,6 +85,99 @@ func FinalizeSteps(steps []Step) []Step {
 		}
 	}
 	return out
+}
+
+func generationURL(sessionID, filename string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	filename = strings.TrimSpace(filename)
+	if sessionID == "" || filename == "" {
+		return ""
+	}
+	return "/api/sessions/" + sessionID + "/generations/" + filename
+}
+
+func generatedAttachmentNames(attachments []AttachmentMeta) []string {
+	out := make([]string, 0, len(attachments))
+	for _, att := range attachments {
+		if att.Kind != "image" {
+			continue
+		}
+		name := strings.TrimSpace(att.Name)
+		if name == "" || !strings.HasPrefix(name, "generated_") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// ResolveImageProgressSteps links completed generated attachments to image_progress steps
+// and removes stale in-progress placeholders once a final image is known.
+func ResolveImageProgressSteps(steps []Step, attachments []AttachmentMeta, sessionID string) []Step {
+	if len(steps) == 0 {
+		return steps
+	}
+	generated := generatedAttachmentNames(attachments)
+	used := make(map[string]struct{}, len(generated))
+	out := make([]Step, 0, len(steps))
+
+	for _, step := range steps {
+		if step.Type != "image_progress" {
+			out = append(out, step)
+			continue
+		}
+		if strings.TrimSpace(step.ImageURL) == "" {
+			for _, name := range generated {
+				if _, ok := used[name]; ok {
+					continue
+				}
+				step.ImageURL = generationURL(sessionID, name)
+				used[name] = struct{}{}
+				break
+			}
+		} else {
+			if name := filepathBaseFromGenerationURL(step.ImageURL); name != "" {
+				used[name] = struct{}{}
+			}
+		}
+		if strings.TrimSpace(step.ImageURL) != "" {
+			step.Status = "done"
+			if strings.TrimSpace(step.Content) == "" || strings.Contains(strings.ToLower(step.Content), "generating image") {
+				step.Content = "Image generated!"
+			}
+		}
+		out = append(out, step)
+	}
+
+	hasDoneImage := false
+	for _, step := range out {
+		if step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) != "" {
+			hasDoneImage = true
+			break
+		}
+	}
+	if !hasDoneImage {
+		return out
+	}
+	filtered := make([]Step, 0, len(out))
+	for _, step := range out {
+		if step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) == "" {
+			continue
+		}
+		filtered = append(filtered, step)
+	}
+	return filtered
+}
+
+func filepathBaseFromGenerationURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	if idx := strings.LastIndex(rawURL, "/"); idx >= 0 && idx+1 < len(rawURL) {
+		return rawURL[idx+1:]
+	}
+	return rawURL
 }
 
 func FinalizeStepsWithThinking(steps []Step, thinking string) []Step {
@@ -312,14 +408,39 @@ func (r *Recorder) AddOrUpdateImageStep(step Step) {
 			if step.Height > 0 {
 				r.currentTurn.Steps[i].Height = step.Height
 			}
+			if step.Status == "done" && strings.TrimSpace(step.ImageURL) != "" {
+				r.pruneStaleImageProgressLocked()
+			}
 			r.mu.Unlock()
 			r.NotifyUpdate(true)
 			return
 		}
 	}
 	r.currentTurn.Steps = append(r.currentTurn.Steps, step)
+	r.pruneStaleImageProgressLocked()
 	r.mu.Unlock()
 	r.NotifyUpdate(true)
+}
+
+func (r *Recorder) pruneStaleImageProgressLocked() {
+	hasDoneImage := false
+	for _, step := range r.currentTurn.Steps {
+		if step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) != "" {
+			hasDoneImage = true
+			break
+		}
+	}
+	if !hasDoneImage {
+		return
+	}
+	filtered := make([]Step, 0, len(r.currentTurn.Steps))
+	for _, step := range r.currentTurn.Steps {
+		if step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) == "" {
+			continue
+		}
+		filtered = append(filtered, step)
+	}
+	r.currentTurn.Steps = filtered
 }
 
 func (r *Recorder) NotifyUpdate(force bool) {
@@ -461,7 +582,7 @@ func (r *Recorder) snapshotMessagesLocked() []json.RawMessage {
 		} else {
 			turn = r.currentTurn
 		}
-		snapMessages[i].Steps = FinalizeSteps(turn.Steps)
+		snapMessages[i].Steps = FinalizeSteps(ResolveImageProgressSteps(turn.Steps, snapMessages[i].Attachments, r.sessionID))
 		if turn.Metrics.TotalDuration > 0 {
 			metrics := turn.Metrics
 			snapMessages[i].Metrics = &metrics
@@ -570,7 +691,7 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 					AttachmentRefs: orig.AttachmentRefs,
 					ImageKinds:     orig.ImageKinds,
 					Attachments:    orig.Attachments,
-					Steps:          orig.Steps,
+					Steps:          FinalizeSteps(ResolveImageProgressSteps(orig.Steps, orig.Attachments, r.sessionID)),
 					Metrics:        orig.Metrics,
 				}
 				raw, _ := json.Marshal(rm)
@@ -622,7 +743,7 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 			if assistantIdx >= 0 && assistantIdx < len(finalHistory) {
 				thinking = finalHistory[assistantIdx].Thinking
 			}
-			rm.Steps = FinalizeStepsWithThinking(turn.Steps, thinking)
+			rm.Steps = FinalizeStepsWithThinking(ResolveImageProgressSteps(turn.Steps, rm.Attachments, r.sessionID), thinking)
 			if turn.Metrics.TotalDuration > 0 {
 				metrics := turn.Metrics
 				rm.Metrics = &metrics
