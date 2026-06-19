@@ -2,11 +2,20 @@ package sessions
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
+
+// isInjectedContextMessage reports whether a system message was injected at
+// request time for the agent (attachments/uploads context) and must not be
+// persisted in the session timeline.
+func isInjectedContextMessage(content string) bool {
+	return strings.Contains(content, "The current session contains the following attachments") ||
+		strings.Contains(content, "The user has uploaded the following files to this session")
+}
 
 // TurnSnapshot holds the steps and metrics for one assistant turn.
 type TurnSnapshot struct {
@@ -413,6 +422,9 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 	uaIdx := 0
 	out := make([]json.RawMessage, 0, len(finalHistory))
 	for _, msg := range finalHistory {
+		if msg.Role == "system" && isInjectedContextMessage(msg.Content) {
+			continue
+		}
 		msgTimestamp := ""
 		if msg.Role == "user" || msg.Role == "assistant" {
 			if uaIdx < len(userAssistantTimestamps) {

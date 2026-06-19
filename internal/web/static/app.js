@@ -2722,6 +2722,7 @@ function renderMessages() {
   let msgIdx = 0;
   for (const message of grouped) {
     if (message.role === "system") {
+      if (isInternalSystemMessage(message.content)) continue;
       const div = document.createElement("article");
       div.className = `message system`;
       div.innerHTML = `<div class="message-content">${renderMarkdown(message.content)}</div>`;
@@ -2924,6 +2925,14 @@ function renderLegacyToolResult(tr) {
     </details>
   ` : "";
   return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(tr.name || "unknown")} <span class="step-tool-status ${statusClass}">${status}</span></summary>${resultHtml}</details>`;
+}
+
+function isInternalSystemMessage(content) {
+  if (!content) return false;
+  return (
+    content.includes("The current session contains the following attachments") ||
+    content.includes("The user has uploaded the following files to this session")
+  );
 }
 
 function addSystemMessage(content) {
@@ -3525,7 +3534,10 @@ async function respondToPlanConfirmation(id, approved) {
 }
 
 function normalizeRawMessages(rawMessages) {
-  return (rawMessages || []).map((m) => {
+  return (rawMessages || []).filter((m) => {
+    const msg = typeof m === "string" ? JSON.parse(m) : m;
+    return !(msg.role === "system" && isInternalSystemMessage(msg.content || ""));
+  }).map((m) => {
     const msg = typeof m === "string" ? JSON.parse(m) : m;
     let steps = (msg.steps || []).map((s) => {
       const { status, ...rest } = s;
