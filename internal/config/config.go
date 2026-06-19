@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -227,27 +228,120 @@ func Exists(path string) bool {
 	return err == nil
 }
 
+// DefaultEnvPath returns the .env path next to the running executable.
+func DefaultEnvPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ".env"
+	}
+	return filepath.Join(filepath.Dir(exe), ".env")
+}
+
+func defaultInteractiveConfig(baseURL string) Config {
+	return Config{
+		OllamaBaseURL:                baseURL,
+		OllamaDefaultModel:           "",
+		OllamaProbeModels:            nil,
+		OllamaModelVision:            "",
+		OllamaModelAudio:             "",
+		OllamaModelEmbed:             "",
+		OllamaModelImage:             "",
+		OllamaModelLearning:          "",
+		OllamaModelSubagent:          "",
+		OllamaImageSteps:             4,
+		OllamaThinkEnabled:           true,
+		ServerEnabled:                false,
+		ServerPort:                   "8080",
+		ServerPassword:               "",
+		ServerExposeNetwork:          false,
+		SessionAutoName:              true,
+		TelegramSessionExpiryMin:     30,
+		TelegramBotToken:             "",
+		TelegramAuthorizedIDs:        nil,
+		TelegramStartupNotification:  false,
+		PlanConfirmation:             "smart",
+		WorkspaceRaw:                 "workspace",
+		SessionsPathRaw:              "sessions",
+		MemoryPathRaw:                "memory",
+		SkillsPathRaw:                "skills",
+		SleepModeEnabled:             false,
+		SleepModeInactivityThreshold: "30m",
+		SleepModeResumeDelay:         "10m",
+		SleepModeSubagentsEnabled:    false,
+		WebSearchEnabled:             false,
+		SearchProviders:              []string{"ddg"},
+		BraveSearchAPIKey:            "",
+		TavilyAPIKey:                 "",
+	}
+}
+
 func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
+
 	baseURL, err := ask(reader, out, "Ollama URL", "http://localhost:11434")
 	if err != nil {
 		return err
 	}
-	webAnswer, err := ask(reader, out, "Enable server? (y/n)", "y")
+	normalized, err := NormalizeBaseURL(baseURL)
 	if err != nil {
 		return err
 	}
-	port, err := ask(reader, out, "Server port", "8080")
+
+	serverEnabled, err := askBool(reader, out, "Enable web server", true)
 	if err != nil {
 		return err
 	}
-	serverEnabled := parseBool(webAnswer)
-	webPort := strings.TrimPrefix(strings.TrimSpace(port), ":")
-	if webPort == "" {
-		webPort = "8080"
+
+	cfg := defaultInteractiveConfig(normalized)
+	cfg.ServerEnabled = serverEnabled
+
+	if serverEnabled {
+		port, err := ask(reader, out, "Web server port", "8080")
+		if err != nil {
+			return err
+		}
+		webPort := strings.TrimPrefix(strings.TrimSpace(port), ":")
+		if webPort == "" {
+			webPort = "8080"
+		}
+		cfg.ServerPort = webPort
+
+		exposeNetwork, err := askBool(reader, out, "Expose web server on the network (0.0.0.0)", false)
+		if err != nil {
+			return err
+		}
+		cfg.ServerExposeNetwork = exposeNetwork
+
+		usePassword, err := askBool(reader, out, "Protect web server with a password", false)
+		if err != nil {
+			return err
+		}
+		if usePassword {
+			password, err := ask(reader, out, "Web server password", "")
+			if err != nil {
+				return err
+			}
+			cfg.ServerPassword = password
+		}
+
+		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
+		if err != nil {
+			return err
+		}
+		cfg.TelegramBotToken = strings.TrimSpace(token)
+	} else {
+		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
+		if err != nil {
+			return err
+		}
+		cfg.TelegramBotToken = strings.TrimSpace(token)
 	}
-	content := fmt.Sprintf("OLLAMA_BASE_URL=%s\nSERVER_ENABLED=%t\nSERVER_PORT=%s\nWEB_SEARCH_ENABLED=false\nSERVER_EXPOSE_NETWORK=true\nOLLAMA_PROBE_MODELS=\nOLLAMA_DEFAULT_MODEL=\nTELEGRAM_BOT_TOKEN=\nTELEGRAM_AUTHORIZED_IDS=\nTELEGRAM_SESSION_EXPIRY_MIN=30\nWORKSPACE_PATH=workspace\nSESSIONS_PATH=sessions\nMEMORY_PATH=memory\nSKILLS_PATH=skills\n", baseURL, serverEnabled, webPort)
-	return os.WriteFile(path, []byte(content), 0o600)
+
+	if !cfg.ServerEnabled && cfg.TelegramBotToken == "" {
+		fmt.Fprintln(out, "No channels configured. Saving .env with default values — edit the file to enable web or Telegram later.")
+	}
+
+	return SaveBasic(path, cfg)
 }
 
 func SaveBasic(path string, cfg Config) error {
@@ -381,6 +475,18 @@ func ask(reader *bufio.Reader, out io.Writer, label, fallback string) (string, e
 		return fallback, nil
 	}
 	return value, nil
+}
+
+func askBool(reader *bufio.Reader, out io.Writer, label string, fallback bool) (bool, error) {
+	fallbackLabel := "y"
+	if !fallback {
+		fallbackLabel = "n"
+	}
+	answer, err := ask(reader, out, label+" (y/n)", fallbackLabel)
+	if err != nil {
+		return false, err
+	}
+	return parseBool(answer), nil
 }
 
 func NormalizeBaseURL(raw string) (string, error) {

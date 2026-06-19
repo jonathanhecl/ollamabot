@@ -20,7 +20,7 @@ Hecho:
 - Cache JSON de resultados esperados en `internal/cache`.
 - Servidor web local en `internal/web`.
 - `.env.example` con claves iniciales.
-- Ejecucion normal sin parametros: carga `.env`, lo crea interactivamente si falta, y levanta la web si `WEB_ENABLED=true`.
+- Ejecucion normal sin parametros: carga `.env` desde la carpeta del ejecutable, lo crea interactivamente si falta (web, puerto, exposicion, contraseña, token Telegram), y levanta la web y/o Telegram segun configuracion.
 - Configuracion de URL de Ollama desde la web, persistida en `.env`.
 - Modal de modelos en la web en lugar de tabla permanente.
 - Chat web con streaming SSE desde Ollama.

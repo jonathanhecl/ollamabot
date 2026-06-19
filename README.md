@@ -74,7 +74,7 @@ Run with no subcommand (starts web and/or Telegram per `.env`):
 go run ./cmd/ollamabot
 ```
 
-If `.env` is missing, the binary runs an interactive setup (Ollama URL, web server, port).
+If `.env` is missing next to the executable, the binary runs an interactive setup (Ollama URL, web server, port, network exposure, password, Telegram token).
 
 **Telegram-only** (no web server):
 

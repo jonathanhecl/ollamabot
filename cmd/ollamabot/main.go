@@ -71,7 +71,7 @@ func main() {
 
 func run(args []string) error {
 	global := flag.NewFlagSet("ollamabot", flag.ContinueOnError)
-	envPath := global.String("env", ".env", "path to .env file")
+	envPath := global.String("env", config.DefaultEnvPath(), "path to .env file")
 	baseURL := global.String("base-url", "", "override Ollama base URL")
 	versionFlag := global.Bool("version", false, "show version info")
 	if err := global.Parse(args); err != nil {
