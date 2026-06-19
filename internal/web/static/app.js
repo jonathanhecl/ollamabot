@@ -2806,7 +2806,8 @@ function renderMessages() {
 
     div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
     const pending = effectiveWaiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
-    const media = message.attachments?.length ? `<div class="message-media">${message.attachments.map(attachmentPreview).join("")}</div>` : "";
+    const visibleAttachments = getVisibleMessageAttachments(message);
+    const media = visibleAttachments.length ? `<div class="message-media">${visibleAttachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
 
     // Build steps HTML (interleaved thinking / tool blocks).
@@ -2939,7 +2940,9 @@ function renderStep(step, isLive = false, isLastStep = false) {
     case "image_progress": {
       let status = step.status;
       if (!status) {
-        status = step.imageURL ? "done" : "error";
+        if (step.imageURL) status = "done";
+        else if ((step.content || "").toLowerCase().includes("failed")) status = "error";
+        else status = "running";
       }
 
       const w = step.width || 512;
@@ -3662,13 +3665,105 @@ async function respondToPlanConfirmation(id, approved) {
   }
 }
 
+function generatedImageURL(sessionId, filename) {
+  if (!sessionId || !filename) return "";
+  return new URL(
+    `/api/sessions/${encodeURIComponent(sessionId)}/generations/${encodeURIComponent(filename)}`,
+    window.location.origin
+  ).href;
+}
+
+function hydrateImageProgressSteps(steps, sessionId, attachments) {
+  const generatedNames = new Set(
+    (attachments || [])
+      .filter((att) => att.kind === "image" && att.name)
+      .map((att) => att.name)
+  );
+  return (steps || []).map((step) => {
+    const next = { ...step };
+    if (next.type !== "image_progress") {
+      return next;
+    }
+    if (!next.imageURL) {
+      for (const name of generatedNames) {
+        if (name.startsWith("generated_")) {
+          next.imageURL = generatedImageURL(sessionId, name);
+          break;
+        }
+      }
+    }
+    if (!next.status) {
+      if (next.imageURL) next.status = "done";
+      else if ((next.content || "").toLowerCase().includes("failed")) next.status = "error";
+      else next.status = "running";
+    }
+    return next;
+  });
+}
+
+function getVisibleMessageAttachments(message) {
+  const attachments = message.attachments || [];
+  if (message.role !== "assistant" || !attachments.length) {
+    return attachments;
+  }
+  const stepImageURLs = new Set(
+    (message.steps || [])
+      .filter((step) => step.type === "image_progress" && step.imageURL)
+      .map((step) => step.imageURL)
+  );
+  const stepImageNames = new Set(
+    [...stepImageURLs]
+      .map((url) => {
+        try {
+          return new URL(url, window.location.origin).pathname.split("/").pop();
+        } catch {
+          return "";
+        }
+      })
+      .filter(Boolean)
+  );
+  return attachments.filter((att) => {
+    if (att.kind !== "image" || !att.name?.startsWith("generated_")) {
+      return true;
+    }
+    return !stepImageNames.has(att.name);
+  });
+}
+
 function normalizeRawMessages(rawMessages) {
   return (rawMessages || []).filter((m) => {
     const msg = typeof m === "string" ? JSON.parse(m) : m;
     return !(msg.role === "system" && isInternalSystemMessage(msg.content || ""));
   }).map((m) => {
     const msg = typeof m === "string" ? JSON.parse(m) : m;
-    let steps = (msg.steps || []).map((s) => {
+    const attachments = (msg.attachments || []).map((att) => {
+      let url = att.url;
+      if ((!url || url === "undefined") && att.data) {
+        const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
+        url = `data:${mime};base64,${att.data}`;
+      }
+      if ((!url || url === "undefined") && att.kind === "image" && att.name?.startsWith("generated_") && state.activeSessionId) {
+        url = generatedImageURL(state.activeSessionId, att.name);
+      }
+      return {
+        name: att.name || "",
+        mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
+        kind: att.kind || "",
+        data: att.data || "",
+        url: url || "",
+        transcription: att.transcription || "",
+        description: att.description || "",
+        processed_by: att.processed_by || "",
+        processed_at: att.processed_at || "",
+        unreadable: !!att.unreadable,
+        size: att.size || 0,
+        path: att.path || "",
+      };
+    });
+    let steps = hydrateImageProgressSteps(msg.steps || [], state.activeSessionId, attachments).map((s) => {
+      if (s.type === "image_progress") {
+        return s;
+      }
       const { status, ...rest } = s;
       return rest;
     });
@@ -3709,29 +3804,7 @@ function normalizeRawMessages(rawMessages) {
       steps,
       images: msg.images || undefined,
       tool_calls: msg.tool_calls || msg.toolCalls || undefined,
-      attachments: (msg.attachments || []).map((att) => {
-        let url = att.url;
-        if (!url || url === "undefined") {
-          if (att.data) {
-            const mime = att.mime || (att.kind === "audio" ? "audio/wav" : "image/png");
-            url = `data:${mime};base64,${att.data}`;
-          }
-        }
-        return {
-          name: att.name || "",
-          mime: att.mime || (att.kind === "audio" ? "audio/wav" : "image/png"),
-          kind: att.kind || "",
-          data: att.data || "",
-          url: url || "",
-          transcription: att.transcription || "",
-          description: att.description || "",
-          processed_by: att.processed_by || "",
-          processed_at: att.processed_at || "",
-          unreadable: !!att.unreadable,
-          size: att.size || 0,
-          path: att.path || "",
-        };
-      }),
+      attachments,
       streaming: false,
       waiting: false,
       timestamp: msg.timestamp || "",
@@ -3966,15 +4039,22 @@ async function saveSession() {
       channel: msg.channel || undefined,
       type: msg.type || undefined,
       tool_calls: msg.tool_calls || undefined,
-      steps: (msg.steps || []).filter((step) => {
-        if (step.type === "tool_call") {
-          const name = step.call?.function?.name;
-          if (name && (msg.steps || []).some((other) => other.type === "tool_exec" && other.name === name)) {
-            return false;
+      steps: hydrateImageProgressSteps(
+        (msg.steps || []).filter((step) => {
+          if (step.type === "tool_call") {
+            const name = step.call?.function?.name;
+            if (name && (msg.steps || []).some((other) => other.type === "tool_exec" && other.name === name)) {
+              return false;
+            }
           }
+          return true;
+        }),
+        state.activeSessionId,
+        msg.attachments || []
+      ).map((s) => {
+        if (s.type === "image_progress") {
+          return s;
         }
-        return true;
-      }).map((s) => {
         const { status, ...rest } = s;
         return rest;
       }),

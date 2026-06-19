@@ -70,7 +70,16 @@ func FinalizeSteps(steps []Step) []Step {
 	out := make([]Step, len(steps))
 	for i, step := range steps {
 		out[i] = step
-		out[i].Status = ""
+		switch {
+		case step.Type == "image_progress" && strings.TrimSpace(step.ImageURL) != "":
+			out[i].Status = "done"
+		case step.Type == "image_progress" && step.Status == "error":
+			out[i].Status = "error"
+		case step.Type == "image_progress":
+			out[i].Status = "running"
+		default:
+			out[i].Status = ""
+		}
 	}
 	return out
 }
@@ -288,10 +297,20 @@ func (r *Recorder) AddOrUpdateImageStep(step Step) {
 	r.getOrCreateCurrentAssistantMsg()
 	for i := range r.currentTurn.Steps {
 		if r.currentTurn.Steps[i].Type == "image_progress" && r.currentTurn.Steps[i].GenID == step.GenID {
-			if r.currentTurn.Steps[i].Status == "running" {
+			if step.Content != "" {
 				r.currentTurn.Steps[i].Content = step.Content
+			}
+			if step.ImageURL != "" {
 				r.currentTurn.Steps[i].ImageURL = step.ImageURL
+			}
+			if step.Status != "" {
 				r.currentTurn.Steps[i].Status = step.Status
+			}
+			if step.Width > 0 {
+				r.currentTurn.Steps[i].Width = step.Width
+			}
+			if step.Height > 0 {
+				r.currentTurn.Steps[i].Height = step.Height
 			}
 			r.mu.Unlock()
 			r.NotifyUpdate(true)

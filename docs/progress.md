@@ -128,6 +128,12 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - `NormalizePlanSteps` divide listas numeradas mal formadas en pasos individuales.
 - Web UI: un solo widget de progreso vivo; el recorder actualiza el step de plan en lugar de acumular bloques.
 
+## Fix imagen generada reemplaza progreso (2026-06-19)
+
+- `AddOrUpdateImageStep` actualiza el mismo step al completar (no solo cuando status=running).
+- `FinalizeSteps` conserva status done/error en steps `image_progress` con imageURL.
+- Web UI: deduplica imagen generada vs attachment; reconstruye imageURL al recargar sesion.
+
 ## Web Skills Explorer (2026-06-19)
 
 - API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.

@@ -79,6 +79,39 @@ func TestRecorderUpdatesExistingPlanStep(t *testing.T) {
 	}
 }
 
+func TestAddOrUpdateImageStepCompletesInPlace(t *testing.T) {
+	rec := &Recorder{}
+	rec.AddOrUpdateImageStep(Step{
+		Type:    "image_progress",
+		GenID:   "gen_1",
+		Content: "Generating image... 100% (4/4)",
+		Status:  "running",
+		Width:   512,
+		Height:  512,
+	})
+	rec.AddOrUpdateImageStep(Step{
+		Type:     "image_progress",
+		GenID:    "gen_1",
+		Content:  "Image generated!",
+		ImageURL: "/api/sessions/s1/generations/generated_test.png",
+		Status:   "done",
+		Width:    512,
+		Height:   512,
+	})
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one image step, got %d", len(rec.currentTurn.Steps))
+	}
+	step := rec.currentTurn.Steps[0]
+	if step.Status != "done" || step.ImageURL == "" {
+		t.Fatalf("expected completed image step, got %#v", step)
+	}
+	finalized := FinalizeSteps(rec.currentTurn.Steps)
+	if len(finalized) != 1 || finalized[0].Status != "done" {
+		t.Fatalf("expected finalized done status, got %#v", finalized)
+	}
+}
+
 func TestFinalizeStepsWithThinkingDeduplicatesLegacyThinking(t *testing.T) {
 	steps := []Step{
 		{Type: "thinking", Content: "streamed", Status: "running"},
