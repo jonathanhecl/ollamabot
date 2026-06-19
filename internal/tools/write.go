@@ -12,23 +12,36 @@ import (
 // ResolveAndValidatePath resolves rawPath against workspace and checks bounds.
 func ResolveAndValidatePath(workspace, rawPath string) (string, error) {
 	clean := filepath.Clean(rawPath)
-	if strings.Contains(clean, "..") {
+	if filepath.IsAbs(clean) {
+		return "", fmt.Errorf("path not allowed (absolute path)")
+	}
+	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path not allowed (contains ..)")
 	}
-	abs := filepath.Join(workspace, clean)
 
-	wsReal, err := filepath.EvalSymlinks(workspace)
+	wsAbs, err := filepath.Abs(workspace)
 	if err != nil {
-		wsReal = workspace
+		wsAbs = workspace
 	}
+	abs := filepath.Join(wsAbs, clean)
 
-	// Resolve the absolute path
 	absReal, err := filepath.Abs(abs)
 	if err != nil {
 		absReal = abs
 	}
+	wsReal, err := filepath.EvalSymlinks(wsAbs)
+	if err != nil {
+		wsReal = wsAbs
+	}
+	checkPath := absReal
+	checkWorkspace := wsAbs
+	if resolved, err := filepath.EvalSymlinks(absReal); err == nil {
+		checkPath = resolved
+		checkWorkspace = wsReal
+	}
 
-	if !strings.HasPrefix(absReal, wsReal) {
+	rel, err := filepath.Rel(checkWorkspace, checkPath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", fmt.Errorf("path escapes workspace")
 	}
 

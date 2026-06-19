@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
@@ -131,18 +132,19 @@ func TestAutoGenerateSessionTitle(t *testing.T) {
 				SessionsPath:       tempDir,
 			}
 			client := ollama.NewClient(server.URL)
-			bot := NewBot(cfg, client)
-
 			sessID := "test-session-id"
 			sess := sessions.Session{
 				ID:    sessID,
-				Title: "Original Title",
+				Title: "New session",
 			}
-			_ = bot.sessions.Save(sess)
+			store := sessions.NewStore(tempDir)
+			_ = store.Save(sess)
 
-			bot.autoGenerateSessionTitle(context.Background(), sessID, "Some assistant content.")
+			if err := engine.AutoNameSession(context.Background(), cfg, client, store, sessID, "Some assistant content."); err != nil {
+				t.Fatalf("AutoNameSession failed: %v", err)
+			}
 
-			updated, err := bot.sessions.Get(sessID)
+			updated, err := store.Get(sessID)
 			if err != nil {
 				t.Fatalf("failed to retrieve updated session: %v", err)
 			}

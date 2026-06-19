@@ -25,6 +25,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -216,15 +217,15 @@ type pendingPlanConfirmation struct {
 
 // Bot represents the Telegram polling bot
 type Bot struct {
-	cfg              config.Config
-	client           *ollama.Client
-	sessions         *sessions.Store
-	sessManager      *SessionManager
-	memoryStore      *memory.Store
-	autoMgr          *agent.AutonomousManager
-	goalMgr          *agent.GoalManager
-	apiBase          string
-	httpClient       *http.Client
+	cfg                 config.Config
+	client              *ollama.Client
+	sessions            *sessions.Store
+	sessManager         *SessionManager
+	memoryStore         *memory.Store
+	autoMgr             *agent.AutonomousManager
+	goalMgr             *agent.GoalManager
+	apiBase             string
+	httpClient          *http.Client
 	approvalsMu         sync.Mutex
 	approvals           map[string]chan bool
 	clarificationsMu    sync.Mutex
@@ -241,15 +242,15 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	token := cfg.TelegramBotToken
 	ms := memory.NewStore(cfg.MemoryPath)
 	return &Bot{
-		cfg:            cfg,
-		client:         client,
-		sessions:       sessions.NewStore(cfg.SessionsPath),
-		sessManager:    NewSessionManager(cfg.SessionsPath),
-		memoryStore:    ms,
-		autoMgr:        agent.NewAutonomousManager(cfg, client, ms),
-		goalMgr:        agent.NewGoalManager(cfg, client),
-		apiBase:        "https://api.telegram.org/bot" + token,
-		httpClient:     &http.Client{Timeout: 40 * time.Second},
+		cfg:               cfg,
+		client:            client,
+		sessions:          sessions.NewStore(cfg.SessionsPath),
+		sessManager:       NewSessionManager(cfg.SessionsPath),
+		memoryStore:       ms,
+		autoMgr:           agent.NewAutonomousManager(cfg, client, ms),
+		goalMgr:           agent.NewGoalManager(cfg, client),
+		apiBase:           "https://api.telegram.org/bot" + token,
+		httpClient:        &http.Client{Timeout: 40 * time.Second},
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]pendingClarification),
 		planConfirmations: make(map[string]pendingPlanConfirmation),
@@ -482,7 +483,7 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	sess := sessions.Session{
 		ID:        sessionID,
 		Title:     "Telegram Chat (" + chatIDStr + ")",
-		Model:     b.cfg.OllamaDefaultModel,
+		Model:     config.ResolveModel(b.cfg, config.ModelRoleMain),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -505,21 +506,6 @@ var relationshipCheckSchema = map[string]any{
 
 type relationshipResponse struct {
 	Related bool `json:"related"`
-}
-
-var titleGenerationSchema = map[string]any{
-	"type": "object",
-	"properties": map[string]any{
-		"title": map[string]any{
-			"type":        "string",
-			"description": "An extremely short title (2 to 4 words) summarizing the main topic of the conversation context, without quotes, punctuation, or explanations.",
-		},
-	},
-	"required": []string{"title"},
-}
-
-type titleResponse struct {
-	Title string `json:"title"`
 }
 
 func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, newMessage string) bool {
@@ -584,58 +570,6 @@ New User Message:
 	// Fallback parsing for backwards compatibility or model non-compliance
 	ans := strings.ToLower(rawText)
 	return strings.Contains(ans, "yes") || strings.Contains(ans, "true")
-}
-
-func (b *Bot) autoGenerateSessionTitle(ctx context.Context, sessID string, assistantContent string) {
-	log.Printf("[Telegram Auto-Name] Triggered for session ID: %s, Content length: %d", sessID, len(assistantContent))
-	modelToUse := b.cfg.OllamaModelSubagent
-	if strings.TrimSpace(modelToUse) == "" {
-		modelToUse = b.cfg.OllamaDefaultModel
-	}
-	resp, err := b.client.Chat(ctx, ollama.ChatRequest{
-		Model: modelToUse,
-		Messages: []ollama.Message{
-			{
-				Role:    "system",
-				Content: "Summarize the main topic of the text in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with a JSON object containing the title.",
-			},
-			{
-				Role:    "user",
-				Content: assistantContent,
-			},
-		},
-		Format:  titleGenerationSchema,
-		Options: map[string]any{"temperature": 0},
-	})
-	if err != nil {
-		log.Printf("[Telegram Auto-Name] FAILED: %v", err)
-		return
-	}
-
-	rawText := strings.TrimSpace(resp.Message.Content)
-	log.Printf("[Telegram Auto-Name] Model response: %q", rawText)
-
-	var generatedTitle string
-	var titResp titleResponse
-	if err := json.Unmarshal([]byte(rawText), &titResp); err == nil {
-		generatedTitle = titResp.Title
-	} else {
-		// Fallback for non-compliant models
-		generatedTitle = rawText
-	}
-
-	generatedTitle = strings.TrimSpace(generatedTitle)
-	generatedTitle = strings.Trim(generatedTitle, `"'`)
-	generatedTitle = strings.TrimRight(generatedTitle, ".!?")
-	if generatedTitle != "" {
-		log.Printf("[Telegram Auto-Name] Saving generated title: %s", generatedTitle)
-		sess, err := b.sessions.Get(sessID)
-		if err == nil {
-			sess.Title = generatedTitle
-			_ = b.sessions.Save(sess)
-			sessions.NotifyUpdate(sessID)
-		}
-	}
 }
 
 func snapshotPath() string {
@@ -1040,57 +974,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	// Prepare history for resolution (do not modify history yet until we check relationship)
 	tempHistory := append(history, userMsg)
 
-	// 3. Convert session raw messages to runtime format
-	var mediaMessages []MediaMessage
-	for _, h := range tempHistory {
-		var toolCalls []ollama.ToolCall
-		for _, tcRaw := range h.ToolCalls {
-			var tc ollama.ToolCall
-			if err := json.Unmarshal(tcRaw, &tc); err == nil {
-				toolCalls = append(toolCalls, tc)
-			}
-		}
-
-		// Expose persisted audio transcriptions so the shared media pipeline
-		// can sanitize history without re-sending or re-processing audio.
-		var transcriptions []string
-		for _, att := range h.Attachments {
-			if att.Kind == "audio" && strings.TrimSpace(att.Transcription) != "" {
-				transcriptions = append(transcriptions, att.Transcription)
-			}
-		}
-
-		mediaMessages = append(mediaMessages, MediaMessage{
-			Message: ollama.Message{
-				Role:      h.Role,
-				Content:   h.Content,
-				Thinking:  h.Thinking,
-				Images:    h.Images,
-				Name:      h.Name,
-				ToolCalls: toolCalls,
-			},
-			ImageKinds:     h.ImageKinds,
-			Transcriptions: transcriptions,
-		})
-	}
-
-	// 4. Initialize media router and preprocess attachments using the shared
-	// pipeline (same behavior as the web channel).
-	mr := router.New(b.client, router.Config{
-		MainModel:     b.cfg.OllamaDefaultModel,
-		VisionModel:   b.cfg.OllamaModelVision,
-		AudioModel:    b.cfg.OllamaModelAudio,
-		HasCapability: cache.Checker(snapshotPath()),
-	})
-
-	mediaRes, err := mr.ResolveMessages(ctx, mediaMessages)
-	if err != nil {
-		log.Printf("[Telegram] Error resolving media: %v", err)
-		b.sendMessage(chatID, "❌ Error pre-processing media: "+err.Error(), 0, "")
-		return
-	}
-	ollamaMessages := mediaRes.Messages
-
 	// Check if session has expired (inactivity limit) and if new message is related to history
 	expiryMin := b.cfg.TelegramSessionExpiryMin
 	if expiryMin <= 0 {
@@ -1098,7 +981,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 	isExpired := len(sess.Messages) > 0 && time.Since(sess.UpdatedAt) > time.Duration(expiryMin)*time.Minute
 	if isExpired {
-		related := b.checkMessagesRelationship(ctx, history, ollamaMessages[len(ollamaMessages)-1].Content)
+		related := b.checkMessagesRelationship(ctx, history, userMsg.Content)
 		if !related {
 			sessionID = b.startNewSession(chatIDStr)
 			sess, _ = b.sessions.Get(sessionID)
@@ -1106,45 +989,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 
 			// Reset history to contain only the new user message
 			history = []rawMsg{userMsg}
-
-			// Reconstruct ollamaMessages
-			if mediaRes.ContextNote != "" {
-				ollamaMessages = []ollama.Message{
-					{Role: "assistant", Content: mediaRes.ContextNote},
-					ollamaMessages[len(ollamaMessages)-1],
-				}
-			} else {
-				ollamaMessages = []ollama.Message{
-					ollamaMessages[len(ollamaMessages)-1],
-				}
-			}
 		} else {
 			history = tempHistory
 		}
 	} else {
 		history = tempHistory
-	}
-
-	// Persist media pre-processing metadata on the just-sent user message
-	// attachments so the session records which model processed each file.
-	if len(mediaRes.Attachments) > 0 && len(history) > 0 {
-		lastMsg := &history[len(history)-1]
-		now := time.Now().Format(time.RFC3339)
-		for _, ar := range mediaRes.Attachments {
-			if ar.Index < 0 || ar.Index >= len(lastMsg.Attachments) {
-				continue
-			}
-			att := &lastMsg.Attachments[ar.Index]
-			att.ProcessedBy = ar.Model
-			att.ProcessedAt = now
-			if ar.Kind == "audio" {
-				att.Transcription = ar.Transcription
-				att.Unreadable = ar.Unreadable
-			}
-			if ar.Kind == "image" {
-				att.Description = ar.Description
-			}
-		}
 	}
 
 	// Save the user message immediately so that the Web UI gets notified in real-time
@@ -1157,77 +1006,62 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	_ = b.sessions.Save(sess)
 	sessions.NotifyUpdate(sessionID)
 
-	// 8. Instantiate agent registry and loop
-	registry := tools.NewRegistry(b.cfg.WebSearchEnabled, b.cfg.Workspace, b.memoryStore, b.client, b.cfg.OllamaModelEmbed, tools.SearchConfig{
-		Providers:    b.cfg.SearchProviders,
-		BraveAPIKey:  b.cfg.BraveSearchAPIKey,
-		TavilyAPIKey: b.cfg.TavilyAPIKey,
+	turnResult, err := engine.ProcessTurn(ctx, engine.Deps{
+		Config:       b.cfg,
+		Client:       b.client,
+		SessionStore: b.sessions,
+		MemoryStore:  b.memoryStore,
+		CachePath:    snapshotPath(),
+		ApprovalHandler: &telegramApprovalHandler{
+			bot:    b,
+			chatID: chatID,
+		},
+		ClarificationHandler: &telegramClarificationHandler{
+			bot:    b,
+			chatID: chatID,
+		},
+		PlanConfirmationHandler: &telegramPlanConfirmationHandler{
+			bot:    b,
+			chatID: chatID,
+		},
+		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
+			return &telegramStreamAdapter{
+				recorder: recorder,
+				bot:      b,
+				chatID:   chatID,
+			}
+		},
+		ImageProgressFactory: func(recorder *sessions.Recorder) tools.ImageProgressHandler {
+			return &telegramImageProgressHandler{
+				bot:       b,
+				chatID:    chatID,
+				msgIDs:    make(map[string]int64),
+				sessionID: sessionID,
+				onStep:    recorder.AddOrUpdateImageStep,
+			}
+		},
+		AttachmentFactory: func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler {
+			return &telegramAttachmentHandler{recorder: recorder}
+		},
+		OnSleepActivity: func() {
+			if b.sleepMgr != nil {
+				b.sleepMgr.NotifyUserActivity()
+			}
+		},
+	}, engine.TurnRequest{
+		SessionID:   sessionID,
+		Channel:     "telegram",
+		Messages:    engine.MediaMessagesFromRaw(history),
+		Think:       true,
+		BaseHistory: history,
 	})
-	registry.SetApprovalHandler(&telegramApprovalHandler{
-		bot:    b,
-		chatID: chatID,
-	})
-	registry.SetClarificationHandler(&telegramClarificationHandler{
-		bot:    b,
-		chatID: chatID,
-	})
-	registry.SetPlanConfirmationHandler(&telegramPlanConfirmationHandler{
-		bot:    b,
-		chatID: chatID,
-	})
-	a := agent.NewAgent(b.cfg, b.client, registry)
-	recorder := sessions.NewRecorder(b.sessions, sessionID, history, b.cfg.OllamaDefaultModel, "telegram")
-	handler := &telegramStreamAdapter{
-		recorder: recorder,
-		bot:      b,
-		chatID:   chatID,
-	}
-	registry.SetImageProgressHandler(&telegramImageProgressHandler{
-		bot:       b,
-		chatID:    chatID,
-		msgIDs:    make(map[string]int64),
-		sessionID: sessionID,
-		onStep:    recorder.AddOrUpdateImageStep,
-	})
-	registry.SetAttachmentGeneratedHandler(&telegramAttachmentHandler{
-		recorder: recorder,
-	})
-	registry.SetSessionsPath(b.cfg.SessionsPath)
-	registry.SetSessionID(sessionID)
-
-	// Inject uploaded-files context if any files have been uploaded to this session
-	ollamaMessages = b.injectTelegramUploadsContext(sessionID, ollamaMessages)
-	ollamaMessages = b.injectTelegramAttachmentsContext(sessionID, ollamaMessages)
-
-	// Intercept /image command and force image generation
-	lastIdx := len(ollamaMessages) - 1
-	if lastIdx >= 0 && ollamaMessages[lastIdx].Role == "user" {
-		msgContent := strings.TrimSpace(ollamaMessages[lastIdx].Content)
-		if strings.HasPrefix(strings.ToLower(msgContent), "/image ") {
-			prompt := strings.TrimSpace(msgContent[len("/image "):])
-			ollamaMessages[lastIdx].Content = fmt.Sprintf("[SYSTEM FORCE IMAGE GENERATION: You MUST immediately call the 'generate_image' tool. The user has explicitly requested to imagine: %q. Translate this to an optimized, detailed English prompt for the image generation model. Do not return plain text response or start explaining; call the tool first.]", prompt)
-		}
-	}
-
-	think := agent.ShouldThink(b.cfg.OllamaDefaultModel, true, snapshotPath())
-	log.Printf("[Telegram] Running agent model=%q think=%v text_len=%d messages=%d", b.cfg.OllamaDefaultModel, think, len(msg.Text), len(ollamaMessages))
-
-	// 9. Execute agent multi-turn planning & tool calls loop
-	finalHistory, err := a.Run(ctx, b.cfg.OllamaDefaultModel, ollamaMessages, think, handler)
 	if err != nil {
 		log.Printf("[Telegram] Agent loop execution failed: %v", err)
-		if _, saveErr := recorder.SnapshotAndSave(); saveErr != nil {
-			log.Printf("[Telegram] Failed to persist partial session snapshot: %v", saveErr)
-		}
 		b.sendMessage(chatID, "❌ Error during execution: "+err.Error(), 0, "")
 		return
 	}
 
-	// 10. Persist full history details (thinking process and tool results) in session messages
-	newRawMessages, saveErr := recorder.FinalizeAndSave(finalHistory)
-	if saveErr != nil {
-		log.Printf("[Telegram] Failed to persist final session snapshot: %v", saveErr)
-	}
+	newRawMessages := turnResult.SavedMessages
 	sess.Messages = newRawMessages
 
 	// Count user and assistant messages to trigger auto-naming on first exchange
@@ -1243,18 +1077,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		}
 	}
 
-	// 11. Send the final Synthesized text response back to the user
-	var finalAnswer string
-	for i := len(finalHistory) - 1; i >= 0; i-- {
-		if finalHistory[i].Role == "assistant" && strings.TrimSpace(finalHistory[i].Content) != "" {
-			finalAnswer = finalHistory[i].Content
-			break
-		}
-	}
-
-	// Strip any residual thinking tokens (<think>, <thought>, ...) before sending.
-	finalAnswer = agent.CleanThinkingTokens(finalAnswer)
-
+	finalAnswer := turnResult.FinalAnswer
 	if finalAnswer == "" {
 		// No text response (e.g. only an image was generated); nothing more to send.
 		return
@@ -1282,10 +1105,6 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				b.msgIDMu.Unlock()
 			}
 		}
-	}
-
-	if b.cfg.SessionAutoName && sessions.IsDefaultTitle(sess.Title) && finalAnswer != "" {
-		b.autoGenerateSessionTitle(ctx, sessionID, finalAnswer)
 	}
 }
 

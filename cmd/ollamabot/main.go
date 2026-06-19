@@ -138,22 +138,23 @@ func run(args []string) error {
 	ctx := context.Background()
 
 	if len(remaining) == 0 {
+		ms := memory.NewStore(cfg.MemoryPath)
 		var sleepMgr *learning.SleepManager
 		if cfg.SleepModeEnabled {
-			ms := memory.NewStore(cfg.MemoryPath)
 			sleepMgr = learning.NewSleepManager(cfg, client, ms)
 			sleepMgr.Start(ctx)
 		}
 		goalMgr := agent.NewGoalManager(cfg, client)
 		_ = goalMgr.ResumeActiveGoals()
+		autoMgr := agent.NewAutonomousManager(cfg, client, ms)
 
 		hasServer := cfg.ServerEnabled
 		hasTelegram := cfg.TelegramBotToken != ""
 
 		if !hasServer && !hasTelegram {
-			return fmt.Errorf("both Web Server and Telegram Bot are disabled.\n\n" +
-				"To resolve this, edit your .env file at %q and configure at least one of the following:\n" +
-				"  1. Enable the web server by setting: SERVER_ENABLED=true\n" +
+			return fmt.Errorf("both Web Server and Telegram Bot are disabled.\n\n"+
+				"To resolve this, edit your .env file at %q and configure at least one of the following:\n"+
+				"  1. Enable the web server by setting: SERVER_ENABLED=true\n"+
 				"  2. Enable the Telegram bot by setting: TELEGRAM_BOT_TOKEN=your_bot_token_here\n", *envPath)
 		}
 
@@ -182,6 +183,7 @@ func run(args []string) error {
 				srv.SetSleepManager(sleepMgr)
 			}
 			srv.SetGoalManager(goalMgr)
+			srv.SetAutonomousManager(autoMgr)
 			return srv.ListenAndServe()
 		}
 
@@ -336,15 +338,16 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 	}
 	cfg.ServerPort = *port
 
+	ms := memory.NewStore(cfg.MemoryPath)
 	var sleepMgr *learning.SleepManager
 	if cfg.SleepModeEnabled {
-		ms := memory.NewStore(cfg.MemoryPath)
 		sleepMgr = learning.NewSleepManager(cfg, client, ms)
 		sleepMgr.Start(context.Background())
 	}
 
 	goalMgr := agent.NewGoalManager(cfg, client)
 	_ = goalMgr.ResumeActiveGoals()
+	autoMgr := agent.NewAutonomousManager(cfg, client, ms)
 
 	startTelegramBot(cfg, client, sleepMgr, envPath, goalMgr)
 	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
@@ -352,6 +355,7 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		srv.SetSleepManager(sleepMgr)
 	}
 	srv.SetGoalManager(goalMgr)
+	srv.SetAutonomousManager(autoMgr)
 	return srv.ListenAndServe()
 }
 

@@ -21,6 +21,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -34,17 +35,17 @@ import (
 var staticFiles embed.FS
 
 type Server struct {
-	mu               sync.RWMutex
-	cfg              config.Config
-	envPath          string
-	client           *ollama.Client
-	runner           *probe.Runner
-	mediaro          *router.Router
-	cachePath        string
-	sessionStore     *sessions.Store
-	memoryStore      *memory.Store
-	autoMgr          *agent.AutonomousManager
-	goalMgr          *agent.GoalManager
+	mu                  sync.RWMutex
+	cfg                 config.Config
+	envPath             string
+	client              *ollama.Client
+	runner              *probe.Runner
+	mediaro             *router.Router
+	cachePath           string
+	sessionStore        *sessions.Store
+	memoryStore         *memory.Store
+	autoMgr             *agent.AutonomousManager
+	goalMgr             *agent.GoalManager
 	approvalsMu         sync.Mutex
 	approvals           map[string]chan bool
 	clarificationsMu    sync.Mutex
@@ -136,19 +137,15 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 	mr := router.New(client, routerConfig(cfg))
 	ss := sessions.NewStore(cfg.SessionsPath)
 	ms := memory.NewStore(cfg.MemoryPath)
-	am := agent.NewAutonomousManager(cfg, client, ms)
-	gm := agent.NewGoalManager(cfg, client)
 	return &Server{
-		cfg:            cfg,
-		envPath:        envPath,
-		client:         client,
-		runner:         runner,
-		mediaro:        mr,
-		cachePath:      cachePath,
-		sessionStore:   ss,
-		memoryStore:    ms,
-		autoMgr:        am,
-		goalMgr:        gm,
+		cfg:               cfg,
+		envPath:           envPath,
+		client:            client,
+		runner:            runner,
+		mediaro:           mr,
+		cachePath:         cachePath,
+		sessionStore:      ss,
+		memoryStore:       ms,
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]chan string),
 		planConfirmations: make(map[string]chan bool),
@@ -165,6 +162,12 @@ func (s *Server) SetSleepManager(sm *learning.SleepManager) {
 func (s *Server) SetGoalManager(gm *agent.GoalManager) {
 	s.mu.Lock()
 	s.goalMgr = gm
+	s.mu.Unlock()
+}
+
+func (s *Server) SetAutonomousManager(am *agent.AutonomousManager) {
+	s.mu.Lock()
+	s.autoMgr = am
 	s.mu.Unlock()
 }
 
@@ -223,7 +226,10 @@ func (s *Server) ListenAndServe() error {
 		addr = "127.0.0.1" + addr
 	}
 
-	// Start background projects heartbeat ticker
+	// Start background projects heartbeat ticker.
+	if s.autoMgr == nil {
+		s.autoMgr = agent.NewAutonomousManager(cfg, s.client, s.memoryStore)
+	}
 	s.autoMgr.Start(context.Background())
 	defer s.autoMgr.Stop()
 
@@ -451,7 +457,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	if newKey != "***" {
 		s.cfg.BraveSearchAPIKey = newKey
 	}
- 
+
 	newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
 	if newTavilyKey != "***" {
 		s.cfg.TavilyAPIKey = newTavilyKey
@@ -602,21 +608,9 @@ func (s *Server) abortActiveSession(sessionID string) bool {
 }
 
 func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
-	s.mu.RLock()
-	sm := s.sleepMgr
-	s.mu.RUnlock()
-	if sm != nil {
-		sm.NotifyUserActivity()
-	}
-
 	var input ChatRequest
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 		writeError(w, http.StatusBadRequest, err)
-		return
-	}
-	input.Model = strings.TrimSpace(input.Model)
-	if input.Model == "" {
-		writeError(w, http.StatusBadRequest, errors.New("model is required"))
 		return
 	}
 	if len(input.Messages) == 0 {
@@ -626,117 +620,16 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	cfg, client, _, _ := s.deps()
 
-	// Summarise the incoming request
 	lastMsg := input.Messages[len(input.Messages)-1]
 	imageCount := len(lastMsg.Images)
+	model := config.ResolveModel(cfg, config.ModelRoleMain)
 	log.Printf("[Web] Chat request model=%q think=%v text_len=%d messages=%d images=%d",
-		input.Model, input.Think, len(lastMsg.Content), len(input.Messages), imageCount)
-
-	// Build a per-request media router: the main model is the one selected by
-	// the frontend (which may differ from the configured default), and routing
-	// decisions are based on real probed capabilities when available.
-	rcfg := routerConfig(cfg)
-	rcfg.MainModel = input.Model
-	rcfg.HasCapability = cache.Checker(SnapshotPath(s.cachePath))
-	mr := router.New(client, rcfg)
+		model, input.Think, len(lastMsg.Content), len(input.Messages), imageCount)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
-
-	// Pre-process media attachments using role models before sending to main.
-	mediaRes, ollamaMessages, err := resolveMedia(r.Context(), mr, input.Messages, w, flusher)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	// Persist media pre-processing metadata to the session so the timeline
-	// records which model processed each attachment and when.
-	if input.SessionID != "" && mediaRes != nil && len(mediaRes.Attachments) > 0 {
-		sess, serr := s.sessionStore.Get(input.SessionID)
-		if serr == nil && len(sess.Messages) > 0 {
-			var lastMsg sessions.RawMsg
-			if uerr := json.Unmarshal(sess.Messages[len(sess.Messages)-1], &lastMsg); uerr == nil && lastMsg.Role == "user" {
-				now := time.Now().Format(time.RFC3339)
-				for _, ar := range mediaRes.Attachments {
-					if ar.Index >= 0 && ar.Index < len(lastMsg.Attachments) {
-						att := &lastMsg.Attachments[ar.Index]
-						att.ProcessedBy = ar.Model
-						att.ProcessedAt = now
-						if ar.Kind == "audio" {
-							att.Transcription = ar.Transcription
-							att.Unreadable = ar.Unreadable
-						}
-						if ar.Kind == "image" {
-							att.Description = ar.Description
-						}
-					}
-				}
-				if updated, uerr := json.Marshal(lastMsg); uerr == nil {
-					sess.Messages[len(sess.Messages)-1] = updated
-					_ = s.sessionStore.Save(sess)
-					sessions.NotifyUpdate(input.SessionID)
-				}
-			}
-		}
-	}
-
-	var recorder *sessions.Recorder
-	if strings.TrimSpace(input.SessionID) != "" {
-		baseHistory := loadSessionRawMessages(s.sessionStore, input.SessionID)
-		recorder = sessions.NewRecorder(s.sessionStore, input.SessionID, baseHistory, input.Model, "web")
-	}
-
-	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, s.memoryStore, client, cfg.OllamaModelEmbed, tools.SearchConfig{
-		Providers:    cfg.SearchProviders,
-		BraveAPIKey:  cfg.BraveSearchAPIKey,
-		TavilyAPIKey: cfg.TavilyAPIKey,
-	})
-	registry.SetApprovalHandler(&webApprovalHandler{
-		server:  s,
-		w:       w,
-		flusher: flusher,
-	})
-	registry.SetClarificationHandler(&webClarificationHandler{
-		server:  s,
-		w:       w,
-		flusher: flusher,
-	})
-	registry.SetPlanConfirmationHandler(&webPlanConfirmationHandler{
-		server:  s,
-		w:       w,
-		flusher: flusher,
-	})
-	registry.SetImageProgressHandler(&webImageProgressHandler{
-		server:    s,
-		sessionID: input.SessionID,
-		w:         w,
-		flusher:   flusher,
-		recorder:  recorder,
-	})
-	registry.SetAttachmentGeneratedHandler(&webAttachmentHandler{
-		recorder: recorder,
-	})
-	registry.SetSessionsPath(cfg.SessionsPath)
-	registry.SetSessionID(input.SessionID)
-
-	// Inject uploaded-files context if session has uploads
-	if input.SessionID != "" {
-		ollamaMessages = injectUploadsContext(cfg.Workspace, cfg.SessionsPath, input.SessionID, ollamaMessages)
-		ollamaMessages = injectAttachmentsContext(cfg.SessionsPath, input.SessionID, ollamaMessages)
-	}
-
-	// Intercept /image command and force image generation
-	lastIdx := len(ollamaMessages) - 1
-	if lastIdx >= 0 && ollamaMessages[lastIdx].Role == "user" {
-		msgContent := strings.TrimSpace(ollamaMessages[lastIdx].Content)
-		if strings.HasPrefix(strings.ToLower(msgContent), "/image ") {
-			prompt := strings.TrimSpace(msgContent[len("/image "):])
-			ollamaMessages[lastIdx].Content = fmt.Sprintf("[SYSTEM FORCE IMAGE GENERATION: You MUST immediately call the 'generate_image' tool. The user has explicitly requested to imagine: %q. Translate this to an optimized, detailed English prompt for the image generation model. Do not return plain text response or start explaining; call the tool first.]", prompt)
-		}
-	}
 
 	var cancel context.CancelFunc
 	var agentCtx context.Context
@@ -748,27 +641,84 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		agentCtx = r.Context()
 	}
 
-	think := agent.ShouldThink(input.Model, input.Think, SnapshotPath(s.cachePath))
-	log.Printf("[Web] Running agent model=%q think=%v messages=%d", input.Model, think, len(ollamaMessages))
-	finalHistory, err := runChatStream(agentCtx, cfg, client, input.Model, ollamaMessages, think, registry, w, flusher, recorder)
+	s.mu.RLock()
+	sm := s.sleepMgr
+	s.mu.RUnlock()
+
+	result, err := engine.ProcessTurn(agentCtx, engine.Deps{
+		Config:       cfg,
+		Client:       client,
+		SessionStore: s.sessionStore,
+		MemoryStore:  s.memoryStore,
+		CachePath:    s.cachePath,
+		ApprovalHandler: &webApprovalHandler{
+			server:  s,
+			w:       w,
+			flusher: flusher,
+		},
+		ClarificationHandler: &webClarificationHandler{
+			server:  s,
+			w:       w,
+			flusher: flusher,
+		},
+		PlanConfirmationHandler: &webPlanConfirmationHandler{
+			server:  s,
+			w:       w,
+			flusher: flusher,
+		},
+		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
+			return &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
+		},
+		ImageProgressFactory: func(recorder *sessions.Recorder) tools.ImageProgressHandler {
+			return &webImageProgressHandler{
+				server:    s,
+				sessionID: input.SessionID,
+				w:         w,
+				flusher:   flusher,
+				recorder:  recorder,
+			}
+		},
+		AttachmentFactory: func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler {
+			return &webAttachmentHandler{recorder: recorder}
+		},
+		OnSleepActivity: func() {
+			if sm != nil {
+				sm.NotifyUserActivity()
+			}
+		},
+		OnMediaResolved: func(mediaRes router.ResolveResult) {
+			if len(mediaRes.Attachments) == 0 {
+				return
+			}
+			writeSSE(w, "media_pre_processing", map[string]any{
+				"summary":     mediaRes.ContextNote,
+				"attachments": mediaRes.Attachments,
+			})
+			if flusher != nil {
+				flusher.Flush()
+			}
+		},
+	}, engine.TurnRequest{
+		SessionID: input.SessionID,
+		Channel:   "web",
+		Messages:  input.Messages,
+		Think:     input.Think,
+	})
 	if err != nil {
 		log.Printf("[Web] Agent error: %v", err)
-		if recorder != nil {
-			if _, saveErr := recorder.SnapshotAndSave(); saveErr != nil {
-				log.Printf("[Web] Failed to persist partial session snapshot: %v", saveErr)
-			}
-		}
 		writeSSE(w, "error", err.Error())
 		if flusher != nil {
 			flusher.Flush()
 		}
 	} else {
-		if recorder != nil {
-			if _, saveErr := recorder.FinalizeAndSave(finalHistory); saveErr != nil {
-				log.Printf("[Web] Failed to persist final session snapshot: %v", saveErr)
-			}
+		writeSSE(w, "done", map[string]any{
+			"model":  result.ModelUsed,
+			"reason": "stop",
+		})
+		if flusher != nil {
+			flusher.Flush()
 		}
-		log.Printf("[Web] Agent completed model=%q", input.Model)
+		log.Printf("[Web] Agent completed model=%q", result.ModelUsed)
 	}
 }
 
@@ -1085,10 +1035,11 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	cfg := s.config()
 	sess := sessions.Session{
 		ID:    sessions.GenerateID(),
 		Title: strings.TrimSpace(req.Title),
-		Model: strings.TrimSpace(req.Model),
+		Model: config.ResolveModel(cfg, config.ModelRoleMain),
 	}
 	if sess.Title == "" {
 		sess.Title = "New session"
@@ -1126,12 +1077,10 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Title != "" {
 		sess.Title = req.Title
 	}
-	if req.Model != "" {
-		sess.Model = req.Model
-	}
 	if req.Messages != nil {
 		sess.Messages = req.Messages
 	}
+	sess.Model = config.ResolveModel(s.config(), config.ModelRoleMain)
 	if err := s.sessionStore.Save(sess); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
@@ -1187,6 +1136,7 @@ func uploadsDir(workspace, sessionsPath, sessionID string) string {
 // sanitizeUploadName returns a safe filename by stripping path separators and
 // limiting length. The original extension is preserved.
 func sanitizeUploadName(raw string) string {
+	raw = strings.ReplaceAll(raw, "\\", "/")
 	base := filepath.Base(raw)
 	if base == "." || base == "" {
 		base = "file"

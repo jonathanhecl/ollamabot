@@ -1357,7 +1357,6 @@ async function loadSettings() {
 
   if (state.settings.model_default) {
     state.activeModel = state.settings.model_default;
-    localStorage.setItem("ollamabot.mainModel", state.activeModel);
   }
   if (state.settings.model_vision) state.visionModel = state.settings.model_vision;
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
@@ -1451,7 +1450,6 @@ async function saveSettings(event) {
   state.learningModel = data.model_learning || "";
   state.subagentModel = data.model_subagent || "";
 
-  localStorage.setItem("ollamabot.mainModel", state.activeModel);
   localStorage.setItem("ollamabot.visionModel", state.visionModel);
   localStorage.setItem("ollamabot.audioModel", state.audioModel);
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
@@ -1590,9 +1588,6 @@ function syncActiveModel() {
     state.activeModel = preferred?.name || state.activeModel || "";
   }
 
-  if (state.activeModel) {
-    localStorage.setItem("ollamabot.mainModel", state.activeModel);
-  }
   renderActive();
 }
 
@@ -1835,11 +1830,7 @@ function renderModels() {
       const model = button.dataset.model;
       if (role === "main") {
         state.activeModel = model;
-        localStorage.setItem("ollamabot.mainModel", state.activeModel);
         await saveRoleModels();
-        if (state.activeSessionId) {
-          await saveSession();
-        }
         renderActive();
         renderModels();
       } else {
@@ -2167,12 +2158,11 @@ async function sendMessage(event) {
     }
     return;
   }
-  console.log("[sendMessage] Triggered. content_len:", content.length, "attachments:", state.attachments.length, "activeModel:", state.activeModel);
+  console.log("[sendMessage] Triggered. content_len:", content.length, "attachments:", state.attachments.length, "mainModel:", state.settings?.model_default || state.activeModel);
   if (state.attachments.length > 0) {
     console.log("[sendMessage] Attachment kinds:", state.attachments.map(a => a.kind), "data_lens:", state.attachments.map(a => a.data?.length || 0));
   }
-  syncActiveModel();
-  if ((!content && state.attachments.length === 0) || !state.activeModel) return;
+  if (!content && state.attachments.length === 0) return;
 
   // Ensure we have an active session before sending
   if (!state.activeSessionId || !state.sessions.some((s) => s.id === state.activeSessionId)) {
@@ -2215,7 +2205,6 @@ async function processNextQueueItem() {
   }
 
   await waitForBootstrap();
-  syncActiveModel();
 
   state.isProcessing = true;
   updateComposerUI();
@@ -2294,10 +2283,9 @@ async function processNextQueueItem() {
     await ensureActiveSession();
   }
 
-  syncActiveModel();
   await saveSession();
 
-  let assistant = { role: "assistant", model: state.activeModel || "", channel: "web", content: "", steps: [], streaming: true, waiting: true, metrics: null };
+  let assistant = { role: "assistant", model: state.settings?.model_default || state.activeModel || "", channel: "web", content: "", steps: [], streaming: true, waiting: true, metrics: null };
 
   // Insert assistant response directly after the current user query in the messages list
   const idx = state.messages.indexOf(nextItem);
@@ -2314,7 +2302,7 @@ async function processNextQueueItem() {
   const currentMsg = outboundMessages[outboundMessages.length - 1];
   const firstImageData = currentMsg?.images?.[0];
   console.log("[processQueue] Sending to /api/chat/stream:", {
-    model: state.activeModel,
+    model: state.settings?.model_default || state.activeModel,
     totalMessages: outboundMessages.length,
     currentMsg: {
       role: currentMsg?.role,
@@ -2326,14 +2314,11 @@ async function processNextQueueItem() {
     }
   });
 
-  syncActiveModel();
-
   try {
     const response = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: state.activeModel,
         messages: outboundMessages,
         think: els.think.checked,
         session_id: state.activeSessionId || "",
@@ -2593,20 +2578,6 @@ async function processNextQueueItem() {
 
     await loadSession(state.activeSessionId);
     await loadModels();
-
-    // Auto-generate session title if enabled and it's still a default title
-    if (state.settings && state.settings.session_auto_name !== false) {
-      const activeSess = state.sessions.find(s => s.id === state.activeSessionId);
-      const isDefault = activeSess ? isDefaultTitle(activeSess.title) : true;
-      const hadError = assistant.content && (
-        assistant.content.startsWith("Error:") ||
-        assistant.content.includes("\nError:") ||
-        /not found/i.test(assistant.content)
-      );
-      if (isDefault && assistant.content && !hadError) {
-        autoGenerateSessionTitle(assistant.content);
-      }
-    }
 
     state.isProcessing = false;
     state.currentAbortController = null;
@@ -3795,11 +3766,10 @@ async function loadSessions() {
 
 async function createSession(title = "New session") {
   try {
-    syncActiveModel();
     const response = await fetch("/api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title, model: state.activeModel }),
+      body: JSON.stringify({ title }),
     });
     if (!response.ok) {
       console.warn("createSession: server returned non-OK response", response.status);
@@ -3833,12 +3803,11 @@ async function createSession(title = "New session") {
 // Creates a temporary client-side only session as fallback
 // This ensures the UI always has a session to work with
 async function createClientSession() {
-  syncActiveModel();
   const tempId = "client_" + Date.now();
   const sess = {
     id: tempId,
     title: "New session",
-    model: state.activeModel,
+    model: state.settings?.model_default || state.activeModel,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -3875,7 +3844,6 @@ async function loadSession(id) {
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.messages = normalizeRawMessages(sess.messages || []);
     syncActiveModel();
-    await syncSessionModel();
     renderMessages();
     renderAttachments();
     updateContextBar();
@@ -3883,24 +3851,6 @@ async function loadSession(id) {
     els.prompt.focus();
   } catch (e) {
     console.warn("loadSession failed:", e);
-  }
-}
-
-async function syncSessionModel() {
-  if (!state.activeSessionId || state.activeSessionId.startsWith("client_") || !state.activeModel) return;
-  const session = state.sessions.find((s) => s.id === state.activeSessionId);
-  if (!session || session.model === state.activeModel) return;
-  try {
-    const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: state.activeModel }),
-    });
-    if (response.ok) {
-      session.model = state.activeModel;
-    }
-  } catch (e) {
-    console.warn("syncSessionModel failed:", e);
   }
 }
 
@@ -3949,7 +3899,7 @@ async function saveSession() {
     await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages, model: state.activeModel }),
+      body: JSON.stringify({ messages }),
     });
     // No loadSessions() here — the PUT triggers NotifyUpdate on the server,
     // which fires an SSE session_updated event that reloads the list.
@@ -4117,84 +4067,6 @@ function isDefaultTitle(title) {
     }
   }
   return false;
-}
-
-async function autoGenerateSessionTitle(assistantContent) {
-  if (!state.activeSessionId) return;
-  const id = state.activeSessionId;
-  console.log("[Auto-Name] Triggered for session ID:", id, "Content length:", assistantContent?.length);
-  try {
-    const modelToUse = state.settings?.model_subagent || state.settings?.model_default || state.activeModel;
-    if (!modelToUse || !state.models.some((m) => m.name === modelToUse)) {
-      console.warn("[Auto-Name] Skipping: model not available:", modelToUse);
-      return;
-    }
-    const response = await fetch("/api/chat/stream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: modelToUse,
-        messages: [
-          {
-            role: "system",
-            content: "Summarize the main topic of the response in an extremely short title (2 to 4 words). Do not use quotation marks, punctuation, or explanations. Respond with only the title."
-          },
-          {
-            role: "user",
-            content: assistantContent
-          }
-        ],
-        think: false,
-      }),
-    });
-    
-    console.log("[Auto-Name] Response status:", response.status);
-    if (!response.ok || !response.body) {
-      console.warn("[Auto-Name] Failed response from /api/chat/stream:", response.statusText);
-      return;
-    }
-
-    let generatedTitle = "";
-    await readEventStream(response.body, {
-      content: (value) => {
-        generatedTitle += value;
-        console.log("[Auto-Name] Stream chunk content:", value);
-      },
-      done: () => {
-        console.log("[Auto-Name] Server sent 'done' event chunk.");
-      }
-    });
-
-    console.log("[Auto-Name] Stream completely read. Raw title:", generatedTitle);
-    generatedTitle = generatedTitle.trim().replace(/^["']|["']$/g, "").replace(/[.!?]+$/, ""); // strip quotes and trailing punctuation
-    if (generatedTitle) {
-      console.log("[Auto-Name] Saving generated title:", generatedTitle);
-      try {
-        const putResp = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: generatedTitle }),
-        });
-        console.log("[Auto-Name] Save title response status:", putResp.status);
-        if (putResp.ok) {
-          const session = state.sessions.find(s => s.id === id);
-          if (session) {
-            session.title = generatedTitle;
-            console.log("[Auto-Name] Updated active session title in state.sessions:", generatedTitle);
-          }
-          renderSessions();
-        } else {
-          console.warn("[Auto-Name] Failed to save title via PUT:", putResp.statusText);
-        }
-      } catch (err) {
-        console.warn("[Auto-Name] Auto-rename PUT failed:", err);
-      }
-    } else {
-      console.log("[Auto-Name] Generated title was empty, skipping rename.");
-    }
-  } catch (err) {
-    console.warn("[Auto-Name] Auto-rename call overall failed:", err);
-  }
 }
 
 /* ==========================================================================
