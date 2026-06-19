@@ -1,61 +1,137 @@
 # ollamabot
 
-OllamaBot is a modular Go console for local Ollama models. By default, run it
-without parameters: it loads `.env`, creates one interactively if missing, and
-starts the local web UI when enabled.
+Local-first autonomous agent powered by [Ollama](https://ollama.com). One Go process runs the
+agent core; **Web** and **Telegram** are transport channels that talk to the same engine. Chat
+behavior, model choice, tools, sessions, and background jobs do not depend on which channel you use.
 
-## Configuration
+## Architecture
 
-Copy `.env.example` to `.env` and adjust as needed:
+```text
+                    ┌─────────────────────────────────────┐
+                    │         cmd/ollamabot (main)        │
+                    │  config (.env) · sleep · goals · autonomous │
+                    └─────────────────┬───────────────────┘
+                                      │
+          ┌───────────────────────────┼───────────────────────────┐
+          │                           │                           │
+          ▼                           ▼                           ▼
+   internal/web              internal/engine              internal/telegram
+   HTTP · SSE · UI            ProcessTurn (chat core)      polling · keyboards
+          │                           │                           │
+          └───────────────────────────┼───────────────────────────┘
+                                      │
+                    ┌─────────────────┴─────────────────┐
+                    │ agent · router · tools · sessions │
+                    │ memory · probe · config           │
+                    └─────────────────┬─────────────────┘
+                                      ▼
+                              Ollama (local)
+```
+
+| Layer | Packages | Responsibility |
+|-------|----------|----------------|
+| **App engine** | `internal/engine` | Single chat turn: media routing, context injection, tools, recorder, auto-naming |
+| **Agent loop** | `internal/agent` | Streaming completion, tool rounds, context optimization, SOUL/profile |
+| **Model router** | `internal/router` | Vision/audio pre-processing before the main model |
+| **Config** | `internal/config` | `.env` is the runtime source of truth; `ResolveModel(role)` picks models |
+| **Web channel** | `internal/web` | Local UI, settings editor, session browser, SSE streaming |
+| **Telegram channel** | `internal/telegram` | Bot API, media download, inline approvals, chunked replies |
+
+**Web vs Telegram:** same `engine.ProcessTurn` pipeline. The web UI adds configuration panels,
+memory explorer, project dashboard, and richer step/metrics display. Telegram keeps channel-specific
+policies (session expiry, relationship checks, ffmpeg for voice). Neither channel chooses the main
+model at request time—that comes from `OLLAMA_DEFAULT_MODEL` in `.env`.
+
+## Channels (pick at least one)
+
+The agent service needs **at least one channel** to run. You can use web, Telegram, or both — but not neither.
+
+| Mode | `.env` | What starts |
+|------|--------|-------------|
+| Web only | `SERVER_ENABLED=true`, no `TELEGRAM_BOT_TOKEN` | Local UI on `SERVER_PORT` |
+| Telegram only | `SERVER_ENABLED=false`, `TELEGRAM_BOT_TOKEN=...` | Bot in foreground |
+| Both | `SERVER_ENABLED=true` + `TELEGRAM_BOT_TOKEN=...` | Web server + Telegram in background |
+
+If both are disabled, default startup fails with an error asking you to enable one.
+
+**Without a channel:** only maintenance subcommands work — mainly `probe` for checking Ollama models
+and capabilities without starting the agent. Example: `go run ./cmd/ollamabot probe models`.
+
+## Quick start
+
+Copy [`.env.example`](.env.example) to `.env` and set at least:
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
-WEB_ENABLED=true
-WEB_ADDR=:8080
-OLLAMA_PROBE_MODELS=
-OLLAMA_DEFAULT_MODEL=
-TELEGRAM_BOT_TOKEN=
+OLLAMA_DEFAULT_MODEL=your-model:tag
+SERVER_ENABLED=true
+SERVER_PORT=8080
 ```
 
-`TELEGRAM_BOT_TOKEN` and `WEB_ADDR` are reserved for the next phase.
+Run with no subcommand (starts web and/or Telegram per `.env`):
 
-Normal use:
-
-```powershell
+```bash
 go run ./cmd/ollamabot
 ```
 
-If `.env` does not exist, the app asks for Ollama URL, whether to start the web
-server, and the web port.
+If `.env` is missing, the binary runs an interactive setup (Ollama URL, web server, port).
 
-## Commands
+**Telegram-only** (no web server):
 
-```powershell
-go run ./cmd/ollamabot probe models
-go run ./cmd/ollamabot probe snapshot --out docs/probe-cache.json
-go run ./cmd/ollamabot probe chat --model qwen3:8b
-go run ./cmd/ollamabot probe tools --model qwen3:8b
-go run ./cmd/ollamabot probe json --model qwen3:8b
-go run ./cmd/ollamabot probe vision --model qwen3-vl:4b --image C:\path\image.jpg
-go run ./cmd/ollamabot probe thinking --model qwen3:8b
-go run ./cmd/ollamabot probe embeddings --model nomic-embed-text:latest
-go run ./cmd/ollamabot probe audio --model test-gemma4-vision:latest
-go run ./cmd/ollamabot docs generate --out docs
-go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
+```env
+SERVER_ENABLED=false
+TELEGRAM_BOT_TOKEN=your_token
 ```
 
-Generated references live in `docs/ollama-reference.md` and
-`docs/local-model-inventory.md`.
+**Both channels** (default when both are enabled): web on `SERVER_PORT`, Telegram bot in background.
 
-See `docs/README.md` for the project progress log, pending work, Ollama usage
-notes, and local probe results.
+## Model roles
 
-The web UI supports runtime Ollama URL configuration, model selection from a
-modal, streamed chat responses, thinking blocks, multimodal file/paste inputs,
-and visible future tool-call events.
+Configured in `.env` and editable from the web **Manage Models & Roles** UI (writes back to `.env`):
 
-To allow audio recording / clipboard on remote LAN devices in Google Chrome (or other Chromium-based browsers like Edge or Brave):
-1. Navigate to `chrome://flags/#unsafely-treat-insecure-origin-as-secure` on the remote device.
-2. Search for **Insecure origins treated as secure** and set it to **Enabled**.
-3. In the text field, enter the address of your manager (e.g., `http://192.168.1.50:8088`).
-4. Click **Relaunch** to restart the browser. The browser will now treat this LAN address as secure, allowing microphone access.
+| Role | Env variable | Used for |
+|------|----------------|----------|
+| Main | `OLLAMA_DEFAULT_MODEL` | Chat, tools, final answers (required) |
+| Vision | `OLLAMA_MODEL_VISION` | Image pre-processing when set |
+| Audio | `OLLAMA_MODEL_AUDIO` | Audio transcription when set |
+| Subagent | `OLLAMA_MODEL_SUBAGENT` | Session titles, context optimization; falls back to main |
+| Learning | `OLLAMA_MODEL_LEARNING` | Sleep-mode reflection; falls back to main |
+| Embeddings | `OLLAMA_MODEL_EMBED` | Long-term memory search |
+| Image gen | `OLLAMA_MODEL_IMAGE` | `generate_image` tool |
+
+Capabilities are probed via `internal/probe`; missing roles disable features gracefully without user-facing errors.
+
+## CLI commands
+
+```bash
+go run ./cmd/ollamabot probe models
+go run ./cmd/ollamabot probe snapshot --out docs/probe-cache.json
+go run ./cmd/ollamabot probe chat --model <name>
+go run ./cmd/ollamabot probe tools --model <name>
+go run ./cmd/ollamabot probe vision --model <name> --image /path/to/image.jpg
+go run ./cmd/ollamabot probe audio --model <name> --audio /path/to/audio.wav
+go run ./cmd/ollamabot docs generate --out docs
+go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
+```
+
+Generated references: [`docs/ollama-reference.md`](docs/ollama-reference.md),
+[`docs/local-model-inventory.md`](docs/local-model-inventory.md). See [`docs/README.md`](docs/README.md)
+for progress notes and probe results.
+
+## Web UI
+
+- Streamed chat with thinking blocks, tool steps, and metrics
+- Multimodal attachments (image, audio, files)
+- Session sidebar with persisted history under `SESSIONS_PATH`
+- Settings for Ollama URL, model roles, sleep mode, web search, Telegram, paths
+- Optional password (`SERVER_PASSWORD`) and LAN exposure (`SERVER_EXPOSE_NETWORK`)
+
+Runtime model selection is **not** stored in the browser; the UI reflects server config only.
+
+**Chrome / Edge / Brave on LAN:** for microphone or clipboard on a non-HTTPS origin, enable
+`chrome://flags/#unsafely-treat-insecure-origin-as-secure` and add your manager URL
+(e.g. `http://192.168.1.50:8080`), then relaunch.
+
+## Agent guidelines
+
+See [`AGENTS.md`](AGENTS.md) for module layout, lifecycle, and contribution rules for coding agents.

@@ -1,71 +1,139 @@
 # Agents
 
-## Agent Guidelines
+Guidelines for humans and coding agents working on this repository.
 
-### Objective
+## Objective
 
-Modular autonomous agent based on local Ollama models. Detects installed models, evaluates their capabilities via probes, and uses them accordingly. Intended channels are Telegram and a local web UI for quick testing.
+Modular autonomous agent on **local Ollama only**. The product is the **ollamabot process** (`cmd/ollamabot`):
+configuration, chat engine, tools, sessions, sleep, goals, and optional background projects.
+**Web** and **Telegram** are channels—they adapt I/O and UX; they must not own chat logic or
+runtime model policy. The agent service requires **at least one** channel enabled (`SERVER_ENABLED`
+or `TELEGRAM_BOT_TOKEN`). Running with neither fails at startup; `probe` subcommands are the
+exception (Ollama checks without starting web or Telegram).
 
-### Design Principles
+## Architecture
 
-- **Modular**: each capability (chat, vision, audio, tools, embeddings) is a swappable module. The agent does not assume a single model covers everything.
-- **Local-first**: all models run on local Ollama. No external LLM dependencies.
-- **Graceful fallback**: if a capability is unavailable (no model supports it), that feature is silently disabled — no errors surfaced to the user.
-- **No mutable global state**: conversation state lives in the channel (Telegram chat ID, web session), not in the agent.
-
-### Model Router
-
-The agent uses a router to assign the correct model based on input type:
-
-| Role | When used | Fallback |
-|---|---|---|
-| `main` | plain text, history, final response | — (required, needs `completion` + `tools`) |
-| `vision` | image attachments | main if it has vision, otherwise feature is unavailable |
-| `audio` | audio attachments | main if it has audio, otherwise feature is unavailable |
-| `embeddings` | future semantic search | none for now |
-
-When a dedicated role model different from main is configured for vision or audio, the flow is:
-1. The role model analyzes the object and produces a detailed textual description.
-2. That description is injected as context into the message sent to main.
-3. Main drafts the final response using the conversation history and the user's prompt.
-
-### Internal Tools
-
-- Tools are Go functions registered in the agent, not in the model.
-- The model decides to call a tool via `tool_calls`; the agent executes it and returns the result automatically.
-- Each tool must declare: name, description, parameters (JSON Schema), and a Go handler.
-- Security: per-channel tool allowlist, timeouts, and audit log for every invocation.
-- Planned tools: web search, file reading, safe command execution, calendar lookup.
-
-### Memory and Conversations
-
-- Message history is maintained per channel (Telegram chat ID or web session).
-- Each message includes role (`user`, `assistant`, `tool`), content, and timestamp.
-- The context window is trimmed if it exceeds the active model's `context_length`.
-- Long-term memory: pending, via embeddings + semantic search.
-
-### Channels
-
-- **Web**: quick testing interface, no authentication, local only.
-- **Telegram**: primary production channel. One bot per instance. `chat_id` identifies the session.
-
-### Agent Lifecycle
-
-```
-input (user)
-  → router determines active models
-  → media pre-processing if applicable (vision/audio model)
-  → context construction (history + media analysis)
-  → main model call (streaming)
-  → if tool_calls → execute tools → return result to model
-  → final response to user
+```text
+Channels (transport only)
+  web/server.go     → HTTP, SSE, REST, static UI
+  telegram/bot.go   → polling, keyboards, media download, delivery
+        │
+        ▼
+  engine.ProcessTurn   ← single entry for every chat turn (web + telegram)
+        │
+        ├── config.ResolveModel (from .env, not from client)
+        ├── router.ResolveMessages (vision/audio)
+        ├── engine.InjectContext (uploads + attachments)
+        ├── tools.Registry (handlers injected per channel)
+        ├── agent.Run (loop, tools, streaming)
+        └── sessions.Recorder + optional AutoNameSession
 ```
 
-### Implementation Rules
+Background services started once in `cmd/ollamabot/main.go` and shared by channels:
 
-- Each new module goes in `internal/<name>`.
-- Do not add external dependencies without explicit justification.
-- Every new capability must have a probe in `internal/probe` before being used in production.
-- Changes to `.env` are persisted via `config.SaveBasic`.
-- Progress is recorded in `docs/progress.md`.
-- All user-facing interface text, option menus, CLI prompts, console logs, and error messages must be 100% in English.
+| Service | Package | Notes |
+|---------|---------|--------|
+| Sleep manager | `internal/learning` | Runs without web open; `OnSleepActivity` from engine |
+| Goal manager | `internal/agent/goal.go` | Per-session objectives; API + Telegram `/goal` |
+| Autonomous projects | `internal/agent/autonomous.go` | Workspace projects; web UI + notifications |
+
+## Design principles
+
+- **Modular**: chat, vision, audio, tools, embeddings are separate concerns with role-specific models.
+- **Local-first**: all inference via local Ollama. No external LLM APIs.
+- **Graceful fallback**: if no model supports a capability, that feature is disabled silently for users.
+- **Server-authoritative config**: runtime models and roles come from `config.Config` (`.env`).
+  Channels must not send or override `OLLAMA_DEFAULT_MODEL` on chat requests.
+- **No agent-global conversation state**: history lives in `internal/sessions` keyed by session ID
+  (web session or Telegram `chat_id` mapping). The agent loop is stateless between turns.
+
+## Model router
+
+Role assignment is centralized in `config.ResolveModel(cfg, role)` (`internal/config/models.go`).
+The media router (`internal/router`) uses the same config for vision/audio/image steps.
+
+| Role | Env | When used | Fallback |
+|------|-----|-----------|----------|
+| `main` | `OLLAMA_DEFAULT_MODEL` | Text, history, tools, final response | required |
+| `vision` | `OLLAMA_MODEL_VISION` | Image attachments | main if it has vision, else feature off |
+| `audio` | `OLLAMA_MODEL_AUDIO` | Audio attachments | main if it has audio, else feature off |
+| `subagent` | `OLLAMA_MODEL_SUBAGENT` | Session titles, summarization | main |
+| `learning` | `OLLAMA_MODEL_LEARNING` | Sleep-mode reflection | main |
+| `embed` | `OLLAMA_MODEL_EMBED` | Semantic memory | none |
+| `image` | `OLLAMA_MODEL_IMAGE` | Image generation tool | none |
+
+Dedicated vision/audio flow: role model produces text context → injected for **main** → main replies.
+
+## Chat turn lifecycle (`engine.ProcessTurn`)
+
+```text
+user input (any channel)
+  → notify sleep activity (if enabled)
+  → ResolveModel(main) from config
+  → router.ResolveMessages (media pre-processing)
+  → persist media metadata on session
+  → InjectContext (uploads + session attachments)
+  → intercept /image command
+  → build tools.Registry (channel injects approval/clarify/plan handlers)
+  → agent.Run (streaming, tool loop)
+  → recorder.FinalizeAndSave
+  → AutoNameSession if enabled and default title
+  → channel delivers response (SSE or Telegram message)
+```
+
+Do not duplicate this pipeline in `internal/web` or `internal/telegram`. Add channel-specific
+behavior only at the edges (auth, SSE, keyboards, expiry checks, ffmpeg).
+
+## Internal tools
+
+- Tools are Go functions in `internal/tools`, not model builtins.
+- The model requests tools via `tool_calls`; the agent executes and returns results.
+- Each tool: name, description, JSON Schema parameters, Go handler.
+- Security: per-channel allowlists where needed, timeouts, audit logging.
+- Interactive tools (approval, clarification, plan confirmation) use `tools.*Handler` interfaces
+  implemented by each channel (SSE blocking vs Telegram inline keyboards).
+
+## Memory and conversations
+
+- Per-session message history in `sessions/` (`session.json`, `messages.json`, `attachments/`).
+- Roles: `user`, `assistant`, `tool`; steps and metrics on assistant turns.
+- Context trimmed when over model `context_length` (optimization may use subagent model).
+- Long-term memory: `internal/memory` + embeddings tool; pre-fetch in `agent.Run`.
+
+## Channels (what belongs where)
+
+### Web (`internal/web`, `internal/web/static/app.js`)
+
+- HTTP/SSE transport, optional password auth
+- Settings UI that **edits** `.env` via `POST /api/settings` (not runtime model picker for chat)
+- Render timeline, steps, metrics, sessions, memory, projects
+- Must call `engine.ProcessTurn`; must not call Ollama for auto-naming or chat model selection
+
+### Telegram (`internal/telegram`)
+
+- Long polling, message chunking, HTML formatting
+- Media download and conversion (e.g. voice → WAV)
+- Session policies: inactivity expiry, `checkMessagesRelationship`
+- Inline keyboards for tool approval/clarification/plan
+- Must call `engine.ProcessTurn` after building `router.MediaMessage` list
+
+## Implementation rules
+
+- New domain logic → prefer `internal/engine` or existing shared packages, not channel packages.
+- New modules → `internal/<name>`.
+- Avoid new external dependencies without justification.
+- New capabilities need a probe in `internal/probe` before production use.
+- `.env` changes persist via `config.SaveBasic`.
+- Record meaningful progress in `docs/progress.md`.
+- All **user-facing** UI strings, menus, CLI prompts, logs, and errors shown to users: **English only**.
+
+## Key paths
+
+| Path | Purpose |
+|------|---------|
+| `cmd/ollamabot/main.go` | Process entry, shared managers, channel startup |
+| `internal/engine/` | `ProcessTurn`, context injection, session naming |
+| `internal/agent/loop.go` | Agent streaming and tool iteration |
+| `internal/web/server.go` | Web API; thin wrapper around engine |
+| `internal/telegram/bot.go` | Telegram bot; thin wrapper around engine |
+| `.env` / `.env.example` | Runtime configuration |
