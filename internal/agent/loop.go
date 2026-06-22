@@ -241,7 +241,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				Content: planReinforce,
 			})
 		} else if planMode == "smart" {
-			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions. For simple questions or single-action tasks, you can respond directly without calling 'present_plan'."
+			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. DO NOT call present_plan for simple tasks, simple questions, weather retrieval, or when you only need to run a single tool call (e.g., calling web_search to find the weather or read_file to read a document). In those cases, call the tool directly without presenting a plan first."
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
