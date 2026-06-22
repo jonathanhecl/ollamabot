@@ -3044,15 +3044,14 @@ function capabilityFor(kind) {
 }
 
 function capBadges(caps = {}) {
-  const order = ["completion", "tools", "thinking", "vision", "embedding", "audio", "video"];
+  const order = ["completion", "tools", "thinking", "vision", "embedding", "audio"];
   const glyphs = {
     completion: "⚡ text",
     tools: "🛠️ tools",
     thinking: "🧠 think",
     vision: "👁️ vision",
     embedding: "🔗 embed",
-    audio: "🔊 audio",
-    video: "📹 video"
+    audio: "🔊 audio"
   };
   return order.map((name) => {
     const status = caps ? (caps[name] || "pendiente") : "pendiente";
@@ -3194,7 +3193,6 @@ function formatFileSize(bytes) {
 
 function fileMimeIcon(mime) {
   if (mime.includes("pdf")) return "📄";
-  if (mime.includes("video")) return "🎥";
   if (mime.includes("zip") || mime.includes("archive") || mime.includes("compressed")) return "🗃️";
   if (mime.includes("json") || mime.includes("xml")) return "{ }";
   if (mime.startsWith("text/")) return "📝";

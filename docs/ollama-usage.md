@@ -225,7 +225,7 @@ Payload:
 
 Se considera valido si `embeddings[0]` existe y tiene longitud mayor a cero.
 
-## Audio y Video
+## Audio
 
 Algunos modelos exponen audio directamente en `/api/show.capabilities`, por ejemplo `gemma4:e2b` reporta `audio`. Otros modelos pueden exponer solo metadata de encoder:
 
@@ -240,8 +240,6 @@ go run ./cmd/ollamabot probe audio --model gemma4:e2b --audio C:\path\audio.wav
 ```
 
 La prueba local realizada con un WAV corto envio el audio como base64 crudo en `messages[].images`, siguiendo ejemplos observados en issues de Ollama/Gemma 4. En esta maquina el runner de Ollama devolvio error 500 y se detuvo, por lo que el uso real de audio queda pendiente aunque la capacidad este reportada por metadata.
-
-Video queda pendiente. La estrategia inicial sera procesar video fuera de Ollama, extraer frames relevantes y enviarlos como imagenes a un modelo con vision.
 
 ## Web Local
 

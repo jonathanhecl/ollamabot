@@ -29,9 +29,6 @@ func TestFromOllamaMapsReportedAndInferredCapabilities(t *testing.T) {
 	if report.Capabilities["audio"] != Inferred {
 		t.Fatalf("audio = %s", report.Capabilities["audio"])
 	}
-	if report.Capabilities["video"] != Pending {
-		t.Fatalf("video = %s", report.Capabilities["video"])
-	}
 	if report.ContextLength != 131072 {
 		t.Fatalf("context = %d", report.ContextLength)
 	}

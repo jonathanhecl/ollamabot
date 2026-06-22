@@ -1,21 +1,148 @@
 {
-  "generated_at": "2026-06-09T18:32:17.160088-03:00",
-  "base_url": "http://localhost:11434",
-  "ollama_version": "0.30.7",
+  "generated_at": "2026-06-22T20:26:55.6499741-03:00",
+  "base_url": "http://192.168.0.121:11434",
+  "ollama_version": "0.30.10",
   "models": [
     {
-      "Name": "freehuntx/qwen3-coder:8b",
-      "Family": "qwen3",
-      "Parameters": "8.2B",
+      "Name": "kaelri/qwen3.5-mt:2b",
+      "Family": "qwen35",
+      "Parameters": "2.3B",
       "Quantization": "Q4_K_M",
-      "ContextLength": 40960,
+      "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-22T16:01:35.14070863-03:00"
+    },
+    {
+      "Name": "oroboroslabs/claude-fable:latest",
+      "Family": "gemma4",
+      "Parameters": "8.0B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-19T19:25:57.711127143-03:00"
+    },
+    {
+      "Name": "baytout3/Qwen3.5-Uncensored-HauhauCS-Aggressive:9b",
+      "Family": "qwen35",
+      "Parameters": "9.4B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-19T02:53:36.464182823-03:00"
+    },
+    {
+      "Name": "nexusriot/Qwen3.5-Uncensored-HauhauCS-Aggressive:4b",
+      "Family": "qwen35",
+      "Parameters": "4.5B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-19T02:53:04.2127701-03:00"
+    },
+    {
+      "Name": "jimscard/new-adult-writer:latest",
+      "Family": "gemma4",
+      "Parameters": "8.0B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-19T00:02:51.299863361-03:00"
+    },
+    {
+      "Name": "bladealex/vulnsentinel-pro:latest",
+      "Family": "gemma4",
+      "Parameters": "7.5B",
+      "Quantization": "Q8_0",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
         "vision": "pendiente"
       },
       "Reported": [
@@ -25,44 +152,148 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-06-09T18:10:52.214210072-03:00"
+      "ModifiedAt": "2026-06-18T17:37:58.293679409-03:00"
     },
     {
-      "Name": "granite4.1:8b",
-      "Family": "granite",
-      "Parameters": "8.8B",
+      "Name": "minicpm-v4.6:1b",
+      "Family": "qwen35",
+      "Parameters": "752.16M",
       "Quantization": "Q4_K_M",
-      "ContextLength": 131072,
+      "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
-        "thinking": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": true,
+      "ModifiedAt": "2026-06-18T00:37:12.606593651-03:00"
+    },
+    {
+      "Name": "lfm2.5:8b",
+      "Family": "lfm2moe",
+      "Parameters": "8.5B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 128000,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
         "vision": "pendiente"
       },
       "Reported": [
         "completion",
+        "thinking",
         "tools"
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-06-09T18:02:01.425423317-03:00"
+      "ModifiedAt": "2026-06-18T00:34:46.161703362-03:00"
     },
     {
-      "Name": "gemma4:12b-it-qat",
+      "Name": "nexusriot/Gemma-4-Uncensored-HauhauCS-Aggressive:e4b",
       "Family": "gemma4",
-      "Parameters": "11.9B",
-      "Quantization": "Q4_0",
-      "ContextLength": 262144,
+      "Parameters": "8.0B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
       "Capabilities": {
         "audio": "comprobado",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-16T02:04:41.315521097-03:00"
+    },
+    {
+      "Name": "baytout3/Gemma-4-Uncensored-HauhauCS-Aggressive:e4b",
+      "Family": "gemma4",
+      "Parameters": "8.0B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-16T02:04:40.356479104-03:00"
+    },
+    {
+      "Name": "mohamedbastawih/gemma4-e4b-coding:latest",
+      "Family": "gemma4",
+      "Parameters": "8.0B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-16T02:04:39.549423219-03:00"
+    },
+    {
+      "Name": "maxwellb/gemma4-12b-it-dn:q4_K_S",
+      "Family": "gemma4",
+      "Parameters": "11.9B",
+      "Quantization": "Q4_K_S",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
         "vision": "comprobado"
       },
       "Reported": [
@@ -74,21 +305,72 @@
       ],
       "HasAudioEncoder": true,
       "HasVisionEncoder": true,
-      "ModifiedAt": "2026-06-05T16:24:21.259547418-03:00"
+      "ModifiedAt": "2026-06-16T01:41:12.035662971-03:00"
     },
     {
-      "Name": "qwen3.6:latest",
-      "Family": "qwen35moe",
-      "Parameters": "36.0B",
+      "Name": "alexanderschneider/gemma-4-abliterated:12b-q4_K",
+      "Family": "gemma4",
+      "Parameters": "11.9B",
       "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": true,
+      "HasVisionEncoder": true,
+      "ModifiedAt": "2026-06-16T01:23:58.569333143-03:00"
+    },
+    {
+      "Name": "mannix/gemma4-98e-v7-coder:vision-qat",
+      "Family": "gemma4",
+      "Parameters": "19.9B",
+      "Quantization": "Q4_0",
       "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": true,
+      "ModifiedAt": "2026-06-15T23:26:57.354529008-03:00"
+    },
+    {
+      "Name": "fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:IQ4_XS",
+      "Family": "qwen35moe",
+      "Parameters": "35.1B",
+      "Quantization": "unknown",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
         "vision": "comprobado"
       },
       "Reported": [
@@ -99,10 +381,59 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-16T12:44:54.350353179-03:00"
+      "ModifiedAt": "2026-06-15T22:33:56.292264817-03:00"
     },
     {
-      "Name": "gemma4:e4b",
+      "Name": "fredrezones55/Qwen3.6-35B-A3B-Uncensored-HauhauCS-Aggressive:IQ2_M",
+      "Family": "qwen35moe",
+      "Parameters": "35.1B",
+      "Quantization": "unknown",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-15T21:34:50.439033197-03:00"
+    },
+    {
+      "Name": "mannix/gemma4-98e-v6-coder:IQ4_K_M",
+      "Family": "gemma4",
+      "Parameters": "19.9B",
+      "Quantization": "Q5_K_M",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-15T19:49:50.533878706-03:00"
+    },
+    {
+      "Name": "joe-speedboat/Gemma-4-Uncensored-HauhauCS-Aggressive:e4b",
       "Family": "gemma4",
       "Parameters": "8.0B",
       "Quantization": "Q4_K_M",
@@ -111,9 +442,9 @@
         "audio": "comprobado",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
         "vision": "comprobado"
       },
       "Reported": [
@@ -125,21 +456,46 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-15T15:51:21.402963117-03:00"
+      "ModifiedAt": "2026-06-15T19:13:31.373952185-03:00"
     },
     {
-      "Name": "qwen3.5:4b",
+      "Name": "negoncio/qwopus-coder:latest",
       "Family": "qwen35",
-      "Parameters": "4.7B",
+      "Parameters": "9.2B",
+      "Quantization": "unknown",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": true,
+      "ModifiedAt": "2026-06-15T18:52:02.200893898-03:00"
+    },
+    {
+      "Name": "Jarcgon/qwen3.6-abliterated-27b:latest",
+      "Family": "qwen35",
+      "Parameters": "27.8B",
       "Quantization": "Q4_K_M",
       "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
         "vision": "comprobado"
       },
       "Reported": [
@@ -150,10 +506,10 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-15T11:58:00.168168241-03:00"
+      "ModifiedAt": "2026-06-15T18:21:33.091661856-03:00"
     },
     {
-      "Name": "qwen3.5:9b",
+      "Name": "baytout3/qwen3.5-uncensored:9b",
       "Family": "qwen35",
       "Parameters": "9.7B",
       "Quantization": "Q4_K_M",
@@ -162,9 +518,9 @@
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
         "vision": "comprobado"
       },
       "Reported": [
@@ -175,21 +531,69 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-14T21:24:12.728350726-03:00"
+      "ModifiedAt": "2026-06-15T17:17:40.150979354-03:00"
     },
     {
-      "Name": "hf.co/Jiunsong/supergemma4-26b-uncensored-gguf-v2:Q4_K_M",
-      "Family": "gemma4",
-      "Parameters": "25.2B",
-      "Quantization": "unknown",
+      "Name": "SetneufPT/Qwen3.6-27B-MTP_Q3_32K_16GB-GPU:latest",
+      "Family": "qwen35",
+      "Parameters": "27.3B",
+      "Quantization": "Q3_K_M",
       "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-15T17:04:34.147472531-03:00"
+    },
+    {
+      "Name": "hf.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF:fixed",
+      "Family": "gemma4",
+      "Parameters": "11.9B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-14T19:54:08.057991287-03:00"
+    },
+    {
+      "Name": "hf.co/yuxinlu1/gemma-4-12B-coder-fable5-composer2.5-v1-GGUF:Q4_K_M",
+      "Family": "gemma4",
+      "Parameters": "11.9B",
+      "Quantization": "unknown",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "pendiente",
         "tools": "comprobado",
-        "video": "pendiente",
         "vision": "pendiente"
       },
       "Reported": [
@@ -198,21 +602,139 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-13T16:12:17.414058265-03:00"
+      "ModifiedAt": "2026-06-14T19:52:38.56806514-03:00"
     },
     {
-      "Name": "huihui_ai/gemma-4-abliterated:31b-v2",
+      "Name": "abedalswaity7/flux-prompt:latest",
+      "Family": "llama",
+      "Parameters": "3.2B",
+      "Quantization": "Q8_0",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "pendiente",
+        "tools": "pendiente",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-11T20:18:05.201915035-03:00"
+    },
+    {
+      "Name": "x/flux2-klein:4b",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "pendiente",
+        "embedding": "pendiente",
+        "image": "comprobado",
+        "thinking": "pendiente",
+        "tools": "pendiente",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "image"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-11T19:31:16.407496118-03:00"
+    },
+    {
+      "Name": "gemma4:12b-it-qat",
       "Family": "gemma4",
-      "Parameters": "31.3B",
+      "Parameters": "11.9B",
+      "Quantization": "Q4_0",
+      "ContextLength": 262144,
+      "Capabilities": {
+        "audio": "comprobado",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "comprobado"
+      },
+      "Reported": [
+        "audio",
+        "completion",
+        "thinking",
+        "tools",
+        "vision"
+      ],
+      "HasAudioEncoder": true,
+      "HasVisionEncoder": true,
+      "ModifiedAt": "2026-06-05T15:56:17.001205705-03:00"
+    },
+    {
+      "Name": "freehuntx/qwen3-coder:8b",
+      "Family": "qwen3",
+      "Parameters": "8.2B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 40960,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-04T03:06:14.628374112-03:00"
+    },
+    {
+      "Name": "freehuntx/qwen3-coder:14b",
+      "Family": "qwen3",
+      "Parameters": "14.8B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 40960,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "comprobado",
+        "tools": "comprobado",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "thinking",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-06-04T03:00:33.033272675-03:00"
+    },
+    {
+      "Name": "huihui_ai/qwen3.5-abliterated:4b",
+      "Family": "qwen35",
+      "Parameters": "4.5B",
       "Quantization": "Q4_K_M",
       "ContextLength": 262144,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
+        "image": "pendiente",
         "thinking": "comprobado",
         "tools": "comprobado",
-        "video": "pendiente",
         "vision": "comprobado"
       },
       "Reported": [
@@ -223,35 +745,120 @@
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-13T12:35:33.293827325-03:00"
+      "ModifiedAt": "2026-05-19T03:08:29.650156012-03:00"
     },
     {
-      "Name": "huihui_ai/gemma-4-abliterated:26b",
-      "Family": "gemma4",
-      "Parameters": "25.8B",
+      "Name": "granite4.1:8b",
+      "Family": "granite",
+      "Parameters": "8.8B",
       "Quantization": "Q4_K_M",
-      "ContextLength": 262144,
+      "ContextLength": 131072,
       "Capabilities": {
         "audio": "pendiente",
         "completion": "comprobado",
         "embedding": "pendiente",
-        "thinking": "comprobado",
+        "image": "pendiente",
+        "thinking": "pendiente",
         "tools": "comprobado",
-        "video": "pendiente",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "completion",
+        "tools"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-04-30T04:27:17.388679234-03:00"
+    },
+    {
+      "Name": "translategemma:4b",
+      "Family": "gemma3",
+      "Parameters": "4.3B",
+      "Quantization": "Q4_K_M",
+      "ContextLength": 131072,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "comprobado",
+        "embedding": "pendiente",
+        "image": "pendiente",
+        "thinking": "pendiente",
+        "tools": "pendiente",
         "vision": "comprobado"
       },
       "Reported": [
         "completion",
-        "thinking",
-        "tools",
         "vision"
       ],
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
-      "ModifiedAt": "2026-04-12T14:02:22.179974502-03:00"
+      "ModifiedAt": "2026-04-30T04:11:11.293606764-03:00"
+    },
+    {
+      "Name": "embeddinggemma:latest",
+      "Family": "gemma3",
+      "Parameters": "307.58M",
+      "Quantization": "BF16",
+      "ContextLength": 2048,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "pendiente",
+        "embedding": "comprobado",
+        "image": "pendiente",
+        "thinking": "pendiente",
+        "tools": "pendiente",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "embedding"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-02-10T02:07:38.12043676-03:00"
+    },
+    {
+      "Name": "nomic-embed-text:latest",
+      "Family": "nomic-bert",
+      "Parameters": "137M",
+      "Quantization": "F16",
+      "ContextLength": 2048,
+      "Capabilities": {
+        "audio": "pendiente",
+        "completion": "pendiente",
+        "embedding": "comprobado",
+        "image": "pendiente",
+        "thinking": "pendiente",
+        "tools": "pendiente",
+        "vision": "pendiente"
+      },
+      "Reported": [
+        "embedding"
+      ],
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "2026-02-05T02:47:01.624491798-03:00"
     }
   ],
-  "running": [],
+  "running": [
+    {
+      "name": "baytout3/Gemma-4-Uncensored-HauhauCS-Aggressive:e4b",
+      "model": "baytout3/Gemma-4-Uncensored-HauhauCS-Aggressive:e4b",
+      "size": 3514585578,
+      "digest": "0810d70aa9aa19e57a63ee31039ed656d3ad2253375c4f4e57edc3a6f460bbe6",
+      "details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "gemma4",
+        "families": [
+          "gemma4"
+        ],
+        "parameter_size": "8.0B",
+        "quantization_level": "Q4_K_M"
+      },
+      "expires_at": "2026-06-22T20:55:51.029252-03:00",
+      "size_vram": 3514585578,
+      "context_length": 131072
+    }
+  ],
   "expected": [
     {
       "name": "models",
@@ -264,21 +871,6 @@
       "model": "",
       "status": "pendiente",
       "details": "Audio remains pending unless an end-to-end REST payload is confirmed"
-    },
-    {
-      "name": "video",
-      "model": "",
-      "status": "pendiente",
-      "details": "Video remains pending; planned path is frame extraction plus vision"
-    }
-  ],
-  "probe_runs": [
-    {
-      "name": "audio",
-      "model": "gemma4:e2b",
-      "status": "comprobado",
-      "details": "The speaker is offering companionship.",
-      "run_at": "2026-05-26T04:14:15.1872257-03:00"
     }
   ]
 }

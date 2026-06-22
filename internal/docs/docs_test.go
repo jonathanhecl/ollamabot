@@ -8,9 +8,9 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 )
 
-func TestReferenceMentionsPendingAudioAndVideo(t *testing.T) {
+func TestReferenceMentionsPendingAudio(t *testing.T) {
 	got := Reference(ReferenceData{BaseURL: "http://localhost:11434", OllamaVersion: "0.24.0", GeneratedAt: time.Unix(0, 0).UTC()})
-	for _, want := range []string{"Audio", "Video", "messages[].images", "POST /api/chat"} {
+	for _, want := range []string{"Audio", "messages[].images", "POST /api/chat"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("reference missing %q", want)
 		}

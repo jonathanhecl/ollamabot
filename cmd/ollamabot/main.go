@@ -394,7 +394,6 @@ func writeSnapshot(ctx context.Context, out string, cfg config.Config, client *o
 		Expected: []cache.ExpectedProbe{
 			{Name: "models", Status: capabilities.Confirmed, Details: "Inventory from /api/tags and /api/show"},
 			{Name: "audio", Status: capabilities.Pending, Details: "Audio remains pending unless an end-to-end REST payload is confirmed"},
-			{Name: "video", Status: capabilities.Pending, Details: "Video remains pending; planned path is frame extraction plus vision"},
 		},
 	}
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {

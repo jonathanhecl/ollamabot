@@ -1,10 +1,10 @@
 # Ollama API Reference
 
-Generated: 2026-05-26T02:34:57-03:00
+Generated: 2026-06-22T20:26:42-03:00
 
 Base URL: `http://192.168.0.121:11434`
 
-Ollama version: `0.24.0`
+Ollama version: `0.30.10`
 
 ## Sources
 
@@ -120,4 +120,3 @@ Ollama version: `0.24.0`
 ## Pending Confirmation
 
 - Audio: models that report `audio` in `/api/show.capabilities` are marked as metadata-confirmed. End-to-end audio still requires `probe audio --audio PATH`; local `gemma4:e2b` WAV testing currently fails with an Ollama runner 500.
-- Video: no native Ollama REST video input is treated as confirmed; future support should start as frame extraction into vision models.

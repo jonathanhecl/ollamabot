@@ -106,7 +106,6 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 - Los encoders vistos en `projector_info`, como audio o vision, se consideran `inferido` si no hay prueba end-to-end.
 - Audio queda experimental hasta confirmar un payload REST estable.
 - `gemma4:e2b` reporta `audio` en `/api/show.capabilities`, pero la prueba local end-to-end con WAV hizo caer el runner de Ollama con error 500.
-- Video queda pendiente; la estrategia inicial sera extraer frames y enviarlos a modelos de vision.
 
 ## Pendiente
 

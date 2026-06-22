@@ -16,7 +16,7 @@ const (
 	Pending   Status = "pendiente"
 )
 
-var Known = []string{"completion", "tools", "thinking", "vision", "embedding", "audio", "video", "image"}
+var Known = []string{"completion", "tools", "thinking", "vision", "embedding", "audio", "image"}
 
 type ModelReport struct {
 	Name             string
@@ -47,7 +47,6 @@ func FromOllama(tag ollama.ModelTag, show ollama.ShowResponse) ModelReport {
 	if hasVision && statuses["vision"] != Confirmed {
 		statuses["vision"] = Inferred
 	}
-	statuses["video"] = Pending
 
 	reported := append([]string{}, show.Capabilities...)
 	sort.Strings(reported)

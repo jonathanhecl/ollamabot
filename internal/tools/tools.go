@@ -525,7 +525,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "execute_command",
-			Description: "Run a shell command (e.g. ffmpeg, ffprobe, pandoc, python3) inside the workspace directory. Use this to process binary files, extract frames from video, convert formats, etc. Always requires user approval before execution.",
+			Description: "Run a shell command (e.g. ffmpeg, ffprobe, pandoc, python3) inside the workspace directory. Use this to process binary files, convert formats, etc. Always requires user approval before execution.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

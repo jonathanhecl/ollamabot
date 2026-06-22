@@ -558,7 +558,6 @@ func (s *Server) handleReloadModels(w http.ResponseWriter, r *http.Request) {
 		snapshot.Expected = []cache.ExpectedProbe{
 			{Name: "models", Status: capabilities.Confirmed, Details: "Inventory from /api/tags and /api/show"},
 			{Name: "audio", Status: capabilities.Pending, Details: "Audio remains pending unless an end-to-end REST payload is confirmed"},
-			{Name: "video", Status: capabilities.Pending, Details: "Video remains pending; planned path is frame extraction plus vision"},
 		}
 	}
 
@@ -1482,7 +1481,7 @@ func injectUploadsContext(workspace, sessionsPath, sessionID string, messages []
 	}
 	note := "The user has uploaded the following files to this session. " +
 		"You can read text files with the read_file tool using the given path, " +
-		"or run shell commands on binary/video files with execute_command.\n\nUploaded files:\n" +
+		"or run shell commands on binary files with execute_command.\n\nUploaded files:\n" +
 		strings.Join(lines, "\n")
 
 	// Find existing system message and append to it, or prepend a new one.
