@@ -2880,6 +2880,81 @@ function renderMessages() {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function getToolDisplayName(name, parsedArgs) {
+  if (!parsedArgs) return name || "unknown";
+  try {
+    switch (name) {
+      case "web_search":
+        if (parsedArgs.query) return `web_search("${parsedArgs.query}")`;
+        break;
+      case "generate_image":
+        if (parsedArgs.prompt) return `generate_image("${parsedArgs.prompt}")`;
+        break;
+      case "fetch_webpage":
+        if (parsedArgs.url) return `fetch_webpage("${parsedArgs.url}")`;
+        break;
+      case "read_file":
+        if (parsedArgs.path) return `read_file("${parsedArgs.path}")`;
+        break;
+      case "Write":
+        if (parsedArgs.file_path) return `Write("${parsedArgs.file_path}")`;
+        break;
+      case "Edit":
+        if (parsedArgs.file_path) return `Edit("${parsedArgs.file_path}")`;
+        break;
+      case "execute_command":
+        if (parsedArgs.command) {
+          const argsList = Array.isArray(parsedArgs.args) ? parsedArgs.args.join(" ") : "";
+          const fullCmd = argsList ? `${parsedArgs.command} ${argsList}` : parsedArgs.command;
+          return `execute_command("${fullCmd}")`;
+        }
+        break;
+      case "memory_search":
+        if (parsedArgs.query) return `memory_search("${parsedArgs.query}")`;
+        break;
+      case "memory_add":
+        if (parsedArgs.text) {
+          const truncText = parsedArgs.text.length > 60 ? parsedArgs.text.substring(0, 57) + "..." : parsedArgs.text;
+          return `memory_add("${truncText.replace(/\n/g, " ")}")`;
+        }
+        break;
+      case "memory_delete":
+        if (parsedArgs.id) return `memory_delete("${parsedArgs.id}")`;
+        break;
+      case "memory_list":
+        if (parsedArgs.limit !== undefined) return `memory_list(limit=${parsedArgs.limit})`;
+        return `memory_list()`;
+      case "skill_get":
+        if (parsedArgs.name) return `skill_get("${parsedArgs.name}")`;
+        break;
+      case "skill_create":
+        if (parsedArgs.name) return `skill_create("${parsedArgs.name}")`;
+        break;
+      case "skill_edit":
+        if (parsedArgs.name) return `skill_edit("${parsedArgs.name}")`;
+        break;
+      case "skill_delete":
+        if (parsedArgs.name) return `skill_delete("${parsedArgs.name}")`;
+        break;
+      case "ask_clarification":
+        if (parsedArgs.question) {
+          const truncQuestion = parsedArgs.question.length > 60 ? parsedArgs.question.substring(0, 57) + "..." : parsedArgs.question;
+          return `ask_clarification("${truncQuestion.replace(/\n/g, " ")}")`;
+        }
+        break;
+      case "complete_plan_step":
+        if (parsedArgs.note) return `complete_plan_step("${parsedArgs.note}")`;
+        return `complete_plan_step()`;
+      case "view_session_attachment":
+        if (parsedArgs.ref) return `view_session_attachment("${parsedArgs.ref}")`;
+        break;
+    }
+  } catch (e) {
+    console.error("Error formatting tool display name:", e);
+  }
+  return name || "unknown";
+}
+
 function renderStep(step, isLive = false, isLastStep = false) {
   switch (step.type) {
     case "thinking": {
@@ -2897,12 +2972,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
       } catch {
         argsText = String(fn.arguments || "{}");
       }
-      let displayName = name;
-      if (name === "web_search" && parsedArgs && parsedArgs.query) {
-        displayName = `web_search("${parsedArgs.query}")`;
-      } else if (name === "generate_image" && parsedArgs && parsedArgs.prompt) {
-        displayName = `generate_image("${parsedArgs.prompt}")`;
-      }
+      const displayName = getToolDisplayName(name, parsedArgs);
       return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(displayName)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
     }
     case "tool_exec": {
@@ -2927,12 +2997,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
           status: "active",
         }, "inline");
       }
-      let displayName = step.name || "unknown";
-      if (step.name === "web_search" && parsedArgs && parsedArgs.query) {
-        displayName = `web_search("${parsedArgs.query}")`;
-      } else if (step.name === "generate_image" && parsedArgs && parsedArgs.prompt) {
-        displayName = `generate_image("${parsedArgs.prompt}")`;
-      }
+      const displayName = getToolDisplayName(step.name, parsedArgs);
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
       const resultHtml = resultText ? `

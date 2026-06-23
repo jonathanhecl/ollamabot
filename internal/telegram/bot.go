@@ -1617,40 +1617,123 @@ func (h *telegramStreamAdapter) OnToolCall(call ollama.ToolCall) {
 	h.recorder.OnToolCall(call)
 }
 
-func (h *telegramStreamAdapter) OnToolStart(name string, args any) {
-	h.recorder.OnToolStart(name, args)
-	toolLabel := name
-	if name == "web_search" && args != nil {
-		if params, ok := args.(map[string]any); ok {
-			if q, exists := params["query"].(string); exists && q != "" {
-				toolLabel = fmt.Sprintf("web_search(\"%s\")", q)
-			}
-		} else {
-			if bytes, err := json.Marshal(args); err == nil {
-				var payload struct {
-					Query string `json:"query"`
-				}
-				if json.Unmarshal(bytes, &payload) == nil && payload.Query != "" {
-					toolLabel = fmt.Sprintf("web_search(\"%s\")", payload.Query)
-				}
-			}
+func getTelegramToolLabel(name string, args any) string {
+	if args == nil {
+		return name
+	}
+	bytes, err := json.Marshal(args)
+	if err != nil {
+		return name
+	}
+	var params map[string]any
+	if err := json.Unmarshal(bytes, &params); err != nil {
+		return name
+	}
+
+	switch name {
+	case "web_search":
+		if q, ok := params["query"].(string); ok && q != "" {
+			return fmt.Sprintf("web_search(\"%s\")", q)
 		}
-	} else if name == "generate_image" && args != nil {
-		if params, ok := args.(map[string]any); ok {
-			if p, exists := params["prompt"].(string); exists && p != "" {
-				toolLabel = fmt.Sprintf("generate_image(\"%s\")", p)
-			}
-		} else {
-			if bytes, err := json.Marshal(args); err == nil {
-				var payload struct {
-					Prompt string `json:"prompt"`
+	case "generate_image":
+		if p, ok := params["prompt"].(string); ok && p != "" {
+			return fmt.Sprintf("generate_image(\"%s\")", p)
+		}
+	case "fetch_webpage":
+		if u, ok := params["url"].(string); ok && u != "" {
+			return fmt.Sprintf("fetch_webpage(\"%s\")", u)
+		}
+	case "read_file":
+		if p, ok := params["path"].(string); ok && p != "" {
+			return fmt.Sprintf("read_file(\"%s\")", p)
+		}
+	case "Write":
+		if p, ok := params["file_path"].(string); ok && p != "" {
+			return fmt.Sprintf("Write(\"%s\")", p)
+		}
+	case "Edit":
+		if p, ok := params["file_path"].(string); ok && p != "" {
+			return fmt.Sprintf("Edit(\"%s\")", p)
+		}
+	case "execute_command":
+		if cmd, ok := params["command"].(string); ok && cmd != "" {
+			var argsList []string
+			if rawArgs, ok := params["args"].([]any); ok {
+				for _, a := range rawArgs {
+					if s, ok := a.(string); ok {
+						argsList = append(argsList, s)
+					}
 				}
-				if json.Unmarshal(bytes, &payload) == nil && payload.Prompt != "" {
-					toolLabel = fmt.Sprintf("generate_image(\"%s\")", payload.Prompt)
-				}
 			}
+			fullCmd := cmd
+			if len(argsList) > 0 {
+				fullCmd = fmt.Sprintf("%s %s", cmd, strings.Join(argsList, " "))
+			}
+			return fmt.Sprintf("execute_command(\"%s\")", fullCmd)
+		}
+	case "memory_search":
+		if q, ok := params["query"].(string); ok && q != "" {
+			return fmt.Sprintf("memory_search(\"%s\")", q)
+		}
+	case "memory_add":
+		if t, ok := params["text"].(string); ok && t != "" {
+			cleanText := strings.ReplaceAll(t, "\n", " ")
+			runes := []rune(cleanText)
+			if len(runes) > 60 {
+				cleanText = string(runes[:57]) + "..."
+			}
+			return fmt.Sprintf("memory_add(\"%s\")", cleanText)
+		}
+	case "memory_delete":
+		if id, ok := params["id"].(string); ok && id != "" {
+			return fmt.Sprintf("memory_delete(\"%s\")", id)
+		}
+	case "memory_list":
+		if limit, ok := params["limit"].(float64); ok {
+			return fmt.Sprintf("memory_list(limit=%d)", int(limit))
+		}
+		return "memory_list()"
+	case "skill_get":
+		if n, ok := params["name"].(string); ok && n != "" {
+			return fmt.Sprintf("skill_get(\"%s\")", n)
+		}
+	case "skill_create":
+		if n, ok := params["name"].(string); ok && n != "" {
+			return fmt.Sprintf("skill_create(\"%s\")", n)
+		}
+	case "skill_edit":
+		if n, ok := params["name"].(string); ok && n != "" {
+			return fmt.Sprintf("skill_edit(\"%s\")", n)
+		}
+	case "skill_delete":
+		if n, ok := params["name"].(string); ok && n != "" {
+			return fmt.Sprintf("skill_delete(\"%s\")", n)
+		}
+	case "ask_clarification":
+		if q, ok := params["question"].(string); ok && q != "" {
+			cleanQ := strings.ReplaceAll(q, "\n", " ")
+			runes := []rune(cleanQ)
+			if len(runes) > 60 {
+				cleanQ = string(runes[:57]) + "..."
+			}
+			return fmt.Sprintf("ask_clarification(\"%s\")", cleanQ)
+		}
+	case "complete_plan_step":
+		if note, ok := params["note"].(string); ok && note != "" {
+			return fmt.Sprintf("complete_plan_step(\"%s\")", note)
+		}
+		return "complete_plan_step()"
+	case "view_session_attachment":
+		if ref, ok := params["ref"].(string); ok && ref != "" {
+			return fmt.Sprintf("view_session_attachment(\"%s\")", ref)
 		}
 	}
+	return name
+}
+
+func (h *telegramStreamAdapter) OnToolStart(name string, args any) {
+	h.recorder.OnToolStart(name, args)
+	toolLabel := getTelegramToolLabel(name, args)
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", toolLabel), 0, "Markdown")
 }
 
