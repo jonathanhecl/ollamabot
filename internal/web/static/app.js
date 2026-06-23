@@ -2890,13 +2890,18 @@ function renderStep(step, isLive = false, isLastStep = false) {
       const fn = step.call?.function || {};
       const name = fn.name || "unknown";
       let argsText = "";
+      let parsedArgs = null;
       try {
-        const parsed = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments || {});
-        argsText = JSON.stringify(parsed, null, 2);
+        parsedArgs = typeof fn.arguments === "string" ? JSON.parse(fn.arguments) : (fn.arguments || {});
+        argsText = JSON.stringify(parsedArgs, null, 2);
       } catch {
         argsText = String(fn.arguments || "{}");
       }
-      return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(name)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
+      let displayName = name;
+      if (name === "web_search" && parsedArgs && parsedArgs.query) {
+        displayName = `web_search("${parsedArgs.query}")`;
+      }
+      return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(displayName)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
     }
     case "tool_exec": {
       const showRunning = isLive && step.status === "running";
@@ -2920,6 +2925,10 @@ function renderStep(step, isLive = false, isLastStep = false) {
           status: "active",
         }, "inline");
       }
+      let displayName = step.name || "unknown";
+      if (step.name === "web_search" && parsedArgs && parsedArgs.query) {
+        displayName = `web_search("${parsedArgs.query}")`;
+      }
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
       const resultHtml = resultText ? `
@@ -2929,7 +2938,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
         </details>
       ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
-      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(step.name || "unknown")}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
+      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "plan": {
       return renderPlanChecklist({

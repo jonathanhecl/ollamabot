@@ -1619,7 +1619,24 @@ func (h *telegramStreamAdapter) OnToolCall(call ollama.ToolCall) {
 
 func (h *telegramStreamAdapter) OnToolStart(name string, args any) {
 	h.recorder.OnToolStart(name, args)
-	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", name), 0, "Markdown")
+	toolLabel := name
+	if name == "web_search" && args != nil {
+		if params, ok := args.(map[string]any); ok {
+			if q, exists := params["query"].(string); exists && q != "" {
+				toolLabel = fmt.Sprintf("web_search(\"%s\")", q)
+			}
+		} else {
+			if bytes, err := json.Marshal(args); err == nil {
+				var payload struct {
+					Query string `json:"query"`
+				}
+				if json.Unmarshal(bytes, &payload) == nil && payload.Query != "" {
+					toolLabel = fmt.Sprintf("web_search(\"%s\")", payload.Query)
+				}
+			}
+		}
+	}
+	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", toolLabel), 0, "Markdown")
 }
 
 func (h *telegramStreamAdapter) OnToolResult(name string, result string) {
