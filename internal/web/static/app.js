@@ -3137,6 +3137,9 @@ function capBadges(caps = {}) {
 }
 
 function renderMarkdown(text) {
+  // Strip generated image or attachment reference/filename lines
+  text = text.replace(/(\r?\n)*\*\*?(Reference|Referencia):\*\*?\s*`?[a-zA-Z0-9_]+\.[a-zA-Z0-9]+`?/gi, "");
+
   const escaped = escapeHtml(sanitizeMath(text));
   const lines = escaped.split("\n");
   let inCode = false;
