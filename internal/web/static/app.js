@@ -2900,6 +2900,8 @@ function renderStep(step, isLive = false, isLastStep = false) {
       let displayName = name;
       if (name === "web_search" && parsedArgs && parsedArgs.query) {
         displayName = `web_search("${parsedArgs.query}")`;
+      } else if (name === "generate_image" && parsedArgs && parsedArgs.prompt) {
+        displayName = `generate_image("${parsedArgs.prompt}")`;
       }
       return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(displayName)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
     }
@@ -2928,6 +2930,8 @@ function renderStep(step, isLive = false, isLastStep = false) {
       let displayName = step.name || "unknown";
       if (step.name === "web_search" && parsedArgs && parsedArgs.query) {
         displayName = `web_search("${parsedArgs.query}")`;
+      } else if (step.name === "generate_image" && parsedArgs && parsedArgs.prompt) {
+        displayName = `generate_image("${parsedArgs.prompt}")`;
       }
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";

@@ -1635,6 +1635,21 @@ func (h *telegramStreamAdapter) OnToolStart(name string, args any) {
 				}
 			}
 		}
+	} else if name == "generate_image" && args != nil {
+		if params, ok := args.(map[string]any); ok {
+			if p, exists := params["prompt"].(string); exists && p != "" {
+				toolLabel = fmt.Sprintf("generate_image(\"%s\")", p)
+			}
+		} else {
+			if bytes, err := json.Marshal(args); err == nil {
+				var payload struct {
+					Prompt string `json:"prompt"`
+				}
+				if json.Unmarshal(bytes, &payload) == nil && payload.Prompt != "" {
+					toolLabel = fmt.Sprintf("generate_image(\"%s\")", payload.Prompt)
+				}
+			}
+		}
 	}
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", toolLabel), 0, "Markdown")
 }
