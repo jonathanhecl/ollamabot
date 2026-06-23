@@ -2224,9 +2224,6 @@ async function sendMessage(event) {
   renderAttachments();
   renderMessages();
   updateContextBar();
-  if (mediaAttachments.length) {
-    addSystemMessage(`Attached ${mediaAttachments.map((item) => item.kind).join(", ")} using Ollama multimodal payload.`);
-  }
 
   // Push user query to client-side sequential queue
   state.messageQueue.push(userMessage);
@@ -2553,13 +2550,9 @@ async function processNextQueueItem() {
         renderMessages();
       },
       context_optimization_start: (value) => {
-        addSystemMessage(`🔄 **Optimizing context...**\nCurrently using ${value.tokens} tokens (${value.percent.toFixed(1)}% of model capacity). Synthesizing previous history to free up space...`);
-        renderMessages();
         updateContextBar();
       },
       context_optimization_end: (value) => {
-        addSystemMessage(`✅ **Context optimized!**\nNew context size: ${value.tokens} tokens (${value.percent.toFixed(1)}% of capacity).\nOptimization took: ${value.duration.toFixed(2)}s.`);
-        renderMessages();
         updateContextBar();
       },
       error: (value) => {
@@ -3029,7 +3022,10 @@ function isInternalSystemMessage(content) {
   if (!content) return false;
   return (
     content.includes("The current session contains the following attachments") ||
-    content.includes("The user has uploaded the following files to this session")
+    content.includes("The user has uploaded the following files to this session") ||
+    content.includes("using Ollama multimodal payload") ||
+    content.includes("Optimizing context...") ||
+    content.includes("Context optimized!")
   );
 }
 
