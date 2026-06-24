@@ -3179,7 +3179,18 @@ function isInternalSystemMessage(content) {
     content.includes("The user has uploaded the following files to this session") ||
     content.includes("using Ollama multimodal payload") ||
     content.includes("Optimizing context...") ||
-    content.includes("Context optimized!")
+    content.includes("Context optimized!") ||
+    content.includes("There is an approved plan with remaining steps") ||
+    content.includes("There are still pending TODO items") ||
+    content.includes("Plan monitor resume:") ||
+    content.includes("Previous attempt returned only thinking") ||
+    content.includes("This is a summary of the optimized previous context:") ||
+    content.startsWith("Error: Malformed JSON arguments in <invoke") ||
+    content.startsWith("Error: Invalid JSON syntax in <invoke") ||
+    content.startsWith("Error: Missing closing tag </invoke>") ||
+    content.startsWith("Error: Malformed JSON arguments in <tool_call") ||
+    content.startsWith("Error: Invalid JSON syntax in <tool_call") ||
+    content.startsWith("Error: Missing closing tag </tool_call>")
   );
 }
 

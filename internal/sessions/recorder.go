@@ -683,7 +683,7 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 	uaIdx := 0
 	out := make([]json.RawMessage, 0, len(finalHistory))
 	for _, msg := range finalHistory {
-		if msg.Role == "system" && isInjectedContextMessage(msg.Content) {
+		if msg.Role == "system" && IsInternalTimelineMessage(msg.Content) {
 			continue
 		}
 		msgTimestamp := ""

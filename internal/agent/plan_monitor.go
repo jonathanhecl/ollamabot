@@ -235,19 +235,13 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	message := fmt.Sprintf("Resuming approved plan step %d/%d: %s", current, len(plan.Steps), plan.Steps[current-1])
 	pm.notify(sessionID, plan, message)
 
-	resumePrompt := sessions.RawMsg{
-		Role:      "system",
-		Content:   fmt.Sprintf("Plan monitor resume: %s. Continue the approved plan from step %d of %d: %s. Execute tools now; do not ask for a new plan.", reason, current, len(plan.Steps), plan.Steps[current-1]),
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-	resumeRaw, _ := json.Marshal(resumePrompt)
-	sess.Messages = append(sess.Messages, resumeRaw)
-	if err := pm.sessionStore.Save(sess); err != nil {
-		log.Printf("[PlanMonitor] save resume message %s: %v", sessionID, err)
-		return
-	}
+	resumeContent := fmt.Sprintf("Plan monitor resume: %s. Continue the approved plan from step %d of %d: %s. Execute tools now; do not ask for a new plan.", reason, current, len(plan.Steps), plan.Steps[current-1])
 
 	ollamaMessages := rawMessagesToOllama(sess.Messages)
+	ollamaMessages = append(ollamaMessages, ollama.Message{
+		Role:    "system",
+		Content: resumeContent,
+	})
 	registry := tools.NewRegistry(pm.cfg.WebSearchEnabled, pm.cfg.Workspace, pm.memoryStore, pm.client, pm.cfg.OllamaModelEmbed, tools.SearchConfig{
 		Providers:    pm.cfg.SearchProviders,
 		BraveAPIKey:  pm.cfg.BraveSearchAPIKey,
@@ -315,6 +309,9 @@ func saveOllamaHistory(store *sessions.Store, sessionID string, history []ollama
 	}
 	rawMessages := make([]json.RawMessage, 0, len(history))
 	for _, m := range history {
+		if m.Role == "system" && sessions.IsInternalTimelineMessage(m.Content) {
+			continue
+		}
 		var tcRaw []json.RawMessage
 		for _, tc := range m.ToolCalls {
 			tcBytes, _ := json.Marshal(tc)
