@@ -1125,7 +1125,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessions.NotifyUpdate(sess.ID)
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, sessions.SessionAPIViewFrom(sess))
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -1144,7 +1144,7 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sess.Messages = resolved
 	}
-	writeJSON(w, http.StatusOK, sess)
+	writeJSON(w, http.StatusOK, sessions.SessionAPIViewFrom(sess))
 }
 
 func (s *Server) handleGetSessionEntry(w http.ResponseWriter, r *http.Request) {
@@ -2583,11 +2583,14 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case sessionID := <-ch:
 			writeSSE(w, "session_updated", sessionID)
-			if sess, err := s.sessionStore.Get(sessionID); err == nil && sess.PendingApproval != nil {
-				writeSSE(w, "approval_required", map[string]any{
-					"session_id": sessionID,
-					"approval":   sess.PendingApproval,
-				})
+			if sess, err := s.sessionStore.Get(sessionID); err == nil {
+				writeSSE(w, "agent_status", sessions.AgentStatusFor(sessionID, sess))
+				if sess.PendingApproval != nil {
+					writeSSE(w, "approval_required", map[string]any{
+						"session_id": sessionID,
+						"approval":   sess.PendingApproval,
+					})
+				}
 			}
 			if flusher != nil {
 				flusher.Flush()

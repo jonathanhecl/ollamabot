@@ -206,6 +206,9 @@ func (pm *PlanMonitor) finish(sessionID string) {
 func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason string) {
 	defer pm.finish(sessionID)
 
+	sessions.MarkProcessing(sessionID)
+	defer sessions.MarkIdle(sessionID)
+
 	sess, err := pm.sessionStore.Get(sessionID)
 	if err != nil {
 		log.Printf("[PlanMonitor] load session %s: %v", sessionID, err)

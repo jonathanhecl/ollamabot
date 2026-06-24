@@ -120,6 +120,7 @@ const state = {
   sessionIdToDelete: null,
   messageQueue: [],
   isProcessing: false,
+  agentBusy: false,
   currentAbortController: null,
   currentApprovalId: null,
   pendingApproval: null,
@@ -1024,6 +1025,10 @@ function startSessionPolling() {
             renderAttachments();
             updateContextBar();
           }
+          state.agentBusy = !!activeSess.agent_busy;
+          state.pendingApproval = normalizeApprovalPayload(activeSess.pending_approval || state.pendingApproval);
+          renderApprovalCard();
+          updateComposerUI();
         }
       }
     } catch (err) {
@@ -1065,6 +1070,17 @@ function startRealtimeEvents() {
         }
       }
     }, 800);
+  });
+
+  eventSource.addEventListener("agent_status", (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload?.session_id !== state.activeSessionId) return;
+      state.agentBusy = !!payload.busy;
+      updateComposerUI();
+    } catch (err) {
+      console.warn("[Events Hub] Invalid agent_status event:", err);
+    }
   });
 
   eventSource.addEventListener("approval_required", async (event) => {
@@ -2698,7 +2714,9 @@ function isAnyAssistantInProgress() {
 }
 
 function updateComposerUI() {
-  const processing = state.isProcessing || isAnyAssistantInProgress();
+  const remoteBusy = state.agentBusy || isAnyAssistantInProgress();
+  const processing = state.isProcessing || remoteBusy;
+  const awaitingApproval = !!state.pendingApproval && !processing;
   const bootstrapping = !state.bootstrapReady;
   if (els.sendBtn) {
     els.sendBtn.disabled = bootstrapping;
@@ -2717,6 +2735,14 @@ function updateComposerUI() {
     if (els.sendBtn) els.sendBtn.textContent = "Queue";
     if (els.cacheState) {
       els.cacheState.textContent = "processing...";
+      els.cacheState.style.borderColor = "var(--accent-2)";
+      els.cacheState.style.color = "var(--accent-2)";
+    }
+  } else if (awaitingApproval) {
+    if (els.skipBtn) els.skipBtn.style.display = "none";
+    if (els.sendBtn) els.sendBtn.textContent = "Send";
+    if (els.cacheState) {
+      els.cacheState.textContent = "awaiting approval";
       els.cacheState.style.borderColor = "var(--accent-2)";
       els.cacheState.style.color = "var(--accent-2)";
     }
@@ -2859,9 +2885,9 @@ function renderMessages() {
       message.content.startsWith("Media pre-processing context")
     );
 
-    // For remote (Telegram) in-progress messages, synthesize waiting/streaming states
+    // For remote (Telegram/background) in-progress messages, synthesize waiting/streaming states
     const isLastMsg = message === grouped[grouped.length - 1];
-    const isRemoteProcessing = lastAssistantInProgress && isLastMsg;
+    const isRemoteProcessing = (lastAssistantInProgress || state.agentBusy) && isLastMsg && message.role === "assistant";
     const effectiveWaiting = message.waiting || isRemoteProcessing;
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 
@@ -4323,6 +4349,7 @@ async function loadSession(id) {
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.activePlan = sess.active_plan || null;
     state.pendingApproval = normalizeApprovalPayload(sess.pending_approval || null);
+    state.agentBusy = !!sess.agent_busy;
     renderPinnedPlan();
     renderApprovalCard();
     state.messages = normalizeRawMessages(sess.messages || []);
@@ -4332,6 +4359,7 @@ async function loadSession(id) {
     updateContextBar();
     renderSessions();
     els.prompt.focus();
+    updateComposerUI();
   } catch (e) {
     console.warn("loadSession failed:", e);
   }

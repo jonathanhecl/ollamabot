@@ -76,6 +76,11 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		deps.OnSleepActivity()
 	}
 
+	if strings.TrimSpace(req.SessionID) != "" {
+		sessions.MarkProcessing(req.SessionID)
+		defer sessions.MarkIdle(req.SessionID)
+	}
+
 	result := TurnResult{ModelUsed: model}
 	mr := router.New(deps.Client, RouterConfig(cfg, model, deps.CachePath))
 	mediaRes, err := mr.ResolveMessages(ctx, req.Messages)

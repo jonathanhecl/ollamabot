@@ -151,3 +151,13 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 
 - API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.
 - Boton **Skills** en la Web UI con modales de listado, detalle y edicion (patron Memory Explorer).
+
+## Estado de agente sincronizado web/Telegram (2026-06-24)
+
+- `sessions.MarkProcessing` / `MarkIdle` rastrean turnos activos del agente (engine, PlanMonitor, GoalManager).
+- La API de sesion expone `agent_busy`; SSE emite `agent_status` en cada cambio.
+- La web muestra `processing...` / `awaiting approval` en la barra de estado y spinner en el timeline cuando Telegram o tareas en background estan ejecutando tools.
+
+## Mensajes internos ocultos en web (2026-06-24)
+
+- Prompts internos del loop (plan monitor, enforcement de plan/TODO) ya no se persisten ni se muestran como burbujas en la timeline web.

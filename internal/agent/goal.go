@@ -261,6 +261,9 @@ func (g *GoalManager) ClearGoal(sessionID string) error {
 
 func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objective string) {
 	log.Printf("[GoalManager] Starting background loop for session: %s, goal: %q", sessionID, objective)
+	sessions.MarkProcessing(sessionID)
+	defer sessions.MarkIdle(sessionID)
+
 	maxCycles := 20
 	cycleDelay := 5 * time.Second
 
