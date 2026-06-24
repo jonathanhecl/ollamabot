@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
@@ -15,6 +16,64 @@ type mockPlanConfirmationHandler struct {
 	lastSteps   []string
 	response    bool
 	called      bool
+}
+
+func TestDeferPlanContinuation(t *testing.T) {
+	store := sessions.NewStore(t.TempDir())
+	sess := sessions.Session{
+		ID:    sessions.GenerateID(),
+		Title: "Plan session",
+		Model: "test-model",
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if _, err := sessions.ActivatePlan(store, sess.ID, "Do work", []string{"First", "Second"}); err != nil {
+		t.Fatalf("ActivatePlan failed: %v", err)
+	}
+
+	var progress sessions.SessionPlan
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSessionID(sess.ID)
+	registry.SetSessionStore(store)
+	registry.SetPlanProgressHandler(func(sessionID string, plan sessions.SessionPlan) {
+		progress = plan
+	})
+
+	argsBytes, _ := json.Marshal(map[string]any{
+		"reason":            "waiting for a long-running external check",
+		"resume_after":      "30m",
+		"follow_up_summary": "Continue with the second step.",
+		"user_message":      "I paused this plan and will resume it later.",
+	})
+	call := ollama.ToolCall{
+		Type: "function",
+		Function: ollama.ToolFunction{
+			Name:      "defer_plan_continuation",
+			Arguments: argsBytes,
+		},
+	}
+
+	res, err := registry.Execute(context.Background(), call)
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if !strings.Contains(res, "I paused this plan") {
+		t.Fatalf("expected user message in result, got %q", res)
+	}
+	loaded, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	if loaded.ActivePlan == nil || loaded.ActivePlan.Status != sessions.PlanStatusDeferred {
+		t.Fatalf("expected deferred plan, got %#v", loaded.ActivePlan)
+	}
+	if loaded.ActivePlan.DeferredUntil == nil || !loaded.ActivePlan.DeferredUntil.After(time.Now()) {
+		t.Fatalf("expected future defer time, got %#v", loaded.ActivePlan.DeferredUntil)
+	}
+	if progress.Status != sessions.PlanStatusDeferred {
+		t.Fatalf("expected progress handler to receive deferred plan, got %#v", progress)
+	}
 }
 
 func (m *mockPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, summary string, steps []string) (bool, error) {

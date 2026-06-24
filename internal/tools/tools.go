@@ -157,6 +157,26 @@ func (r *Registry) ActiveSessionPlan() (*sessions.SessionPlan, error) {
 	return &plan, nil
 }
 
+func parsePlanResumeAfter(value string, now time.Time) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("resume_after is required")
+	}
+	if d, err := time.ParseDuration(value); err == nil {
+		if d <= 0 {
+			return time.Time{}, fmt.Errorf("resume_after duration must be positive")
+		}
+		return now.Add(d), nil
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		if !t.After(now) {
+			return time.Time{}, fmt.Errorf("resume_after timestamp must be in the future")
+		}
+		return t, nil
+	}
+	return time.Time{}, fmt.Errorf("resume_after must be a positive duration (e.g. 30m, 2h) or an RFC3339 timestamp")
+}
+
 // NewRegistry creates a registry with the given feature toggles.
 func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, client *ollama.Client, embedModel string, searchCfg SearchConfig) *Registry {
 	r := &Registry{
@@ -617,6 +637,37 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["defer_plan_continuation"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "defer_plan_continuation",
+			Description: "Pause an approved active plan without abandoning it. Use only when the plan cannot be continued in the current turn; you must explain the reason, when to resume, and what remains for the user.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"reason": map[string]any{
+						"type":        "string",
+						"description": "Why the plan cannot continue right now.",
+					},
+					"resume_after": map[string]any{
+						"type":        "string",
+						"description": "When to resume. Accepts a Go duration like '30m', '2h', or an RFC3339 timestamp.",
+					},
+					"follow_up_summary": map[string]any{
+						"type":        "string",
+						"description": "Short summary of the remaining work to continue later.",
+					},
+					"user_message": map[string]any{
+						"type":        "string",
+						"description": "Clear message to show the user explaining the pause and follow-up.",
+					},
+				},
+				"required": []string{"reason", "resume_after", "follow_up_summary", "user_message"},
+			},
+		},
+	})
+
 	// Register Generate Image Tool (enabled when image model is configured)
 	r.enabled["generate_image"] = true
 	r.defs = append(r.defs, ollama.Tool{
@@ -1047,7 +1098,20 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return fmt.Sprintf("Plan already approved (step %d of %d: %s). Proceed with execution; do not call present_plan again.", current, len(activePlan.Steps), stepText), nil
 		}
 		if r.planConfirmationHandler == nil {
-			return "Plan auto-approved (no client handler configured). Proceeding with execution.", nil
+			store := r.sessionStore
+			if store == nil && strings.TrimSpace(r.sessionsPath) != "" {
+				store = sessions.NewStore(r.sessionsPath)
+			}
+			if store != nil && strings.TrimSpace(r.sessionID) != "" {
+				plan, err := sessions.ActivatePlan(store, r.sessionID, summary, steps)
+				if err != nil {
+					return "", err
+				}
+				if r.planProgressHandler != nil {
+					r.planProgressHandler(r.sessionID, plan)
+				}
+			}
+			return "Plan auto-approved and activated. Proceeding with execution.", nil
 		}
 		approved, err := r.planConfirmationHandler.RequestPlanApproval(ctx, summary, steps)
 		if err != nil {
@@ -1055,6 +1119,9 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		if !approved {
 			return "Plan rejected by the user. Please stop and ask the user for clarification or propose a new plan.", nil
+		}
+		if activePlan, planErr := r.ActiveSessionPlan(); planErr == nil && activePlan != nil && r.planProgressHandler != nil {
+			r.planProgressHandler(r.sessionID, *activePlan)
 		}
 		return "Plan approved by the user. Proceed with the steps.", nil
 	case "complete_plan_step":
@@ -1077,6 +1144,36 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			r.planProgressHandler(r.sessionID, plan)
 		}
 		return message, nil
+	case "defer_plan_continuation":
+		reason, _ := args["reason"].(string)
+		resumeAfter, _ := args["resume_after"].(string)
+		followUpSummary, _ := args["follow_up_summary"].(string)
+		userMessage, _ := args["user_message"].(string)
+		if strings.TrimSpace(userMessage) == "" {
+			return "", fmt.Errorf("user_message is required")
+		}
+		resumeAt, err := parsePlanResumeAfter(resumeAfter, time.Now())
+		if err != nil {
+			return "", err
+		}
+		store := r.sessionStore
+		if store == nil && strings.TrimSpace(r.sessionsPath) != "" {
+			store = sessions.NewStore(r.sessionsPath)
+		}
+		if store == nil {
+			return "", fmt.Errorf("session store is required to defer a plan")
+		}
+		if strings.TrimSpace(r.sessionID) == "" {
+			return "", fmt.Errorf("session ID is required to defer a plan")
+		}
+		plan, message, err := sessions.DeferPlanContinuation(store, r.sessionID, reason, resumeAt, followUpSummary)
+		if err != nil {
+			return "", err
+		}
+		if r.planProgressHandler != nil {
+			r.planProgressHandler(r.sessionID, plan)
+		}
+		return userMessage + "\n\n" + message, nil
 	case "generate_image":
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {

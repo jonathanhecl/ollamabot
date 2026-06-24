@@ -3748,6 +3748,20 @@ textarea {
   background: linear-gradient(135deg, rgba(208, 255, 65, 0.06), rgba(255, 255, 255, 0.02));
 }
 
+.pinned-plan {
+  flex: 0 0 auto;
+  padding: 0 18px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.pinned-plan .plan-checklist {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  background: linear-gradient(135deg, rgba(208, 255, 65, 0.09), rgba(99, 210, 255, 0.04));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+}
+
 .plan-checklist-head {
   display: flex;
   align-items: center;
@@ -3779,11 +3793,20 @@ textarea {
   color: #ef4444;
 }
 
+.plan-checklist-status.deferred {
+  color: var(--accent-2);
+}
+
 .plan-checklist-summary {
   margin: 0 0 10px;
   color: var(--text);
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.plan-checklist-summary.muted {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .plan-checklist-list {

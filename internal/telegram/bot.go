@@ -234,6 +234,7 @@ type Bot struct {
 	memoryStore          *memory.Store
 	autoMgr              *agent.AutonomousManager
 	goalMgr              *agent.GoalManager
+	planMonitor          *agent.PlanMonitor
 	apiBase              string
 	httpClient           *http.Client
 	approvalsMu          sync.Mutex
@@ -286,6 +287,35 @@ func (b *Bot) SetGoalManager(gm *agent.GoalManager) {
 	b.goalMgr = gm
 }
 
+func (b *Bot) SetPlanMonitor(pm *agent.PlanMonitor) {
+	b.planMonitor = pm
+}
+
+func (b *Bot) registerPlanMonitorNotifiers() {
+	b.sessManager.mu.RLock()
+	defer b.sessManager.mu.RUnlock()
+	for chatIDStr, sessionID := range b.sessManager.mapping {
+		chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+		if err != nil {
+			continue
+		}
+		b.registerPlanMonitorNotifier(sessionID, chatID)
+	}
+}
+
+func (b *Bot) registerPlanMonitorNotifier(sessionID string, chatID int64) {
+	if b.planMonitor == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	b.planMonitor.RegisterNotifier(sessionID, func(_ string, plan sessions.SessionPlan, message string) {
+		text := strings.TrimSpace(message)
+		if text == "" {
+			text = sessions.FormatPlanProgressShort(plan)
+		}
+		b.sendMessage(chatID, text, 0, "Markdown")
+	})
+}
+
 // Start initiates the long polling loop
 func (b *Bot) Start(ctx context.Context) error {
 	if err := b.sessManager.Load(); err != nil {
@@ -306,6 +336,9 @@ func (b *Bot) Start(ctx context.Context) error {
 			}
 		}
 		b.sessManager.mu.RUnlock()
+	}
+	if b.planMonitor != nil {
+		b.registerPlanMonitorNotifiers()
 	}
 
 	// Verify ffmpeg presence and log clear warnings in console if missing
@@ -502,6 +535,9 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	}
 	_ = b.sessions.Save(sess)
 	b.sessManager.Set(chatIDStr, sessionID)
+	if chatID, err := strconv.ParseInt(chatIDStr, 10, 64); err == nil {
+		b.registerPlanMonitorNotifier(sessionID, chatID)
+	}
 	sessions.NotifyUpdate(sessionID)
 	return sessionID
 }
@@ -812,6 +848,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			title = "Untitled"
 		}
 		b.sessManager.Set(chatIDStr, sessionID)
+		b.registerPlanMonitorNotifier(sessionID, chatID)
 		b.sendMessage(chatID, fmt.Sprintf("🔄 *Switched to session:* \"%s\"\n• *ID:* `%s`", title, sessionID), 0, "Markdown")
 	case "/goal":
 		if b.goalMgr == nil {
@@ -2280,11 +2317,9 @@ func (b *Bot) forgetPlanMessage(sessionID string) {
 }
 
 func (b *Bot) notifyPlanProgress(sessionID string, plan sessions.SessionPlan) {
-	text := sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
-	if plan.Status == sessions.PlanStatusCompleted {
-		text += "\n\n✅ *Plan completed*"
-	} else {
-		text += "\n\n➡️ *Progress updated*"
+	text := sessions.FormatPlanProgressShort(plan)
+	if plan.Status == sessions.PlanStatusActive && plan.Completed == 0 {
+		text = sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
 	}
 
 	b.planProgressMu.Lock()

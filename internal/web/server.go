@@ -46,6 +46,7 @@ type Server struct {
 	memoryStore         *memory.Store
 	autoMgr             *agent.AutonomousManager
 	goalMgr             *agent.GoalManager
+	planMonitor         *agent.PlanMonitor
 	approvalsMu         sync.Mutex
 	approvals           map[string]chan bool
 	clarificationsMu    sync.Mutex
@@ -175,6 +176,12 @@ func (s *Server) SetGoalManager(gm *agent.GoalManager) {
 func (s *Server) SetAutonomousManager(am *agent.AutonomousManager) {
 	s.mu.Lock()
 	s.autoMgr = am
+	s.mu.Unlock()
+}
+
+func (s *Server) SetPlanMonitor(pm *agent.PlanMonitor) {
+	s.mu.Lock()
+	s.planMonitor = pm
 	s.mu.Unlock()
 }
 
@@ -717,9 +724,21 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if turnRecorder != nil {
 				turnRecorder.UpdatePlanProgress(plan)
 			}
+			current := plan.Completed + 1
+			total := len(plan.Steps)
+			step := ""
+			if total > 0 {
+				if current > total {
+					current = total
+				}
+				step = plan.Steps[current-1]
+			}
 			writeSSE(w, "plan_progress", map[string]any{
 				"session_id":  sessionID,
 				"active_plan": plan,
+				"current":     current,
+				"total":       total,
+				"step":        step,
 				"completed":   plan.Completed,
 				"status":      plan.Status,
 				"summary":     plan.Summary,

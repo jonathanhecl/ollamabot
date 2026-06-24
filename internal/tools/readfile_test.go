@@ -21,6 +21,22 @@ func TestReadFileNormal(t *testing.T) {
 	}
 }
 
+func TestReadFileAbsoluteWorkspacePath(t *testing.T) {
+	ws := t.TempDir()
+	path := filepath.Join(ws, "test.txt")
+	if err := os.WriteFile(path, []byte("file contents"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	content, err := ReadFile(ws, path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if content != "file contents" {
+		t.Fatalf("expected 'file contents', got %q", content)
+	}
+}
+
 func TestReadFileDirectory(t *testing.T) {
 	ws := t.TempDir()
 	subDir := filepath.Join(ws, "subdir")

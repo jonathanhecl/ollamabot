@@ -19,6 +19,29 @@ func TestResolveAndValidatePathNormal(t *testing.T) {
 	}
 }
 
+func TestResolveAndValidatePathAllowsWorkspaceAbsolutePath(t *testing.T) {
+	ws := t.TempDir()
+	target := filepath.Join(ws, "foo", "bar.txt")
+
+	abs, err := ResolveAndValidatePath(ws, target)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if abs != target {
+		t.Fatalf("expected %q, got %q", target, abs)
+	}
+}
+
+func TestResolveAndValidatePathRejectsAbsoluteEscape(t *testing.T) {
+	ws := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "escape.txt")
+
+	_, err := ResolveAndValidatePath(ws, outside)
+	if err == nil {
+		t.Fatal("expected error for absolute path outside workspace")
+	}
+}
+
 func TestResolveAndValidatePathRejectsDotDot(t *testing.T) {
 	ws := t.TempDir()
 

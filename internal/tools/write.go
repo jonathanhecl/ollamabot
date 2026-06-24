@@ -12,10 +12,8 @@ import (
 // ResolveAndValidatePath resolves rawPath against workspace and checks bounds.
 func ResolveAndValidatePath(workspace, rawPath string) (string, error) {
 	clean := filepath.Clean(rawPath)
-	if filepath.IsAbs(clean) {
-		return "", fmt.Errorf("path not allowed (absolute path)")
-	}
-	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	isAbs := filepath.IsAbs(clean)
+	if !isAbs && (clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator))) {
 		return "", fmt.Errorf("path not allowed (contains ..)")
 	}
 
@@ -23,7 +21,10 @@ func ResolveAndValidatePath(workspace, rawPath string) (string, error) {
 	if err != nil {
 		wsAbs = workspace
 	}
-	abs := filepath.Join(wsAbs, clean)
+	abs := clean
+	if !isAbs {
+		abs = filepath.Join(wsAbs, clean)
+	}
 
 	absReal, err := filepath.Abs(abs)
 	if err != nil {

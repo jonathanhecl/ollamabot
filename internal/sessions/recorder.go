@@ -344,14 +344,25 @@ func decodePlanStepArgs(args any) (string, []string) {
 func (r *Recorder) UpdatePlanProgress(plan SessionPlan) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	updated := false
 	for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
 		if r.currentTurn.Steps[i].Type == "plan" {
 			r.currentTurn.Steps[i].Content = plan.Summary
 			r.currentTurn.Steps[i].PlanSteps = append([]string(nil), plan.Steps...)
 			r.currentTurn.Steps[i].Completed = plan.Completed
 			r.currentTurn.Steps[i].Status = plan.Status
+			updated = true
 			break
 		}
+	}
+	if !updated {
+		r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+			Type:      "plan",
+			Content:   plan.Summary,
+			PlanSteps: append([]string(nil), plan.Steps...),
+			Completed: plan.Completed,
+			Status:    plan.Status,
+		})
 	}
 	r.NotifyUpdate(false)
 }

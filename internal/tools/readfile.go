@@ -11,11 +11,10 @@ const maxReadFileSize = 1 << 20 // 1 MiB
 
 // ReadFile reads a text file within the workspace safely.
 func ReadFile(workspace, rawPath string) (string, error) {
-	clean := filepath.Clean(rawPath)
-	if strings.Contains(clean, "..") {
-		return "", fmt.Errorf("path not allowed")
+	abs, err := ResolveAndValidatePath(workspace, rawPath)
+	if err != nil {
+		return "", err
 	}
-	abs := filepath.Join(workspace, clean)
 	real, err := filepath.EvalSymlinks(abs)
 	if err != nil {
 		if os.IsNotExist(err) {

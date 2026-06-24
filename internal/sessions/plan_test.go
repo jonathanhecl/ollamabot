@@ -96,6 +96,25 @@ func TestFormatPlanChecklist(t *testing.T) {
 	}
 }
 
+func TestFormatPlanProgressShort(t *testing.T) {
+	active := SessionPlan{
+		Summary:   "Summary",
+		Steps:     []string{"One", "Two", "Three"},
+		Completed: 1,
+		Status:    PlanStatusActive,
+	}
+	if got := FormatPlanProgressShort(active); got != "Plan: step 2/3 - Two" {
+		t.Fatalf("unexpected active progress: %q", got)
+	}
+
+	completed := active
+	completed.Completed = 3
+	completed.Status = PlanStatusCompleted
+	if got := FormatPlanProgressShort(completed); got != "Plan completed: 3/3 steps done." {
+		t.Fatalf("unexpected completed progress: %q", got)
+	}
+}
+
 func TestNormalizePlanSteps(t *testing.T) {
 	got := NormalizePlanSteps([]string{"1. First step 2. Second step 3. Third step"})
 	if len(got) != 3 {

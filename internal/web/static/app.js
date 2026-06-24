@@ -148,6 +148,7 @@ const els = {
   capabilityBar: document.querySelector("#capabilityBar"),
   capabilityBadges: document.querySelector("#capabilityBadges"),
   attachments: document.querySelector("#attachments"),
+  pinnedPlan: document.querySelector("#pinnedPlan"),
   modelsDialog: document.querySelector("#modelsDialog"),
   settingsDialog: document.querySelector("#settingsDialog"),
   imageDialog: document.querySelector("#imageDialog"),
@@ -2375,6 +2376,7 @@ async function processNextQueueItem() {
       },
       plan_progress: (value) => {
         state.activePlan = value?.active_plan || null;
+        renderPinnedPlan();
         renderMessages();
       },
       media_pre_processing: (value) => {
@@ -2564,6 +2566,7 @@ async function processNextQueueItem() {
       done: (value) => {
         if (value && Object.prototype.hasOwnProperty.call(value, "active_plan")) {
           state.activePlan = value.active_plan || null;
+          renderPinnedPlan();
         }
         // Accumulate performance metrics from intermediate Ollama done payloads
         if (value && value.total_duration) {
@@ -2586,7 +2589,8 @@ async function processNextQueueItem() {
         }
         assistant.streaming = false;
         const hasRunningTools = assistant.steps.some(s => s.type === "tool_exec" && s.status === "running");
-        if (hasRunningTools) {
+        const planStillRunning = isActivePlanPending(state.activePlan);
+        if (hasRunningTools || planStillRunning) {
           assistant.waiting = true;
         }
         renderMessages();
@@ -2814,14 +2818,14 @@ function renderMessages() {
 
     // Build steps HTML (interleaved thinking / tool blocks).
     const steps = message.steps || [];
-    const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && state.activePlan && state.activePlan.status === "active";
+    const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && isPlanPinned(state.activePlan);
     const stepsHtml = steps
       .filter((s) => !(hideInlinePlanSteps && s.type === "plan"))
       .map((s, idx) => {
       const isLastStep = idx === steps.length - 1;
       return renderStep(s, effectiveStreaming, isLastStep);
     }).join("");
-    const activePlanHtml = message.role === "assistant" && isLastMsg && state.activePlan && state.activePlan.status === "active"
+    const activePlanHtml = message.role === "assistant" && isLastMsg && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
       ? renderPlanChecklist(state.activePlan, "progress")
       : "";
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
@@ -3654,11 +3658,20 @@ function renderPlanChecklist(plan, variant = "inline") {
     `;
   }).join("");
   const summaryHtml = summary ? `<p class="plan-checklist-summary">${escapeHtml(summary)}</p>` : "";
+  const deferredUntil = plan?.deferred_until ? new Date(plan.deferred_until) : null;
+  const deferredText = deferredUntil && !Number.isNaN(deferredUntil.getTime())
+    ? `Paused until ${deferredUntil.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+    : "Paused";
   const statusHtml = status === "completed"
     ? `<span class="plan-checklist-status done">Completed</span>`
     : status === "rejected"
       ? `<span class="plan-checklist-status rejected">Rejected</span>`
+      : status === "deferred"
+        ? `<span class="plan-checklist-status deferred">${escapeHtml(deferredText)}</span>`
       : `<span class="plan-checklist-status">Step ${Math.min(completed + 1, steps.length || 1)} of ${steps.length || 1}</span>`;
+  const followUpHtml = status === "deferred" && plan?.follow_up_summary
+    ? `<p class="plan-checklist-summary muted">${escapeHtml(plan.follow_up_summary)}</p>`
+    : "";
   return `
     <section class="plan-checklist ${variant}">
       <div class="plan-checklist-head">
@@ -3666,9 +3679,30 @@ function renderPlanChecklist(plan, variant = "inline") {
         ${statusHtml}
       </div>
       ${summaryHtml}
+      ${followUpHtml}
       <ol class="plan-checklist-list">${items}</ol>
     </section>
   `;
+}
+
+function isActivePlanPending(plan) {
+  const steps = Array.isArray(plan?.steps) ? plan.steps : [];
+  return !!plan && plan.status === "active" && Number(plan.completed || 0) < steps.length;
+}
+
+function isPlanPinned(plan) {
+  return !!plan && (plan.status === "active" || plan.status === "deferred");
+}
+
+function renderPinnedPlan() {
+  if (!els.pinnedPlan) return;
+  if (!isPlanPinned(state.activePlan)) {
+    els.pinnedPlan.style.display = "none";
+    els.pinnedPlan.innerHTML = "";
+    return;
+  }
+  els.pinnedPlan.innerHTML = renderPlanChecklist(state.activePlan, "pinned");
+  els.pinnedPlan.style.display = "block";
 }
 
 function showPlanConfirmationCard(id, summary, steps) {
@@ -3739,6 +3773,7 @@ async function respondToPlanConfirmation(id, approved) {
       const data = await res.json();
       if (Object.prototype.hasOwnProperty.call(data, "active_plan")) {
         state.activePlan = data.active_plan || null;
+        renderPinnedPlan();
         renderMessages();
       }
     }
@@ -4153,6 +4188,7 @@ async function loadSession(id) {
         state.messages = [];
         state.attachments = [];
         state.activePlan = null;
+        renderPinnedPlan();
         await createSession();
       }
       return;
@@ -4161,6 +4197,7 @@ async function loadSession(id) {
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.activePlan = sess.active_plan || null;
+    renderPinnedPlan();
     state.messages = normalizeRawMessages(sess.messages || []);
     syncActiveModel();
     renderMessages();

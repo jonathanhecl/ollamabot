@@ -125,6 +125,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	}
 
 	emptyChatErrRetries := 0
+	planStepHasAction := false
+	planTextOnlyRetries := 0
 
 	for i := 0; i < MaxIterations; i++ {
 		var systemPrefix []ollama.Message
@@ -202,7 +204,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 		// Inject the current goal reinforcement
 		if goal != "" {
-			goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done.", goal)
+			goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: goalReinforce,
@@ -230,7 +232,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				currentIdx = len(activePlan.Steps) - 1
 			}
 			currentStep := activePlan.Steps[currentIdx]
-			planReinforce := fmt.Sprintf("An approved execution plan is already active.\nSummary: %s\nCurrent step %d of %d: %s\nDo NOT call present_plan again. Execute the current step using the appropriate tools, then call complete_plan_step exactly once when the full top-level step is finished before moving to the next step.",
+			planReinforce := fmt.Sprintf("An approved execution plan is already active.\nSummary: %s\nCurrent step %d of %d: %s\nDo NOT call present_plan again. Execute the current step using the appropriate tools, then call complete_plan_step exactly once when the full top-level step is finished before moving to the next step. Do NOT respond with promises such as \"I will proceed\", \"I will investigate\", or \"I will do this later\" unless you either call a tool now or call defer_plan_continuation with a clear user-facing follow-up message.",
 				activePlan.Summary, activePlan.Completed+1, len(activePlan.Steps), currentStep)
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
@@ -498,7 +500,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				// Execute tool
-				result, terr := a.registry.Execute(ctx, call)
+				var result string
+				var terr error
+				if toolName == "complete_plan_step" && !planStepHasAction {
+					terr = fmt.Errorf("you must execute at least one action tool for the current plan step before calling complete_plan_step")
+					result = fmt.Sprintf("Error: %v", terr)
+				} else {
+					result, terr = a.registry.Execute(ctx, call)
+				}
 				if terr != nil {
 					result = fmt.Sprintf("Error: %v", terr)
 				}
@@ -602,6 +611,16 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// Remember observed paths
 				isError := terr != nil || strings.HasPrefix(result, "Error")
 				a.paths.RememberToolResult(toolName, params, result, isError)
+				if !isError {
+					switch toolName {
+					case "complete_plan_step":
+						planStepHasAction = false
+						planTextOnlyRetries = 0
+					case "present_plan", "ask_clarification", "defer_plan_continuation":
+					default:
+						planStepHasAction = true
+					}
+				}
 
 				if handler != nil {
 					handler.OnToolResult(toolName, result)
@@ -640,12 +659,18 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			continue
 		}
 
-		// 10. Enforce active plan execution: refuse to end loop while plan steps remain
-		if hasActivePlanSteps && activePlan != nil {
+		// 10. Enforce active plan execution: refuse to end loop while plan steps remain.
+		activePlan, _ = a.registry.ActiveSessionPlan()
+		hasActivePlanSteps = activePlan != nil && activePlan.Status == "active" && activePlan.Completed < len(activePlan.Steps)
+		if hasActivePlanSteps {
+			if planTextOnlyRetries >= 5 {
+				return messages, fmt.Errorf("agent stalled on plan step %d of %d: %s", activePlan.Completed+1, len(activePlan.Steps), activePlan.Steps[activePlan.Completed])
+			}
+			planTextOnlyRetries++
 			currentStep := activePlan.Steps[activePlan.Completed]
 			messages = append(messages, ollama.Message{
 				Role: "system",
-				Content: fmt.Sprintf("There is an approved plan with remaining steps (currently step %d of %d: %s). Continue executing the current step with tool calls — do not finish the turn with plain text. Call complete_plan_step only after the full top-level step is done.",
+				Content: fmt.Sprintf("There is an approved plan with remaining steps (currently step %d of %d: %s). Continue executing the current step with tool calls — do not finish the turn with plain text or promises. Call complete_plan_step only after at least one action tool has been executed for this top-level step. If this work must happen later, call defer_plan_continuation and clearly notify the user.",
 					activePlan.Completed+1, len(activePlan.Steps), currentStep),
 			})
 			continue
