@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 type mockApprovalHandler struct {
@@ -25,26 +27,11 @@ func (m *mockApprovalHandler) RequestApproval(ctx context.Context, toolName stri
 }
 
 func TestApprovalHandlerRiskyTools(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "ollamabot_test_*")
-	if err != nil {
-		t.Fatalf("failed to create temp dir: %v", err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// We create a directory named "workspace" inside the temp directory to test safe path bypass,
-	// and also keep the temp root as the "outside" path.
-	workspaceDir := filepath.Join(tmpDir, "workspace")
-	if err := os.MkdirAll(workspaceDir, 0755); err != nil {
-		t.Fatalf("failed to create workspace dir: %v", err)
-	}
-
-	registry := NewRegistry(false, tmpDir, nil, nil, "", SearchConfig{})
+	workspaceDir := t.TempDir()
+	registry := NewRegistry(false, workspaceDir, nil, nil, "", SearchConfig{})
 	handler := &mockApprovalHandler{response: true}
 	registry.SetApprovalHandler(handler)
 
-	// 1. Risky tool (Write) to a file OUTSIDE a folder named "workspace"
-	// Since r.workspace is set to tmpDir, writing to "test.txt" will resolve to tmpDir/test.txt,
-	// which does NOT contain "workspace" as a segment in its absolute path.
 	args := map[string]any{
 		"file_path": "test.txt",
 		"contents":  "hello approval",
@@ -58,26 +45,34 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 		},
 	}
 
-	_, err = registry.Execute(context.Background(), call)
+	_, err := registry.Execute(context.Background(), call)
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
-
-	if !handler.called {
-		t.Error("expected ApprovalHandler to be called for file outside workspace segment")
+	if handler.called {
+		t.Error("expected ApprovalHandler to be bypassed for files inside the configured workspace")
 	}
-	if handler.lastTool != "Write" {
-		t.Errorf("expected tool to be 'Write', got %q", handler.lastTool)
+	writtenContent, err := os.ReadFile(filepath.Join(workspaceDir, "test.txt"))
+	if err != nil {
+		t.Fatalf("failed to read written file: %v", err)
+	}
+	if string(writtenContent) != "hello approval" {
+		t.Errorf("expected content 'hello approval', got %q", string(writtenContent))
 	}
 
-	// Clean up written file
-	_ = os.Remove(filepath.Join(tmpDir, "test.txt"))
-
-	// 2. Test DENIAL
 	handler.called = false
 	handler.response = false
 
-	res, err := registry.Execute(context.Background(), call)
+	execArgs := map[string]any{"command": "python3", "args": []any{"-V"}}
+	execArgsBytes, _ := json.Marshal(execArgs)
+	execCall := ollama.ToolCall{
+		Type: "function",
+		Function: ollama.ToolFunction{
+			Name:      "execute_command",
+			Arguments: execArgsBytes,
+		},
+	}
+	res, err := registry.Execute(context.Background(), execCall)
 	if err != nil {
 		t.Fatalf("execute failed: %v", err)
 	}
@@ -87,41 +82,59 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 	if !handler.called {
 		t.Error("expected ApprovalHandler to be called")
 	}
-
-	// 3. Test Bypassing approval for path INSIDE a folder named "workspace"
-	// Write to "workspace/test.txt", which resolves to tmpDir/workspace/test.txt.
-	// This absolute path contains the segment "workspace", so it should bypass approval!
-	handler.called = false
-	handler.response = true
-
-	safeArgs := map[string]any{
-		"file_path": "workspace/test.txt",
-		"contents":  "hello safe",
+	if handler.lastTool != "execute_command" {
+		t.Errorf("expected tool to be 'execute_command', got %q", handler.lastTool)
 	}
-	safeArgsBytes, _ := json.Marshal(safeArgs)
-	safeCall := ollama.ToolCall{
-		Type: "function",
-		Function: ollama.ToolFunction{
-			Name:      "Write",
-			Arguments: safeArgsBytes,
-		},
-	}
+}
 
-	_, err = registry.Execute(context.Background(), safeCall)
+func TestApprovalSignatureNormalizesDuplicateCommand(t *testing.T) {
+	workspace := t.TempDir()
+	sigA, labelA := sessions.FormatApprovalSignature("execute_command", map[string]any{
+		"command": "python3",
+		"args":    []any{"test_extraction_script.py"},
+	}, workspace)
+	sigB, labelB := sessions.FormatApprovalSignature("execute_command", map[string]any{
+		"command": "python3",
+		"args":    []any{"python3", "test_extraction_script.py"},
+	}, workspace)
+
+	if sigA != sigB {
+		t.Fatalf("expected duplicate command signature to normalize, got %q vs %q", sigA, sigB)
+	}
+	if labelA != labelB {
+		t.Fatalf("expected duplicate command labels to normalize, got %q vs %q", labelA, labelB)
+	}
+}
+
+func TestApprovalServiceSessionGrant(t *testing.T) {
+	store := sessions.NewStore(t.TempDir())
+	sess := sessions.Session{ID: "approval-session", Title: "Approval", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	service := sessions.NewApprovalService(store, t.TempDir())
+	args := map[string]any{"command": "python3", "args": []any{"test_extraction_script.py"}}
+
+	rememberSent := false
+	var respondErr error
+	service.RegisterNotifier(sess.ID, func(_ string, approval sessions.PendingApproval) {
+		rememberSent = true
+		respondErr = service.RespondApproval(approval.ID, sessions.ApprovalDecision{Approved: true, RememberForSession: true})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	approved, err := service.RequestApproval(ctx, sess.ID, "execute_command", args)
 	if err != nil {
-		t.Fatalf("execute failed: %v", err)
+		t.Fatalf("request approval: %v", err)
 	}
-
-	if handler.called {
-		t.Error("expected ApprovalHandler to be BYPASSED for file inside 'workspace' folder segment")
+	if !approved {
+		t.Fatal("expected approval")
 	}
-
-	// Check that file was actually written
-	writtenContent, err := os.ReadFile(filepath.Join(workspaceDir, "test.txt"))
-	if err != nil {
-		t.Fatalf("failed to read written file: %v", err)
+	if !rememberSent || respondErr != nil {
+		t.Fatalf("notifier response failed: sent=%v err=%v", rememberSent, respondErr)
 	}
-	if string(writtenContent) != "hello safe" {
-		t.Errorf("expected content 'hello safe', got %q", string(writtenContent))
+	if !service.HasGrant(sess.ID, "execute_command", args) {
+		loaded, _ := store.Get(sess.ID)
+		t.Fatalf("expected session grant, pending=%#v grants=%#v", loaded.PendingApproval, loaded.ApprovalGrants)
 	}
 }

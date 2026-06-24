@@ -325,6 +325,49 @@ func (r *Recorder) OnToolResult(name string, result string) {
 	r.NotifyUpdate(true)
 }
 
+func (r *Recorder) OnApprovalPending(tool string, args any, label string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.getOrCreateCurrentAssistantMsg()
+	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+		Type:      "approval_pending",
+		Name:      tool,
+		Content:   label,
+		Arguments: args,
+		Status:    "running",
+	})
+	r.mu.Unlock()
+	r.NotifyUpdate(true)
+}
+
+func (r *Recorder) OnApprovalResolved(tool string, approved bool, remembered bool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	status := "denied"
+	result := "Denied by user."
+	if approved {
+		status = "approved"
+		result = "Approved by user."
+		if remembered {
+			result = "Approved for this session."
+		}
+	}
+	for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {
+		if r.currentTurn.Steps[i].Type == "approval_pending" && r.currentTurn.Steps[i].Name == tool && r.currentTurn.Steps[i].Status == "running" {
+			r.currentTurn.Steps[i].Type = "approval_resolved"
+			r.currentTurn.Steps[i].Status = status
+			r.currentTurn.Steps[i].Result = result
+			break
+		}
+	}
+	r.mu.Unlock()
+	r.NotifyUpdate(true)
+}
+
 func decodePlanStepArgs(args any) (string, []string) {
 	var payload struct {
 		Summary string   `json:"summary"`

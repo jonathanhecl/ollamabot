@@ -232,6 +232,7 @@ type Bot struct {
 	sessions             *sessions.Store
 	sessManager          *SessionManager
 	memoryStore          *memory.Store
+	approvalService      *sessions.ApprovalService
 	autoMgr              *agent.AutonomousManager
 	goalMgr              *agent.GoalManager
 	planMonitor          *agent.PlanMonitor
@@ -245,6 +246,8 @@ type Bot struct {
 	planConfirmations    map[string]pendingPlanConfirmation
 	planProgressMu       sync.Mutex
 	planProgressMessages map[string]telegramPlanMessage
+	approvalNotifyMu     sync.Mutex
+	approvalNotifiers    map[string]bool
 	sleepMgr             *learning.SleepManager
 	envPath              string
 	msgIDMu              sync.RWMutex
@@ -254,12 +257,14 @@ type Bot struct {
 func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	token := cfg.TelegramBotToken
 	ms := memory.NewStore(cfg.MemoryPath)
+	ss := sessions.NewStore(cfg.SessionsPath)
 	return &Bot{
 		cfg:                  cfg,
 		client:               client,
-		sessions:             sessions.NewStore(cfg.SessionsPath),
+		sessions:             ss,
 		sessManager:          NewSessionManager(cfg.SessionsPath),
 		memoryStore:          ms,
+		approvalService:      sessions.NewApprovalService(ss, cfg.Workspace),
 		autoMgr:              agent.NewAutonomousManager(cfg, client, ms),
 		goalMgr:              agent.NewGoalManager(cfg, client),
 		apiBase:              "https://api.telegram.org/bot" + token,
@@ -268,6 +273,7 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 		clarifications:       make(map[string]pendingClarification),
 		planConfirmations:    make(map[string]pendingPlanConfirmation),
 		planProgressMessages: make(map[string]telegramPlanMessage),
+		approvalNotifiers:    make(map[string]bool),
 		msgIDMap:             make(map[string]map[int64]int),
 		envPath:              ".env",
 	}
@@ -289,6 +295,12 @@ func (b *Bot) SetGoalManager(gm *agent.GoalManager) {
 
 func (b *Bot) SetPlanMonitor(pm *agent.PlanMonitor) {
 	b.planMonitor = pm
+}
+
+func (b *Bot) SetApprovalService(service *sessions.ApprovalService) {
+	if service != nil {
+		b.approvalService = service
+	}
 }
 
 func (b *Bot) registerPlanMonitorNotifiers() {
@@ -316,6 +328,40 @@ func (b *Bot) registerPlanMonitorNotifier(sessionID string, chatID int64) {
 	})
 }
 
+func (b *Bot) registerApprovalNotifier(sessionID string, chatID int64) {
+	if b.approvalService == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	b.approvalNotifyMu.Lock()
+	if b.approvalNotifiers[sessionID] {
+		b.approvalNotifyMu.Unlock()
+		return
+	}
+	b.approvalNotifiers[sessionID] = true
+	b.approvalNotifyMu.Unlock()
+
+	b.approvalService.RegisterNotifier(sessionID, func(_ string, approval sessions.PendingApproval) {
+		argsJSON, _ := json.MarshalIndent(approval.Arguments, "", "  ")
+		label := strings.TrimSpace(approval.Label)
+		if label == "" {
+			label = approval.Tool
+		}
+		text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe AI agent is paused waiting for approval:\n\n*Tool:* `%s`\n*Command:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", approval.Tool, label, string(argsJSON))
+		markup := &InlineKeyboardMarkup{
+			InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{Text: "Approve once", CallbackData: "approve:" + approval.ID},
+					{Text: "Approve for session", CallbackData: "approve_remember:" + approval.ID},
+				},
+				{
+					{Text: "Deny", CallbackData: "deny:" + approval.ID},
+				},
+			},
+		}
+		_, _ = b.sendMessageWithMarkup(chatID, text, 0, "Markdown", markup)
+	})
+}
+
 // Start initiates the long polling loop
 func (b *Bot) Start(ctx context.Context) error {
 	if err := b.sessManager.Load(); err != nil {
@@ -340,6 +386,14 @@ func (b *Bot) Start(ctx context.Context) error {
 	if b.planMonitor != nil {
 		b.registerPlanMonitorNotifiers()
 	}
+	b.sessManager.mu.RLock()
+	for chatIDStr, sessionID := range b.sessManager.mapping {
+		chatID, err := strconv.ParseInt(chatIDStr, 10, 64)
+		if err == nil {
+			b.registerApprovalNotifier(sessionID, chatID)
+		}
+	}
+	b.sessManager.mu.RUnlock()
 
 	// Verify ffmpeg presence and log clear warnings in console if missing
 	if _, err := exec.LookPath("ffmpeg"); err == nil {
@@ -537,6 +591,7 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	b.sessManager.Set(chatIDStr, sessionID)
 	if chatID, err := strconv.ParseInt(chatIDStr, 10, 64); err == nil {
 		b.registerPlanMonitorNotifier(sessionID, chatID)
+		b.registerApprovalNotifier(sessionID, chatID)
 	}
 	sessions.NotifyUpdate(sessionID)
 	return sessionID
@@ -849,6 +904,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		}
 		b.sessManager.Set(chatIDStr, sessionID)
 		b.registerPlanMonitorNotifier(sessionID, chatID)
+		b.registerApprovalNotifier(sessionID, chatID)
 		b.sendMessage(chatID, fmt.Sprintf("🔄 *Switched to session:* \"%s\"\n• *ID:* `%s`", title, sessionID), 0, "Markdown")
 	case "/goal":
 		if b.goalMgr == nil {
@@ -1056,11 +1112,12 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	sessions.NotifyUpdate(sessionID)
 
 	turnResult, err := engine.ProcessTurn(ctx, engine.Deps{
-		Config:       b.cfg,
-		Client:       b.client,
-		SessionStore: b.sessions,
-		MemoryStore:  b.memoryStore,
-		CachePath:    snapshotPath(),
+		Config:          b.cfg,
+		Client:          b.client,
+		SessionStore:    b.sessions,
+		MemoryStore:     b.memoryStore,
+		CachePath:       snapshotPath(),
+		ApprovalService: b.approvalService,
 		ApprovalHandler: &telegramApprovalHandler{
 			bot:    b,
 			chatID: chatID,
@@ -2596,7 +2653,7 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 		return
 	}
 
-	if !strings.HasPrefix(data, "approve:") && !strings.HasPrefix(data, "deny:") {
+	if !strings.HasPrefix(data, "approve:") && !strings.HasPrefix(data, "approve_remember:") && !strings.HasPrefix(data, "deny:") {
 		_ = b.answerCallbackQuery(cb.ID, "Unknown action", false)
 		return
 	}
@@ -2604,6 +2661,24 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 	parts := strings.SplitN(data, ":", 2)
 	action := parts[0]
 	approvalID := parts[1]
+
+	if b.approvalService != nil {
+		approved := action == "approve" || action == "approve_remember"
+		remember := action == "approve_remember"
+		if err := b.approvalService.RespondApproval(approvalID, sessions.ApprovalDecision{Approved: approved, RememberForSession: remember}); err == nil {
+			_ = b.answerCallbackQuery(cb.ID, "Response processed", false)
+			if cb.Message != nil {
+				status := "❌ *Denied:* skipped execution."
+				if approved && remember {
+					status = "✅ *Approved for this session:* future identical executions will not ask again."
+				} else if approved {
+					status = "✅ *Approved:* execution will continue."
+				}
+				_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n"+status, "", nil)
+			}
+			return
+		}
+	}
 
 	b.approvalsMu.Lock()
 	ch, ok := b.approvals[approvalID]

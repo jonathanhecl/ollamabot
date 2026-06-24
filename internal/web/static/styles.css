@@ -3650,6 +3650,7 @@ textarea {
 }
 
 /* Inline Clarification Card */
+.approval-card,
 .clarification-card {
   max-width: 85%;
   width: fit-content;
@@ -3661,6 +3662,52 @@ textarea {
   margin: 12px auto;
   position: relative;
   z-index: 10;
+}
+
+.approval-card {
+  border-color: rgba(245, 158, 11, 0.32);
+}
+
+.approval-card-label {
+  color: var(--muted);
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
+.approval-card-args {
+  max-height: 180px;
+  overflow: auto;
+  margin: 8px 0 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.approval-card-note,
+.approval-step-result {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 10px 0 0;
+}
+
+.step-approval {
+  border-color: rgba(245, 158, 11, 0.28);
+}
+
+.step-tool-status.approved,
+.step-tool-status.denied {
+  background: rgba(245, 158, 11, 0.12);
+  color: #f59e0b;
 }
 
 .clarification-header {

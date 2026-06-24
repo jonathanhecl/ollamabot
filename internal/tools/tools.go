@@ -34,6 +34,11 @@ type PlanConfirmationHandler interface {
 // PlanProgressHandler is notified when a session plan advances.
 type PlanProgressHandler func(sessionID string, plan sessions.SessionPlan)
 
+type ApprovalProgressHandler interface {
+	OnApprovalPending(tool string, args any, label string)
+	OnApprovalResolved(tool string, approved bool, remembered bool)
+}
+
 // Registry holds available tool definitions and their handlers.
 type Registry struct {
 	enabled                 map[string]bool
@@ -44,6 +49,7 @@ type Registry struct {
 	embedModel              string
 	todoStore               *TodoStore
 	approvalHandler         ApprovalHandler
+	approvalService         *sessions.ApprovalService
 	clarificationHandler    ClarificationHandler
 	planConfirmationHandler PlanConfirmationHandler
 	planConfirmMode         string
@@ -57,6 +63,7 @@ type Registry struct {
 	sessionsPath            string
 	sessionStore            *sessions.Store
 	planProgressHandler     PlanProgressHandler
+	approvalProgressHandler ApprovalProgressHandler
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -75,6 +82,11 @@ type AttachmentGeneratedHandler interface {
 // SetApprovalHandler assigns a callback handler to approve risky tools.
 func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
 	r.approvalHandler = h
+}
+
+// SetApprovalService assigns the session-aware approval coordinator.
+func (r *Registry) SetApprovalService(s *sessions.ApprovalService) {
+	r.approvalService = s
 }
 
 // SetClarificationHandler assigns a callback handler to ask clarification questions.
@@ -135,6 +147,10 @@ func (r *Registry) SetSessionStore(store *sessions.Store) {
 // SetPlanProgressHandler assigns a callback fired when complete_plan_step advances.
 func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
 	r.planProgressHandler = h
+}
+
+func (r *Registry) SetApprovalProgressHandler(h ApprovalProgressHandler) {
+	r.approvalProgressHandler = h
 }
 
 // ActiveSessionPlan returns the current session plan, if any.
@@ -780,22 +796,13 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Risks check: write/edit/execute operations require approval if a handler is configured
-	if r.approvalHandler != nil && (name == "Write" || name == "Edit" || name == "execute_command") {
+	// Risk check: write/edit outside the workspace and shell commands require approval.
+	if (r.approvalService != nil || r.approvalHandler != nil) && (name == "Write" || name == "Edit" || name == "execute_command") {
 		filePath, _ := args["file_path"].(string)
 		isSafe := false
-		if filePath != "" {
-			if absPath, err := ResolveAndValidatePath(r.workspace, filePath); err == nil {
-				// Check if the path contains a directory named "workspace" or "agent"
-				segments := strings.Split(absPath, string(filepath.Separator))
-				for _, seg := range segments {
-					lowerSeg := strings.ToLower(seg)
-					if lowerSeg == "workspace" || lowerSeg == "agent" {
-						isSafe = true
-						break
-					}
-				}
-			}
+		if name != "execute_command" && filePath != "" {
+			_, err := ResolveAndValidatePath(r.workspace, filePath)
+			isSafe = err == nil
 		}
 
 		// execute_command always requires approval regardless of path
@@ -804,17 +811,43 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		}
 
 		if !isSafe {
-			log.Printf("[tool] Intercepting risky tool %q. Requesting user approval...", name)
-			approved, err := r.approvalHandler.RequestApproval(ctx, name, args)
-			if err != nil {
-				log.Printf("[tool] Approval error for %q: %v", name, err)
-				return "", fmt.Errorf("tool approval failed: %w", err)
+			if r.approvalService != nil && strings.TrimSpace(r.sessionID) != "" {
+				if r.approvalService.HasGrant(r.sessionID, name, args) {
+					log.Printf("[tool] Risky tool %q is approved for this session. Bypassing approval.", name)
+				} else {
+					log.Printf("[tool] Intercepting risky tool %q. Requesting session approval...", name)
+					_, label := sessions.FormatApprovalSignature(name, args, r.workspace)
+					if r.approvalProgressHandler != nil {
+						r.approvalProgressHandler.OnApprovalPending(name, args, label)
+					}
+					approved, err := r.approvalService.RequestApproval(ctx, r.sessionID, name, args)
+					remembered := approved && r.approvalService.HasGrant(r.sessionID, name, args)
+					if r.approvalProgressHandler != nil {
+						r.approvalProgressHandler.OnApprovalResolved(name, approved, remembered)
+					}
+					if err != nil {
+						log.Printf("[tool] Approval error for %q: %v", name, err)
+						return "", fmt.Errorf("tool approval failed: %w", err)
+					}
+					if !approved {
+						log.Printf("[tool] Risky tool %q execution DENIED by user", name)
+						return "Error: Execution denied by user.", nil
+					}
+					log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
+				}
+			} else if r.approvalHandler != nil {
+				log.Printf("[tool] Intercepting risky tool %q. Requesting user approval...", name)
+				approved, err := r.approvalHandler.RequestApproval(ctx, name, args)
+				if err != nil {
+					log.Printf("[tool] Approval error for %q: %v", name, err)
+					return "", fmt.Errorf("tool approval failed: %w", err)
+				}
+				if !approved {
+					log.Printf("[tool] Risky tool %q execution DENIED by user", name)
+					return "Error: Execution denied by user.", nil
+				}
+				log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
 			}
-			if !approved {
-				log.Printf("[tool] Risky tool %q execution DENIED by user", name)
-				return "Error: Execution denied by user.", nil
-			}
-			log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
 		} else {
 			log.Printf("[tool] Risky tool %q is inside safe workspace. Bypassing approval.", name)
 		}

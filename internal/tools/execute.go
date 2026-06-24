@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 // defaultAllowedCommands is the set of executables the agent may call without
@@ -41,6 +43,7 @@ func executeCommand(ctx context.Context, workspace, command string, args []strin
 		return "", fmt.Errorf("command %q is not in the allowed list (%s)", base,
 			strings.Join(allowedList(), ", "))
 	}
+	args = sessions.NormalizeExecuteCommandArgs(base, args, workspace)
 
 	cmd := exec.CommandContext(ctx, command, args...)
 	cmd.Dir = workspace

@@ -25,23 +25,25 @@ type Feedback struct {
 // Session holds a persisted conversation.
 // Messages are stored in a separate file within the session folder.
 type Session struct {
-	ID            string            `json:"id"`
-	Title         string            `json:"title"`
-	Model         string            `json:"model"`
-	Messages      []json.RawMessage `json:"messages,omitempty"`
-	Feedback      []Feedback        `json:"feedback,omitempty"`
-	CreatedAt     time.Time         `json:"created_at"`
-	UpdatedAt     time.Time         `json:"updated_at"`
-	LastMessageAt time.Time         `json:"last_message_at,omitempty"`
-	GoalObjective string            `json:"goal_objective,omitempty"`
-	GoalStatus    string            `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
-	GoalReasoning string            `json:"goal_reasoning,omitempty"` // last evaluator reasoning
-	ActivePlan    *SessionPlan      `json:"active_plan,omitempty"`
+	ID              string                 `json:"id"`
+	Title           string                 `json:"title"`
+	Model           string                 `json:"model"`
+	Messages        []json.RawMessage      `json:"messages,omitempty"`
+	Feedback        []Feedback             `json:"feedback,omitempty"`
+	CreatedAt       time.Time              `json:"created_at"`
+	UpdatedAt       time.Time              `json:"updated_at"`
+	LastMessageAt   time.Time              `json:"last_message_at,omitempty"`
+	GoalObjective   string                 `json:"goal_objective,omitempty"`
+	GoalStatus      string                 `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
+	GoalReasoning   string                 `json:"goal_reasoning,omitempty"` // last evaluator reasoning
+	ActivePlan      *SessionPlan           `json:"active_plan,omitempty"`
+	PendingApproval *PendingApproval       `json:"pending_approval,omitempty"`
+	ApprovalGrants  []SessionApprovalGrant `json:"approval_grants,omitempty"`
 }
 
 // IsEmpty returns true if the session contains no messages, no active goals, and no feedback, AND has a default/empty title.
 func (s Session) IsEmpty() bool {
-	hasContent := len(s.Messages) > 0 || s.GoalObjective != "" || len(s.Feedback) > 0
+	hasContent := len(s.Messages) > 0 || s.GoalObjective != "" || len(s.Feedback) > 0 || s.PendingApproval != nil || len(s.ApprovalGrants) > 0
 	if hasContent {
 		return false
 	}
@@ -197,7 +199,7 @@ var (
 
 	cacheMu      sync.RWMutex
 	sessionCache = make(map[string]map[string]*Session) // full sessions for Get()
-	listCache    = make(map[string]*listCacheState)    // metadata-only list index
+	listCache    = make(map[string]*listCacheState)     // metadata-only list index
 )
 
 type listCacheState struct {
@@ -234,19 +236,34 @@ func cloneSession(s Session) Session {
 		fbCopy = make([]Feedback, len(s.Feedback))
 		copy(fbCopy, s.Feedback)
 	}
+	var approvalGrants []SessionApprovalGrant
+	if s.ApprovalGrants != nil {
+		approvalGrants = make([]SessionApprovalGrant, len(s.ApprovalGrants))
+		copy(approvalGrants, s.ApprovalGrants)
+	}
+	var pendingApproval *PendingApproval
+	if s.PendingApproval != nil {
+		copied := *s.PendingApproval
+		if s.PendingApproval.Arguments != nil {
+			copied.Arguments = cloneApprovalArgs(s.PendingApproval.Arguments)
+		}
+		pendingApproval = &copied
+	}
 	return Session{
-		ID:            s.ID,
-		Title:         s.Title,
-		Model:         s.Model,
-		Messages:      msgsCopy,
-		Feedback:      fbCopy,
-		CreatedAt:     s.CreatedAt,
-		UpdatedAt:     s.UpdatedAt,
-		LastMessageAt: s.LastMessageAt,
-		GoalObjective: s.GoalObjective,
-		GoalStatus:    s.GoalStatus,
-		GoalReasoning: s.GoalReasoning,
-		ActivePlan:    cloneSessionPlan(s.ActivePlan),
+		ID:              s.ID,
+		Title:           s.Title,
+		Model:           s.Model,
+		Messages:        msgsCopy,
+		Feedback:        fbCopy,
+		CreatedAt:       s.CreatedAt,
+		UpdatedAt:       s.UpdatedAt,
+		LastMessageAt:   s.LastMessageAt,
+		GoalObjective:   s.GoalObjective,
+		GoalStatus:      s.GoalStatus,
+		GoalReasoning:   s.GoalReasoning,
+		ActivePlan:      cloneSessionPlan(s.ActivePlan),
+		PendingApproval: pendingApproval,
+		ApprovalGrants:  approvalGrants,
 	}
 }
 

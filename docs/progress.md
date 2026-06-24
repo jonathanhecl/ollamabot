@@ -79,6 +79,7 @@ Hecho:
 - Reglas horizontales Markdown (`***`, `---`, `___`): se renderizan como `<hr>` en la web y como línea visual en Telegram.
 - Agrupación Visual de Respuestas en la Web: Se reimplementó la agrupación de mensajes de asistente consecutivos en la Web UI (en `groupMessagesAndTools`), combinando sus contenidos, pasos de ejecución y métricas de rendimiento (duración, tokens de prompt y de respuesta), y recalculando el promedio de tokens por segundo total. La sesión y la base de datos conservan los mensajes por turnos separados y estructurados.
 - Planes aprobados como contratos autónomos: `SessionPlan` ahora soporta estado `deferred`, `deferred_until`, resumen de seguimiento y `last_progress_at`; el loop del agente exige herramientas reales antes de `complete_plan_step`, reintenta respuestas de texto plano mientras haya pasos activos, y solo puede terminar con plan completado o diferido explícitamente. Se agregó `defer_plan_continuation`, `PlanMonitor` para reanudar planes diferidos o estancados, checklist fija de progreso en la web, avisos compactos en Telegram y tests para ejecución multi-paso, defer y reanudación.
+- Permisos de sesión unificados y loops: las aprobaciones de herramientas ahora se persisten en la sesión como `pending_approval`, se pueden resolver desde Web o Telegram, y admiten grants de sesión para repetir comandos idénticos sin volver a pedir permiso. `execute_command` normaliza argumentos duplicados y el loop del agente corta al detectar llamadas repetitivas sin progreso.
 
 
 Comandos disponibles:

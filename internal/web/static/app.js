@@ -122,6 +122,7 @@ const state = {
   isProcessing: false,
   currentAbortController: null,
   currentApprovalId: null,
+  pendingApproval: null,
   bootstrapReady: false,
 };
 
@@ -209,7 +210,15 @@ const els = {
   approvalToolName: document.querySelector("#approvalToolName"),
   approvalToolArgs: document.querySelector("#approvalToolArgs"),
   approveToolBtn: document.querySelector("#approveToolBtn"),
+  approveToolSessionBtn: document.querySelector("#approveToolSessionBtn"),
   denyToolBtn: document.querySelector("#denyToolBtn"),
+  approvalCard: document.querySelector("#approvalCard"),
+  approvalCardTitle: document.querySelector("#approvalCardTitle"),
+  approvalCardLabel: document.querySelector("#approvalCardLabel"),
+  approvalCardArgs: document.querySelector("#approvalCardArgs"),
+  approvalCardDenyBtn: document.querySelector("#approvalCardDenyBtn"),
+  approvalCardApproveBtn: document.querySelector("#approvalCardApproveBtn"),
+  approvalCardApproveSessionBtn: document.querySelector("#approvalCardApproveSessionBtn"),
   clarificationCard: document.querySelector("#clarificationCard"),
   clarificationQuestion: document.querySelector("#clarificationQuestion"),
   clarificationOptionsContainer: document.querySelector("#clarificationOptionsContainer"),
@@ -603,7 +612,15 @@ els.confirmDialog.addEventListener("close", () => {
 if (els.approveToolBtn) {
   els.approveToolBtn.addEventListener("click", () => {
     if (state.currentApprovalId) {
-      respondToApproval(state.currentApprovalId, true);
+      respondToApproval(state.currentApprovalId, true, false);
+    }
+  });
+}
+
+if (els.approveToolSessionBtn) {
+  els.approveToolSessionBtn.addEventListener("click", () => {
+    if (state.currentApprovalId) {
+      respondToApproval(state.currentApprovalId, true, true);
     }
   });
 }
@@ -611,7 +628,31 @@ if (els.approveToolBtn) {
 if (els.denyToolBtn) {
   els.denyToolBtn.addEventListener("click", () => {
     if (state.currentApprovalId) {
-      respondToApproval(state.currentApprovalId, false);
+      respondToApproval(state.currentApprovalId, false, false);
+    }
+  });
+}
+
+if (els.approvalCardApproveBtn) {
+  els.approvalCardApproveBtn.addEventListener("click", () => {
+    if (state.pendingApproval?.id) {
+      respondToApproval(state.pendingApproval.id, true, false);
+    }
+  });
+}
+
+if (els.approvalCardApproveSessionBtn) {
+  els.approvalCardApproveSessionBtn.addEventListener("click", () => {
+    if (state.pendingApproval?.id) {
+      respondToApproval(state.pendingApproval.id, true, true);
+    }
+  });
+}
+
+if (els.approvalCardDenyBtn) {
+  els.approvalCardDenyBtn.addEventListener("click", () => {
+    if (state.pendingApproval?.id) {
+      respondToApproval(state.pendingApproval.id, false, false);
     }
   });
 }
@@ -1023,6 +1064,17 @@ function startRealtimeEvents() {
         }
       }
     }, 800);
+  });
+
+  eventSource.addEventListener("approval_required", async (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload?.session_id && payload.session_id !== state.activeSessionId) return;
+      state.pendingApproval = payload?.approval || null;
+      renderApprovalCard();
+    } catch (err) {
+      console.warn("[Events Hub] Invalid approval_required event:", err);
+    }
   });
 
   eventSource.onerror = (err) => {
@@ -2366,7 +2418,9 @@ async function processNextQueueItem() {
     }
     await readEventStream(response.body, {
       tool_approval_required: (value) => {
-        showApprovalDialog(value.id, value.tool, value.arguments);
+        state.pendingApproval = normalizeApprovalPayload(value);
+        renderApprovalCard();
+        showApprovalDialog(state.pendingApproval.id, state.pendingApproval.tool, state.pendingApproval.arguments);
       },
       tool_clarification_required: (value) => {
         showClarificationDialog(value.id, value.question, value.options);
@@ -3021,6 +3075,23 @@ function renderStep(step, isLive = false, isLastStep = false) {
         status: step.status || "active",
       }, "inline");
     }
+    case "approval_pending":
+    case "approval_resolved": {
+      const status = step.status || (step.type === "approval_pending" ? "running" : "done");
+      const label = step.content || step.name || "Tool approval";
+      const statusText = status === "running" ? "awaiting approval" : status;
+      let argsText = "";
+      if (step.arguments) {
+        try {
+          argsText = JSON.stringify(typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments, null, 2);
+        } catch {
+          argsText = String(step.arguments || "");
+        }
+      }
+      const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
+      const resultHtml = step.result ? `<p class="approval-step-result">${escapeHtml(String(step.result))}</p>` : "";
+      return `<details class="step step-approval ${escapeHtml(status)}" open><summary><span class="step-tool-icon">🛡️</span> ${escapeHtml(label)} <span class="step-tool-status ${escapeHtml(status)}">${escapeHtml(statusText)}</span></summary>${argsHtml}${resultHtml}</details>`;
+    }
     case "image_progress": {
       let status = step.status;
       if (step.imageURL) {
@@ -3469,6 +3540,39 @@ function writeAscii(view, offset, value) {
 let approvalInterval = null;
 let clarificationInterval = null;
 
+function normalizeApprovalPayload(value) {
+  if (!value) return null;
+  if (value.approval) value = value.approval;
+  return {
+    id: value.id || "",
+    tool: value.tool || "",
+    arguments: value.arguments || {},
+    label: value.label || "",
+    expires_at: value.expires_at || value.expiresAt || "",
+  };
+}
+
+function renderApprovalCard() {
+  const approval = normalizeApprovalPayload(state.pendingApproval);
+  state.pendingApproval = approval;
+  if (!els.approvalCard) return;
+  if (!approval?.id) {
+    els.approvalCard.style.display = "none";
+    return;
+  }
+  els.approvalCardTitle.textContent = `Approve ${approval.tool || "tool"} execution?`;
+  els.approvalCardLabel.textContent = approval.label || approval.tool || "Tool execution";
+  try {
+    els.approvalCardArgs.textContent = JSON.stringify(approval.arguments || {}, null, 2);
+  } catch {
+    els.approvalCardArgs.textContent = String(approval.arguments || "");
+  }
+  if (els.approvalCard.parentNode !== els.messages) {
+    els.messages.appendChild(els.approvalCard);
+  }
+  els.approvalCard.style.display = "block";
+}
+
 function showApprovalDialog(id, toolName, args) {
   if (approvalInterval) {
     clearInterval(approvalInterval);
@@ -3506,7 +3610,7 @@ function showApprovalDialog(id, toolName, args) {
   els.approvalDialog.showModal();
 }
 
-async function respondToApproval(id, approved) {
+async function respondToApproval(id, approved, rememberForSession = false) {
   if (approvalInterval) {
     clearInterval(approvalInterval);
     approvalInterval = null;
@@ -3515,12 +3619,14 @@ async function respondToApproval(id, approved) {
     await fetch("/api/tools/approve", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, approved }),
+      body: JSON.stringify({ id, approved, remember_for_session: rememberForSession }),
     });
   } catch (err) {
     console.error("Failed to send tool approval response:", err);
   } finally {
     state.currentApprovalId = null;
+    state.pendingApproval = null;
+    renderApprovalCard();
     els.approvalDialog.close();
   }
 }
@@ -4188,7 +4294,9 @@ async function loadSession(id) {
         state.messages = [];
         state.attachments = [];
         state.activePlan = null;
+        state.pendingApproval = null;
         renderPinnedPlan();
+        renderApprovalCard();
         await createSession();
       }
       return;
@@ -4197,7 +4305,9 @@ async function loadSession(id) {
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.activePlan = sess.active_plan || null;
+    state.pendingApproval = normalizeApprovalPayload(sess.pending_approval || null);
     renderPinnedPlan();
+    renderApprovalCard();
     state.messages = normalizeRawMessages(sess.messages || []);
     syncActiveModel();
     renderMessages();

@@ -35,6 +35,7 @@ type Deps struct {
 	CachePath    string
 
 	ApprovalHandler         tools.ApprovalHandler
+	ApprovalService         *sessions.ApprovalService
 	ClarificationHandler    tools.ClarificationHandler
 	PlanConfirmationHandler tools.PlanConfirmationHandler
 	StreamHandlerFactory    StreamHandlerFactory
@@ -155,6 +156,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 		TavilyAPIKey: cfg.TavilyAPIKey,
 	})
 	registry.SetApprovalHandler(deps.ApprovalHandler)
+	registry.SetApprovalService(deps.ApprovalService)
 	registry.SetClarificationHandler(deps.ClarificationHandler)
 	registry.SetPlanConfirmationHandler(deps.PlanConfirmationHandler)
 	if deps.ImageProgressFactory != nil {
@@ -166,6 +168,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	registry.SetSessionsPath(cfg.SessionsPath)
 	registry.SetSessionID(sessionID)
 	registry.SetSessionStore(deps.SessionStore)
+	registry.SetApprovalProgressHandler(recorder)
 	if deps.OnPlanProgress != nil {
 		registry.SetPlanProgressHandler(deps.OnPlanProgress)
 	}

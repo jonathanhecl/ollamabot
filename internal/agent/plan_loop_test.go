@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -231,5 +232,59 @@ func TestAgentRunRejectsPlanCompletionWithoutAction(t *testing.T) {
 	}
 	if loaded.ActivePlan == nil || loaded.ActivePlan.Status != sessions.PlanStatusCompleted {
 		t.Fatalf("expected completed plan after valid action, got %#v", loaded.ActivePlan)
+	}
+}
+
+func TestAgentRunStopsRepeatedToolLoop(t *testing.T) {
+	workspace := t.TempDir()
+	toolArgs, _ := json.Marshal(map[string]any{
+		"merge": true,
+		"todos": []map[string]any{{
+			"id":      "repeat",
+			"content": "Repeat",
+			"status":  "completed",
+		}},
+	})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role: "assistant",
+					ToolCalls: []ollama.ToolCall{{
+						Type: "function",
+						Function: ollama.ToolFunction{
+							Name:      "TodoWrite",
+							Arguments: toolArgs,
+						},
+					}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{Workspace: workspace}
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(cfg, client, registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := a.Run(ctx, "test-model", []ollama.Message{{Role: "user", Content: "Repeat a tool call"}}, false, nil)
+	if err == nil {
+		t.Fatal("expected repetitive loop error")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, "detected repetitive loop") {
+		t.Fatalf("expected repetitive loop error, got %v", err)
 	}
 }

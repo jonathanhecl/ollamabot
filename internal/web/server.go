@@ -44,6 +44,7 @@ type Server struct {
 	cachePath           string
 	sessionStore        *sessions.Store
 	memoryStore         *memory.Store
+	approvalService     *sessions.ApprovalService
 	autoMgr             *agent.AutonomousManager
 	goalMgr             *agent.GoalManager
 	planMonitor         *agent.PlanMonitor
@@ -154,6 +155,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		cachePath:         cachePath,
 		sessionStore:      ss,
 		memoryStore:       ms,
+		approvalService:   sessions.NewApprovalService(ss, cfg.Workspace),
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]chan string),
 		planConfirmations: make(map[string]pendingWebPlanConfirmation),
@@ -182,6 +184,12 @@ func (s *Server) SetAutonomousManager(am *agent.AutonomousManager) {
 func (s *Server) SetPlanMonitor(pm *agent.PlanMonitor) {
 	s.mu.Lock()
 	s.planMonitor = pm
+	s.mu.Unlock()
+}
+
+func (s *Server) SetApprovalService(service *sessions.ApprovalService) {
+	s.mu.Lock()
+	s.approvalService = service
 	s.mu.Unlock()
 }
 
@@ -664,13 +672,25 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	sm := s.sleepMgr
 	s.mu.RUnlock()
 
+	var unregisterApproval func()
+	if input.SessionID != "" && s.approvalService != nil {
+		unregisterApproval = s.approvalService.RegisterNotifier(input.SessionID, func(_ string, approval sessions.PendingApproval) {
+			writeSSE(w, "tool_approval_required", approval)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		})
+		defer unregisterApproval()
+	}
+
 	var turnRecorder *sessions.Recorder
 	result, err := engine.ProcessTurn(agentCtx, engine.Deps{
-		Config:       cfg,
-		Client:       client,
-		SessionStore: s.sessionStore,
-		MemoryStore:  s.memoryStore,
-		CachePath:    s.cachePath,
+		Config:          cfg,
+		Client:          client,
+		SessionStore:    s.sessionStore,
+		MemoryStore:     s.memoryStore,
+		CachePath:       s.cachePath,
+		ApprovalService: s.approvalService,
 		ApprovalHandler: &webApprovalHandler{
 			server:  s,
 			w:       w,
@@ -2077,8 +2097,9 @@ func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
 }
 
 type approveToolRequest struct {
-	ID       string `json:"id"`
-	Approved bool   `json:"approved"`
+	ID                 string `json:"id"`
+	Approved           bool   `json:"approved"`
+	RememberForSession bool   `json:"remember_for_session"`
 }
 
 func (s *Server) handleApproveTool(w http.ResponseWriter, r *http.Request) {
@@ -2091,6 +2112,17 @@ func (s *Server) handleApproveTool(w http.ResponseWriter, r *http.Request) {
 	if req.ID == "" {
 		writeError(w, http.StatusBadRequest, fmt.Errorf("missing id"))
 		return
+	}
+
+	if s.approvalService != nil {
+		err := s.approvalService.RespondApproval(req.ID, sessions.ApprovalDecision{
+			Approved:           req.Approved,
+			RememberForSession: req.RememberForSession,
+		})
+		if err == nil {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "processed"})
+			return
+		}
 	}
 
 	s.approvalsMu.Lock()
@@ -2551,6 +2583,12 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		case sessionID := <-ch:
 			writeSSE(w, "session_updated", sessionID)
+			if sess, err := s.sessionStore.Get(sessionID); err == nil && sess.PendingApproval != nil {
+				writeSSE(w, "approval_required", map[string]any{
+					"session_id": sessionID,
+					"approval":   sess.PendingApproval,
+				})
+			}
 			if flusher != nil {
 				flusher.Flush()
 			}

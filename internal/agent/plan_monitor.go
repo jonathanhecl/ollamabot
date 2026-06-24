@@ -21,33 +21,42 @@ const defaultPlanStaleAfter = 10 * time.Minute
 type PlanNotificationFunc func(sessionID string, plan sessions.SessionPlan, message string)
 
 type PlanMonitor struct {
-	mu           sync.RWMutex
-	cfg          config.Config
-	client       *ollama.Client
-	sessionStore *sessions.Store
-	memoryStore  *memory.Store
-	isWorking    map[string]bool
-	cancelFunc   context.CancelFunc
-	tickerDone   chan struct{}
-	interval     time.Duration
-	staleAfter   time.Duration
-	notifiers    map[string]PlanNotificationFunc
+	mu              sync.RWMutex
+	cfg             config.Config
+	client          *ollama.Client
+	sessionStore    *sessions.Store
+	memoryStore     *memory.Store
+	approvalService *sessions.ApprovalService
+	isWorking       map[string]bool
+	cancelFunc      context.CancelFunc
+	tickerDone      chan struct{}
+	interval        time.Duration
+	staleAfter      time.Duration
+	notifiers       map[string]PlanNotificationFunc
 }
 
 func NewPlanMonitor(cfg config.Config, client *ollama.Client, memoryStore *memory.Store) *PlanMonitor {
 	if memoryStore == nil {
 		memoryStore = memory.NewStore(cfg.MemoryPath)
 	}
+	store := sessions.NewStore(cfg.SessionsPath)
 	return &PlanMonitor{
-		cfg:          cfg,
-		client:       client,
-		sessionStore: sessions.NewStore(cfg.SessionsPath),
-		memoryStore:  memoryStore,
-		isWorking:    make(map[string]bool),
-		interval:     2 * time.Minute,
-		staleAfter:   defaultPlanStaleAfter,
-		notifiers:    make(map[string]PlanNotificationFunc),
+		cfg:             cfg,
+		client:          client,
+		sessionStore:    store,
+		memoryStore:     memoryStore,
+		approvalService: sessions.NewApprovalService(store, cfg.Workspace),
+		isWorking:       make(map[string]bool),
+		interval:        2 * time.Minute,
+		staleAfter:      defaultPlanStaleAfter,
+		notifiers:       make(map[string]PlanNotificationFunc),
 	}
+}
+
+func (pm *PlanMonitor) SetApprovalService(service *sessions.ApprovalService) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.approvalService = service
 }
 
 func (pm *PlanMonitor) Start(ctx context.Context) {
@@ -247,6 +256,7 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	registry.SetSessionStore(pm.sessionStore)
 	registry.SetSessionID(sessionID)
 	registry.SetSessionsPath(pm.cfg.SessionsPath)
+	registry.SetApprovalService(pm.approvalService)
 	registry.SetPlanProgressHandler(func(id string, plan sessions.SessionPlan) {
 		pm.notify(id, plan, sessions.FormatPlanProgressShort(plan))
 	})

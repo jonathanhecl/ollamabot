@@ -20,6 +20,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/telegram"
 	"github.com/jonathanhecl/ollamabot/internal/web"
 )
@@ -147,7 +148,9 @@ func run(args []string) error {
 		goalMgr := agent.NewGoalManager(cfg, client)
 		_ = goalMgr.ResumeActiveGoals()
 		autoMgr := agent.NewAutonomousManager(cfg, client, ms)
+		approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 		planMonitor := agent.NewPlanMonitor(cfg, client, ms)
+		planMonitor.SetApprovalService(approvalService)
 		planMonitor.Start(ctx)
 		defer planMonitor.Stop()
 
@@ -163,7 +166,7 @@ func run(args []string) error {
 
 		if hasTelegram {
 			if hasServer {
-				startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr, planMonitor)
+				startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr, planMonitor, approvalService)
 			} else {
 				fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
 				fmt.Println("Server disabled in .env (SERVER_ENABLED=false). Starting Telegram bot service in foreground...")
@@ -175,6 +178,7 @@ func run(args []string) error {
 					bot.SetGoalManager(goalMgr)
 				}
 				bot.SetPlanMonitor(planMonitor)
+				bot.SetApprovalService(approvalService)
 				return bot.Start(ctx)
 			}
 		}
@@ -183,6 +187,7 @@ func run(args []string) error {
 			fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
 			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
 			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
+			srv.SetApprovalService(approvalService)
 			if sleepMgr != nil {
 				srv.SetSleepManager(sleepMgr)
 			}
@@ -353,12 +358,15 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 	goalMgr := agent.NewGoalManager(cfg, client)
 	_ = goalMgr.ResumeActiveGoals()
 	autoMgr := agent.NewAutonomousManager(cfg, client, ms)
+	approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 	planMonitor := agent.NewPlanMonitor(cfg, client, ms)
+	planMonitor.SetApprovalService(approvalService)
 	planMonitor.Start(context.Background())
 	defer planMonitor.Stop()
 
-	startTelegramBot(cfg, client, sleepMgr, envPath, goalMgr, planMonitor)
+	startTelegramBot(cfg, client, sleepMgr, envPath, goalMgr, planMonitor, approvalService)
 	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
+	srv.SetApprovalService(approvalService)
 	if sleepMgr != nil {
 		srv.SetSleepManager(sleepMgr)
 	}
@@ -368,7 +376,7 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 	return srv.ListenAndServe()
 }
 
-func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string, goalMgr *agent.GoalManager, planMonitor *agent.PlanMonitor) {
+func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string, goalMgr *agent.GoalManager, planMonitor *agent.PlanMonitor, approvalService *sessions.ApprovalService) {
 	if cfg.TelegramBotToken == "" {
 		return
 	}
@@ -384,6 +392,7 @@ func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learni
 		if planMonitor != nil {
 			bot.SetPlanMonitor(planMonitor)
 		}
+		bot.SetApprovalService(approvalService)
 		if err := bot.Start(context.Background()); err != nil {
 			log.Printf("[Telegram] Bot service error: %v", err)
 		}

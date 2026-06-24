@@ -12,6 +12,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/skills"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
@@ -127,6 +128,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	emptyChatErrRetries := 0
 	planStepHasAction := false
 	planTextOnlyRetries := 0
+	completedCleanly := false
 
 	for i := 0; i < MaxIterations; i++ {
 		var systemPrefix []ollama.Message
@@ -600,12 +602,19 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 				}
 
-				// Check for repetitive loops
-				argsStr := string(call.Function.Arguments)
-				key := toolName + ":" + argsStr
+				// Check for repetitive loops.
+				signature, label := sessions.FormatApprovalSignature(toolName, params, a.cfg.Workspace)
+				key := toolName + ":" + signature
 				toolCallCounts[key]++
-				if toolCallCounts[key] >= 3 {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. To avoid a repetitive loop, please check the file path, verify the contents of the file using read_file, or try a different approach.]", result, toolName, toolCallCounts[key])
+				repeatCount := toolCallCounts[key]
+				var repetitiveLoopErr error
+				if repeatCount >= 5 {
+					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
+					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
+				} else if repeatCount >= 4 {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the same normalized arguments %d times. You must justify why another identical execution is necessary or change approach before retrying.]", result, toolName, repeatCount)
+				} else if repeatCount >= 3 {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. To avoid a repetitive loop, please check the file path, verify the contents of the file using read_file, or try a different approach.]", result, toolName, repeatCount)
 				}
 
 				// Remember observed paths
@@ -631,6 +640,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					Name:    toolName,
 					Content: result,
 				})
+				if repetitiveLoopErr != nil {
+					return messages, repetitiveLoopErr
+				}
 			}
 
 			// Continue with next loop turn so the LLM processes results
@@ -677,9 +689,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		// No more tools, no pending Todos, and no remaining plan steps: complete task cleanly!
+		completedCleanly = true
 		break
 	}
 
+	if !completedCleanly {
+		return messages, fmt.Errorf("agent exceeded maximum tool iterations (%d) before completing the turn", MaxIterations)
+	}
 	return messages, nil
 }
 

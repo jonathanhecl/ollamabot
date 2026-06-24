@@ -644,14 +644,30 @@
           </div>
         </div>
         <div class="confirm-actions">
-          <button id="denyToolBtn" class="danger-button" type="button" style="background: #ef4444; border-color: #ef4444; color: white;">Deny ❌</button>
-          <button id="approveToolBtn" class="primary-button" type="button">Approve ✅</button>
+          <button id="denyToolBtn" class="danger-button" type="button" style="background: #ef4444; border-color: #ef4444; color: white;">Deny</button>
+          <button id="approveToolBtn" class="ghost-button" type="button">Approve once</button>
+          <button id="approveToolSessionBtn" class="primary-button" type="button">Approve for this session</button>
         </div>
         <div id="approvalCountdownContainer" style="text-align: center; margin-top: 15px; color: #ef4444; font-size: 13px; font-weight: 500; font-family: monospace;">
           ⏱️ Auto-denying in <span id="approvalCountdown">05:00</span>
         </div>
       </div>
     </dialog>
+
+    <div id="approvalCard" class="approval-card" style="display: none;">
+      <div class="approval-card-header">
+        <span class="eyebrow">Security Confirmation Required</span>
+      </div>
+      <h3 id="approvalCardTitle" style="margin: 8px 0; font-size: 0.95rem; font-weight: 500;">Tool approval needed</h3>
+      <p id="approvalCardLabel" class="approval-card-label"></p>
+      <pre id="approvalCardArgs" class="approval-card-args"></pre>
+      <div class="approval-actions">
+        <button id="approvalCardDenyBtn" class="danger-button" type="button">Deny</button>
+        <button id="approvalCardApproveBtn" class="ghost-button" type="button">Approve once</button>
+        <button id="approvalCardApproveSessionBtn" class="primary-button" type="button">Approve for this session</button>
+      </div>
+      <div class="approval-card-note">This session is paused until you approve or deny this request.</div>
+    </div>
 
     <div id="clarificationCard" class="clarification-card" style="display: none;">
       <div class="clarification-header">
