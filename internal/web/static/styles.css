@@ -3674,6 +3674,12 @@ textarea {
   font-size: 13px;
 }
 
+.approval-card-risk {
+  color: #f59e0b;
+  margin: 0 0 10px;
+  font-size: 13px;
+}
+
 .approval-card-args {
   max-height: 180px;
   overflow: auto;

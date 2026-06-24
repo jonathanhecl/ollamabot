@@ -14,13 +14,14 @@ const ApprovalTimeout = 5 * time.Minute
 
 // PendingApproval is the persisted reason a session is paused for a security decision.
 type PendingApproval struct {
-	ID        string         `json:"id"`
-	Tool      string         `json:"tool"`
-	Arguments map[string]any `json:"arguments"`
-	Signature string         `json:"signature"`
-	Label     string         `json:"label"`
-	CreatedAt time.Time      `json:"created_at"`
-	ExpiresAt time.Time      `json:"expires_at"`
+	ID          string         `json:"id"`
+	Tool        string         `json:"tool"`
+	Arguments   map[string]any `json:"arguments"`
+	Signature   string         `json:"signature"`
+	Label       string         `json:"label"`
+	RiskSummary string         `json:"risk_summary,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	ExpiresAt   time.Time      `json:"expires_at"`
 }
 
 // SessionApprovalGrant lets a previously approved tool invocation run again in the same session.
@@ -110,6 +111,10 @@ func (s *ApprovalService) HasGrant(sessionID, tool string, args map[string]any) 
 }
 
 func (s *ApprovalService) RequestApproval(ctx context.Context, sessionID, tool string, args map[string]any) (bool, error) {
+	return s.RequestApprovalWithRisk(ctx, sessionID, tool, args, "")
+}
+
+func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID, tool string, args map[string]any, riskSummary string) (bool, error) {
 	if s == nil || s.store == nil || strings.TrimSpace(sessionID) == "" {
 		return false, fmt.Errorf("approval service is not configured")
 	}
@@ -120,13 +125,14 @@ func (s *ApprovalService) RequestApproval(ctx context.Context, sessionID, tool s
 	signature, label := FormatApprovalSignature(tool, args, s.workspace)
 	now := time.Now()
 	approval := PendingApproval{
-		ID:        fmt.Sprintf("approval_%d_%s", now.UnixNano(), safeApprovalIDPart(tool)),
-		Tool:      tool,
-		Arguments: cloneApprovalArgs(args),
-		Signature: signature,
-		Label:     label,
-		CreatedAt: now,
-		ExpiresAt: now.Add(ApprovalTimeout),
+		ID:          fmt.Sprintf("approval_%d_%s", now.UnixNano(), safeApprovalIDPart(tool)),
+		Tool:        tool,
+		Arguments:   cloneApprovalArgs(args),
+		Signature:   signature,
+		Label:       label,
+		RiskSummary: strings.TrimSpace(riskSummary),
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(ApprovalTimeout),
 	}
 	waiter := make(chan ApprovalDecision, 1)
 

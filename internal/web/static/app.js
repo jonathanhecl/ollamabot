@@ -215,6 +215,7 @@ const els = {
   approvalCard: document.querySelector("#approvalCard"),
   approvalCardTitle: document.querySelector("#approvalCardTitle"),
   approvalCardLabel: document.querySelector("#approvalCardLabel"),
+  approvalCardRisk: document.querySelector("#approvalCardRisk"),
   approvalCardArgs: document.querySelector("#approvalCardArgs"),
   approvalCardDenyBtn: document.querySelector("#approvalCardDenyBtn"),
   approvalCardApproveBtn: document.querySelector("#approvalCardApproveBtn"),
@@ -3548,6 +3549,7 @@ function normalizeApprovalPayload(value) {
     tool: value.tool || "",
     arguments: value.arguments || {},
     label: value.label || "",
+    risk_summary: value.risk_summary || value.riskSummary || "",
     expires_at: value.expires_at || value.expiresAt || "",
   };
 }
@@ -3562,6 +3564,10 @@ function renderApprovalCard() {
   }
   els.approvalCardTitle.textContent = `Approve ${approval.tool || "tool"} execution?`;
   els.approvalCardLabel.textContent = approval.label || approval.tool || "Tool execution";
+  if (els.approvalCardRisk) {
+    els.approvalCardRisk.textContent = approval.risk_summary ? `Risk: ${approval.risk_summary}` : "";
+    els.approvalCardRisk.style.display = approval.risk_summary ? "block" : "none";
+  }
   try {
     els.approvalCardArgs.textContent = JSON.stringify(approval.arguments || {}, null, 2);
   } catch {

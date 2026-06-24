@@ -10,7 +10,7 @@ import (
 var (
 	openInvokeRe   = regexp.MustCompile(`(?is)<invoke[^>]*name=["']([A-Za-z0-9_:-]+)["'][^>]*>`)
 	openToolCallRe = regexp.MustCompile(`(?is)<tool_call[^>]*name=["']([A-Za-z0-9_:-]+)["'][^>]*>`)
-	toolTagOpenRe  = regexp.MustCompile(`(?s)<([A-Z][A-Z0-9_]*)>`)
+	toolTagOpenRe  = regexp.MustCompile(`(?is)<([A-Za-z_][A-Za-z0-9_]*)>`)
 )
 
 var toolNameMapping = map[string]string{
@@ -101,7 +101,7 @@ func parseToolTagEnvelope(s string) (string, map[string]any, bool) {
 		return "", nil, false
 	}
 	closeTag := "</" + tag + ">"
-	if !strings.Contains(s[end:], closeTag) {
+	if !containsFold(s[end:], closeTag) {
 		return "", nil, false
 	}
 	params, ok := decodeToolJSON(body)
@@ -263,7 +263,7 @@ func detectMalformedXMLFallback(text string) (string, bool) {
 				return fmt.Sprintf("Error: Invalid JSON syntax in <%s>: %s", tag, body), true
 			}
 			closeTag := "</" + tag + ">"
-			if !strings.Contains(clean, closeTag) {
+			if !containsFold(clean, closeTag) {
 				return fmt.Sprintf("Error: Missing closing tag %s for tool %s.", closeTag, name), true
 			}
 		}

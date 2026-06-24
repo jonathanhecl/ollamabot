@@ -145,10 +145,11 @@ func run(args []string) error {
 			sleepMgr = learning.NewSleepManager(cfg, client, ms)
 			sleepMgr.Start(ctx)
 		}
+		approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 		goalMgr := agent.NewGoalManager(cfg, client)
+		goalMgr.SetApprovalService(approvalService)
 		_ = goalMgr.ResumeActiveGoals()
 		autoMgr := agent.NewAutonomousManager(cfg, client, ms)
-		approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 		planMonitor := agent.NewPlanMonitor(cfg, client, ms)
 		planMonitor.SetApprovalService(approvalService)
 		planMonitor.Start(ctx)
@@ -355,10 +356,11 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 		sleepMgr.Start(context.Background())
 	}
 
+	approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 	goalMgr := agent.NewGoalManager(cfg, client)
+	goalMgr.SetApprovalService(approvalService)
 	_ = goalMgr.ResumeActiveGoals()
 	autoMgr := agent.NewAutonomousManager(cfg, client, ms)
-	approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
 	planMonitor := agent.NewPlanMonitor(cfg, client, ms)
 	planMonitor.SetApprovalService(approvalService)
 	planMonitor.Start(context.Background())

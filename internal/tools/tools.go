@@ -50,6 +50,7 @@ type Registry struct {
 	todoStore               *TodoStore
 	approvalHandler         ApprovalHandler
 	approvalService         *sessions.ApprovalService
+	approvalPolicy          ApprovalPolicy
 	clarificationHandler    ClarificationHandler
 	planConfirmationHandler PlanConfirmationHandler
 	planConfirmMode         string
@@ -87,6 +88,11 @@ func (r *Registry) SetApprovalHandler(h ApprovalHandler) {
 // SetApprovalService assigns the session-aware approval coordinator.
 func (r *Registry) SetApprovalService(s *sessions.ApprovalService) {
 	r.approvalService = s
+}
+
+// SetApprovalPolicy controls how aggressively risky tools ask for approval.
+func (r *Registry) SetApprovalPolicy(policy ApprovalPolicy) {
+	r.approvalPolicy = policy
 }
 
 // SetClarificationHandler assigns a callback handler to ask clarification questions.
@@ -796,31 +802,31 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
 
-	// Risk check: write/edit outside the workspace and shell commands require approval.
+	// Risk check: interactive chat asks for shell commands; autonomous runs safe commands
+	// without interruption and asks only for potentially harmful actions.
 	if (r.approvalService != nil || r.approvalHandler != nil) && (name == "Write" || name == "Edit" || name == "execute_command") {
-		filePath, _ := args["file_path"].(string)
-		isSafe := false
-		if name != "execute_command" && filePath != "" {
-			_, err := ResolveAndValidatePath(r.workspace, filePath)
-			isSafe = err == nil
+		assessment := ClassifyToolRisk(name, args, r.workspace)
+		if assessment.Level == RiskBlocked {
+			return "", fmt.Errorf("tool %q blocked: %s", name, assessment.Summary)
+		}
+		needsApproval := assessment.Level == RiskNeedsApproval
+		if r.approvalPolicy == ApprovalPolicyInteractive && name == "execute_command" {
+			needsApproval = true
+			if assessment.Summary == "" || assessment.Level == RiskSafe {
+				assessment.Summary = "Shell commands can execute local code or modify files, so interactive chat requires explicit approval before running them."
+			}
 		}
 
-		// execute_command always requires approval regardless of path
-		if name == "execute_command" {
-			isSafe = false
-		}
-
-		if !isSafe {
+		if needsApproval {
 			if r.approvalService != nil && strings.TrimSpace(r.sessionID) != "" {
 				if r.approvalService.HasGrant(r.sessionID, name, args) {
 					log.Printf("[tool] Risky tool %q is approved for this session. Bypassing approval.", name)
 				} else {
 					log.Printf("[tool] Intercepting risky tool %q. Requesting session approval...", name)
-					_, label := sessions.FormatApprovalSignature(name, args, r.workspace)
 					if r.approvalProgressHandler != nil {
-						r.approvalProgressHandler.OnApprovalPending(name, args, label)
+						r.approvalProgressHandler.OnApprovalPending(name, args, assessment.Label)
 					}
-					approved, err := r.approvalService.RequestApproval(ctx, r.sessionID, name, args)
+					approved, err := r.approvalService.RequestApprovalWithRisk(ctx, r.sessionID, name, args, assessment.Summary)
 					remembered := approved && r.approvalService.HasGrant(r.sessionID, name, args)
 					if r.approvalProgressHandler != nil {
 						r.approvalProgressHandler.OnApprovalResolved(name, approved, remembered)
@@ -849,7 +855,7 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 				log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
 			}
 		} else {
-			log.Printf("[tool] Risky tool %q is inside safe workspace. Bypassing approval.", name)
+			log.Printf("[tool] Tool %q assessed safe for current approval policy. Bypassing approval.", name)
 		}
 	}
 
@@ -1140,6 +1146,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				if err != nil {
 					return "", err
 				}
+				r.SetApprovalPolicy(ApprovalPolicyAutonomous)
 				if r.planProgressHandler != nil {
 					r.planProgressHandler(r.sessionID, plan)
 				}
@@ -1153,8 +1160,11 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if !approved {
 			return "Plan rejected by the user. Please stop and ask the user for clarification or propose a new plan.", nil
 		}
-		if activePlan, planErr := r.ActiveSessionPlan(); planErr == nil && activePlan != nil && r.planProgressHandler != nil {
-			r.planProgressHandler(r.sessionID, *activePlan)
+		if activePlan, planErr := r.ActiveSessionPlan(); planErr == nil && activePlan != nil {
+			r.SetApprovalPolicy(ApprovalPolicyAutonomous)
+			if r.planProgressHandler != nil {
+				r.planProgressHandler(r.sessionID, *activePlan)
+			}
 		}
 		return "Plan approved by the user. Proceed with the steps.", nil
 	case "complete_plan_step":

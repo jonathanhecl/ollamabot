@@ -138,3 +138,28 @@ func TestApprovalServiceSessionGrant(t *testing.T) {
 		t.Fatalf("expected session grant, pending=%#v grants=%#v", loaded.PendingApproval, loaded.ApprovalGrants)
 	}
 }
+
+func TestAutonomousApprovalPolicySkipsSafeCommandApproval(t *testing.T) {
+	workspaceDir := t.TempDir()
+	registry := NewRegistry(false, workspaceDir, nil, nil, "", SearchConfig{})
+	registry.SetApprovalPolicy(ApprovalPolicyAutonomous)
+	handler := &mockApprovalHandler{response: false}
+	registry.SetApprovalHandler(handler)
+
+	args := map[string]any{"command": "go", "args": []any{"version"}}
+	argsBytes, _ := json.Marshal(args)
+	call := ollama.ToolCall{
+		Type: "function",
+		Function: ollama.ToolFunction{
+			Name:      "execute_command",
+			Arguments: argsBytes,
+		},
+	}
+
+	if _, err := registry.Execute(context.Background(), call); err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if handler.called {
+		t.Fatal("expected safe autonomous command to bypass approval")
+	}
+}

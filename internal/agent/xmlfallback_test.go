@@ -43,6 +43,13 @@ func TestParseXMLFallback(t *testing.T) {
 			wantOk:     true,
 		},
 		{
+			name:       "lowercase custom tag execute command mapping",
+			input:      `<execute_command>{"command": "python3", "args": ["test_extraction_script.py"]}</execute_command>`,
+			wantTool:   "execute_command",
+			wantParams: map[string]any{"command": "python3", "args": []any{"test_extraction_script.py"}},
+			wantOk:     true,
+		},
+		{
 			name:       "invoke name CamelCase ReadFile mapping",
 			input:      `<invoke name="ReadFile">{"path": "a.txt"}</invoke>`,
 			wantTool:   "read_file",
@@ -57,8 +64,8 @@ func TestParseXMLFallback(t *testing.T) {
 			wantOk:     true,
 		},
 		{
-			name:  "no tag",
-			input: `plain text response with no tags`,
+			name:   "no tag",
+			input:  `plain text response with no tags`,
 			wantOk: false,
 		},
 	}

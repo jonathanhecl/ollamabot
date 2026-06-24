@@ -169,6 +169,11 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	registry.SetSessionID(sessionID)
 	registry.SetSessionStore(deps.SessionStore)
 	registry.SetApprovalProgressHandler(recorder)
+	if deps.SessionStore != nil && strings.TrimSpace(sessionID) != "" {
+		if sess, err := deps.SessionStore.Get(sessionID); err == nil && sessions.IsAutonomousSession(sess) {
+			registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+		}
+	}
 	if deps.OnPlanProgress != nil {
 		registry.SetPlanProgressHandler(deps.OnPlanProgress)
 	}

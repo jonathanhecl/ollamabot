@@ -257,6 +257,7 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	registry.SetSessionID(sessionID)
 	registry.SetSessionsPath(pm.cfg.SessionsPath)
 	registry.SetApprovalService(pm.approvalService)
+	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 	registry.SetPlanProgressHandler(func(id string, plan sessions.SessionPlan) {
 		pm.notify(id, plan, sessions.FormatPlanProgressShort(plan))
 	})

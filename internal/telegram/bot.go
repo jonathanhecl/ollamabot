@@ -346,7 +346,11 @@ func (b *Bot) registerApprovalNotifier(sessionID string, chatID int64) {
 		if label == "" {
 			label = approval.Tool
 		}
-		text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe AI agent is paused waiting for approval:\n\n*Tool:* `%s`\n*Command:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", approval.Tool, label, string(argsJSON))
+		risk := strings.TrimSpace(approval.RiskSummary)
+		if risk == "" {
+			risk = "This action can affect local files or execute code, so it needs your explicit approval."
+		}
+		text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe autonomous agent wants to run:\n`%s`\n\n*Risk:* %s\n\n*Tool:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", label, risk, approval.Tool, string(argsJSON))
 		markup := &InlineKeyboardMarkup{
 			InlineKeyboard: [][]InlineKeyboardButton{
 				{

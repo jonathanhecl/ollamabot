@@ -19,26 +19,36 @@ import (
 )
 
 type GoalManager struct {
-	mu           sync.Mutex
-	cfg          config.Config
-	client       *ollama.Client
-	sessionStore *sessions.Store
-	memoryStore  *memory.Store
-	activeLoops  map[string]context.CancelFunc
-	notifiers    map[string]func(message string)
-	notifiersMu  sync.RWMutex
+	mu              sync.Mutex
+	cfg             config.Config
+	client          *ollama.Client
+	sessionStore    *sessions.Store
+	memoryStore     *memory.Store
+	approvalService *sessions.ApprovalService
+	activeLoops     map[string]context.CancelFunc
+	notifiers       map[string]func(message string)
+	notifiersMu     sync.RWMutex
 }
 
 func NewGoalManager(cfg config.Config, client *ollama.Client) *GoalManager {
 	ss := sessions.NewStore(cfg.SessionsPath)
 	ms := memory.NewStore(cfg.MemoryPath)
 	return &GoalManager{
-		cfg:          cfg,
-		client:       client,
-		sessionStore: ss,
-		memoryStore:  ms,
-		activeLoops:  make(map[string]context.CancelFunc),
-		notifiers:    make(map[string]func(message string)),
+		cfg:             cfg,
+		client:          client,
+		sessionStore:    ss,
+		memoryStore:     ms,
+		approvalService: sessions.NewApprovalService(ss, cfg.Workspace),
+		activeLoops:     make(map[string]context.CancelFunc),
+		notifiers:       make(map[string]func(message string)),
+	}
+}
+
+func (g *GoalManager) SetApprovalService(service *sessions.ApprovalService) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if service != nil {
+		g.approvalService = service
 	}
 }
 
@@ -305,6 +315,11 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			BraveAPIKey:  g.cfg.BraveSearchAPIKey,
 			TavilyAPIKey: g.cfg.TavilyAPIKey,
 		})
+		registry.SetSessionStore(g.sessionStore)
+		registry.SetSessionID(sessionID)
+		registry.SetSessionsPath(g.cfg.SessionsPath)
+		registry.SetApprovalService(g.approvalService)
+		registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 
 		a := NewAgent(g.cfg, g.client, registry)
 		handler := &goalStreamHandler{
@@ -342,6 +357,11 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 					BraveAPIKey:  g.cfg.BraveSearchAPIKey,
 					TavilyAPIKey: g.cfg.TavilyAPIKey,
 				})
+				registry.SetSessionStore(g.sessionStore)
+				registry.SetSessionID(sessionID)
+				registry.SetSessionsPath(g.cfg.SessionsPath)
+				registry.SetApprovalService(g.approvalService)
+				registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 				a = NewAgent(g.cfg, g.client, registry)
 			}
 		}
@@ -602,7 +622,8 @@ func (h *goalStreamHandler) OnMediaPreProcessing(content string) {}
 func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     {}
 
 func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
-func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {}
+func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+}
 func (h *goalStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
