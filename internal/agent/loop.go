@@ -221,8 +221,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		if planMode == "" {
 			planMode = "smart"
 		}
+		hasActivePlanSteps := false
 		activePlan, _ := a.registry.ActiveSessionPlan()
 		if activePlan != nil && activePlan.Status == "active" {
+			hasActivePlanSteps = activePlan.Completed < len(activePlan.Steps)
 			currentIdx := activePlan.Completed
 			if currentIdx >= len(activePlan.Steps) {
 				currentIdx = len(activePlan.Steps) - 1
@@ -638,7 +640,18 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			continue
 		}
 
-		// No more tools and no pending Todos: complete task cleanly!
+		// 10. Enforce active plan execution: refuse to end loop while plan steps remain
+		if hasActivePlanSteps && activePlan != nil {
+			currentStep := activePlan.Steps[activePlan.Completed]
+			messages = append(messages, ollama.Message{
+				Role: "system",
+				Content: fmt.Sprintf("There is an approved plan with remaining steps (currently step %d of %d: %s). Continue executing the current step with tool calls — do not finish the turn with plain text. Call complete_plan_step only after the full top-level step is done.",
+					activePlan.Completed+1, len(activePlan.Steps), currentStep),
+			})
+			continue
+		}
+
+		// No more tools, no pending Todos, and no remaining plan steps: complete task cleanly!
 		break
 	}
 
