@@ -72,6 +72,18 @@ func (a *Agent) SetOptions(opts map[string]any) {
 // Run executes the iterative multi-turn planning and tool loop.
 func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message, think bool, handler StreamHandler) ([]ollama.Message, error) {
 	toolCallCounts := make(map[string]int)
+
+	limit := a.getContextLimit(ctx, model)
+	numCtx := 8192
+	if limit > 32768 {
+		numCtx = 32768
+	} else if limit < 2048 {
+		numCtx = 2048
+	} else {
+		numCtx = int(limit)
+	}
+	numPredict := 4096
+
 	// Find the current goal from the last user message
 	var goal string
 	for i := len(messages) - 1; i >= 0; i-- {
@@ -376,11 +388,20 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			Messages: requestMessages,
 			Think:    think,
 		}
+		
+		// Set optimal options to prevent context and prediction truncation
+		options := map[string]any{
+			"num_ctx":     numCtx,
+			"num_predict": numPredict,
+			"temperature": 0.2,
+		}
 		a.mu.RLock()
-		if len(a.options) > 0 {
-			req.Options = a.options
+		for k, v := range a.options {
+			options[k] = v
 		}
 		a.mu.RUnlock()
+		req.Options = options
+
 		defs := a.registry.Definitions()
 		if len(defs) > 0 {
 			req.Tools = defs
