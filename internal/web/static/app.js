@@ -768,6 +768,16 @@ if (els.messages) {
       return;
     }
 
+    const removeQueuedBtn = e.target.closest(".queued-remove-btn");
+    if (removeQueuedBtn) {
+      const article = removeQueuedBtn.closest(".message");
+      const queueId = article?.dataset.queueId;
+      if (queueId) {
+        removeQueuedMessage(queueId);
+      }
+      return;
+    }
+
     // Smooth animated expand/collapse for thinking blocks
     const thinkingSummary = e.target.closest(".step-thinking summary");
     if (thinkingSummary) {
@@ -2285,7 +2295,15 @@ async function sendMessage(event) {
   console.log("[sendMessage] images array length:", images.length, "first image data length:", images[0]?.length || 0);
   
   // Push the message with processed = false to state
-  const userMessage = { role: "user", content, images, attachments: visibleAttachments, processed: false, timestamp: new Date().toISOString() };
+  const userMessage = {
+    role: "user",
+    content,
+    images,
+    attachments: visibleAttachments,
+    processed: false,
+    queueId: crypto.randomUUID(),
+    timestamp: new Date().toISOString(),
+  };
   state.messages.push(userMessage);
   
   state.attachments = [];
@@ -2298,6 +2316,19 @@ async function sendMessage(event) {
   // Push user query to client-side sequential queue
   state.messageQueue.push(userMessage);
   processNextQueueItem();
+}
+
+function removeQueuedMessage(queueId) {
+  if (!queueId) return;
+  const msgIdx = state.messages.findIndex((msg) => msg.queueId === queueId && msg.processed === false);
+  if (msgIdx === -1) return;
+
+  const [removed] = state.messages.splice(msgIdx, 1);
+  state.messageQueue = state.messageQueue.filter((item) => item !== removed && item.queueId !== queueId);
+
+  renderMessages();
+  updateContextBar();
+  updateComposerUI();
 }
 
 async function processNextQueueItem() {
@@ -2892,6 +2923,9 @@ function renderMessages() {
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 
     div.className = `message ${message.role} ${effectiveStreaming ? "streaming" : ""} ${isQueued ? "queued" : ""} ${isPreProcessing ? "preprocessing" : ""}`;
+    if (isQueued && message.queueId) {
+      div.dataset.queueId = message.queueId;
+    }
     const pending = effectiveWaiting ? `<div class="waiting"><span></span><span></span><span></span><em>processing</em></div>` : "";
     const visibleAttachments = getVisibleMessageAttachments(message);
     const media = visibleAttachments.length ? `<div class="message-media">${visibleAttachments.map(attachmentPreview).join("")}</div>` : "";
@@ -2943,6 +2977,9 @@ function renderMessages() {
     }
     
     const queuedBadge = isQueued ? ` <span class="queued-badge">⏳ In Queue</span>` : "";
+    const queuedActions = isQueued
+      ? `<button class="queued-remove-btn" type="button" title="Remove from queue">Remove</button>`
+      : "";
     let contentHtml = "";
     let roleName = message.role;
     if (isPreProcessing) {
@@ -2958,7 +2995,7 @@ function renderMessages() {
         ${timeHtml}
       </div>
     `;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}</span>${media}${pending}${activePlanHtml}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${pending}${activePlanHtml}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
   }

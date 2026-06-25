@@ -516,6 +516,25 @@ h2 {
   gap: 3px;
 }
 
+.queued-remove-btn {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 107, 107, 0.35);
+  background: rgba(255, 107, 107, 0.08);
+  color: #ff8a8a;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.queued-remove-btn:hover {
+  background: rgba(255, 107, 107, 0.16);
+  border-color: rgba(255, 107, 107, 0.55);
+}
+
 .message.streaming::after {
   content: "";
   position: absolute;
