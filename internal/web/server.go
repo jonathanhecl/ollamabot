@@ -107,6 +107,8 @@ type SettingsResponse struct {
 	ModelImage                   string `json:"model_image"`
 	ImageSteps                   int    `json:"image_steps"`
 	OllamaThinkEnabled           bool   `json:"ollama_think_enabled"`
+	OllamaMaxTokens              int    `json:"ollama_max_tokens"`
+	OllamaMaxContext             int    `json:"ollama_max_context"`
 	PlanConfirmation             string `json:"plan_confirmation"`
 	Workspace                    string `json:"workspace"`
 	SessionsPath                 string `json:"sessions_path"`
@@ -413,6 +415,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 			cfg.OllamaImageSteps = 4
 		}
 		cfg.OllamaThinkEnabled = input.OllamaThinkEnabled
+		cfg.OllamaMaxTokens = input.OllamaMaxTokens
+		if cfg.OllamaMaxTokens <= 0 {
+			cfg.OllamaMaxTokens = 16384
+		}
+		cfg.OllamaMaxContext = input.OllamaMaxContext
+		if cfg.OllamaMaxContext < 0 {
+			cfg.OllamaMaxContext = 0
+		}
 		cfg.WebSearchEnabled = input.WebSearchEnabled
 		cfg.ServerExposeNetwork = input.ServerExposeNetwork
 		cfg.SessionAutoName = input.SessionAutoName
@@ -1898,6 +1908,8 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelImage:                   cfg.OllamaModelImage,
 		ImageSteps:                   cfg.OllamaImageSteps,
 		OllamaThinkEnabled:           cfg.OllamaThinkEnabled,
+		OllamaMaxTokens:              cfg.OllamaMaxTokens,
+		OllamaMaxContext:             cfg.OllamaMaxContext,
 		PlanConfirmation:             cfg.PlanConfirmation,
 		Workspace:                    workspace,
 		SessionsPath:                 sessionsPath,

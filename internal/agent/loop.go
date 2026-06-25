@@ -73,16 +73,24 @@ func (a *Agent) SetOptions(opts map[string]any) {
 func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message, think bool, handler StreamHandler) ([]ollama.Message, error) {
 	toolCallCounts := make(map[string]int)
 
+	cfg := a.config()
 	limit := a.getContextLimit(ctx, model)
-	numCtx := 8192
-	if limit > 32768 {
-		numCtx = 32768
-	} else if limit < 2048 {
-		numCtx = 2048
-	} else {
-		numCtx = int(limit)
+
+	// Use configurable context window, capped by the model's actual context_length.
+	// If OllamaMaxContext is 0, use the model's full context_length (no artificial cap).
+	numCtx := int(limit)
+	if cfg.OllamaMaxContext > 0 && cfg.OllamaMaxContext < numCtx {
+		numCtx = cfg.OllamaMaxContext
 	}
-	numPredict := 4096
+	if numCtx < 2048 {
+		numCtx = 2048
+	}
+
+	// Use configurable max tokens for generation. Default 16384 for autonomous agents.
+	numPredict := cfg.OllamaMaxTokens
+	if numPredict <= 0 {
+		numPredict = 16384
+	}
 
 	// Find the current goal from the last user message
 	var goal string
@@ -393,7 +401,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			Messages: requestMessages,
 			Think:    think,
 		}
-		
+
 		// Set optimal options to prevent context and prediction truncation
 		options := map[string]any{
 			"num_ctx":     numCtx,
@@ -450,6 +458,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 			if chunk.Done {
 				done = true
+				log.Printf("[Agent] Stream done: reason=%s eval_count=%d total_duration=%dms", chunk.DoneReason, chunk.EvalCount, chunk.TotalDuration/1e6)
+				if chunk.DoneReason == "length" {
+					log.Printf("[Agent] WARNING: Response truncated due to token limit (num_predict=%d). Consider increasing OLLAMA_MAX_TOKENS.", numPredict)
+				}
 				if handler != nil {
 					handler.OnDone(chunk)
 				}

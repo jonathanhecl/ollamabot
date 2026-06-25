@@ -49,6 +49,8 @@ type Config struct {
 	SleepModeSubagentsEnabled    bool
 	OllamaModelSubagent          string
 	OllamaThinkEnabled           bool
+	OllamaMaxTokens              int
+	OllamaMaxContext             int
 	ServerPassword               string
 	PlanConfirmation             string
 }
@@ -96,6 +98,8 @@ func Load(path string) (Config, error) {
 		SleepModeSubagentsEnabled:    false,
 		OllamaModelSubagent:          "",
 		OllamaThinkEnabled:           true,
+		OllamaMaxTokens:              16384,
+		OllamaMaxContext:             0,
 		ServerPassword:               "",
 		TelegramSessionExpiryMin:     30,
 		PlanConfirmation:             "smart",
@@ -191,6 +195,16 @@ func Load(path string) (Config, error) {
 	}
 	if value := apply("OLLAMA_THINK_ENABLED"); value != "" {
 		cfg.OllamaThinkEnabled = parseBool(value)
+	}
+	if value := apply("OLLAMA_MAX_TOKENS"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.OllamaMaxTokens = val
+		}
+	}
+	if value := apply("OLLAMA_MAX_CONTEXT"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.OllamaMaxContext = val
+		}
 	}
 	if value := apply("SERVER_PASSWORD"); value != "" {
 		cfg.ServerPassword = value
@@ -395,7 +409,9 @@ func SaveBasic(path string, cfg Config) error {
 			"OLLAMA_MODEL_LEARNING=%s\n"+
 			"OLLAMA_MODEL_SUBAGENT=%s\n"+
 			"OLLAMA_IMAGE_STEPS=%d\n"+
-			"OLLAMA_THINK_ENABLED=%t\n\n"+
+			"OLLAMA_THINK_ENABLED=%t\n"+
+			"OLLAMA_MAX_TOKENS=%d\n"+
+			"OLLAMA_MAX_CONTEXT=%d\n\n"+
 			"# Telegram\n"+
 			"TELEGRAM_BOT_TOKEN=%s\n"+
 			"TELEGRAM_AUTHORIZED_IDS=%s\n"+
@@ -433,6 +449,8 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.OllamaModelSubagent,
 		cfg.OllamaImageSteps,
 		cfg.OllamaThinkEnabled,
+		cfg.OllamaMaxTokens,
+		cfg.OllamaMaxContext,
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		cfg.TelegramStartupNotification,

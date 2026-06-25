@@ -443,6 +443,14 @@
               Image Generation Steps
               <input id="ollamaImageSteps" type="number" placeholder="4" min="1" />
             </label>
+            <label style="margin-top: 10px;">
+              Max Generation Tokens (num_predict)
+              <input id="ollamaMaxTokens" type="number" placeholder="16384" min="256" />
+            </label>
+            <label style="margin-top: 10px;">
+              Max Context Window (0 = use model default)
+              <input id="ollamaMaxContext" type="number" placeholder="0" min="0" />
+            </label>
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
                 <input id="ollamaThinkToggle" type="checkbox" />

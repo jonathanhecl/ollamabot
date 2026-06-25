@@ -1907,6 +1907,10 @@ func (h *telegramStreamAdapter) OnMediaPreProcessing(content string) {
 }
 
 func (h *telegramStreamAdapter) OnDone(resp ollama.ChatResponse) {
+	log.Printf("[Telegram] Stream done: reason=%s eval_count=%d", resp.DoneReason, resp.EvalCount)
+	if resp.DoneReason == "length" {
+		log.Printf("[Telegram] WARNING: Response truncated due to token limit. Consider increasing OLLAMA_MAX_TOKENS.")
+	}
 	h.recorder.OnDone(resp)
 }
 
