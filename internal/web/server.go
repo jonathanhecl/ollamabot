@@ -684,6 +684,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	flusher, _ := w.(http.Flusher)
 
+	if input.SessionID != "" && sessions.IsProcessing(input.SessionID) {
+		writeError(w, http.StatusConflict, errors.New("session is already processing a turn"))
+		return
+	}
+
 	var cancel context.CancelFunc
 	var agentCtx context.Context
 	if input.SessionID != "" {

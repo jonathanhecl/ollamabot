@@ -1157,6 +1157,9 @@ function startSessionPolling() {
           state.pendingApproval = normalizeApprovalPayload(activeSess.pending_approval || state.pendingApproval);
           renderApprovalCard();
           updateComposerUI();
+          if (!state.agentBusy) {
+            processNextQueueItem();
+          }
         }
       }
     } catch (err) {
@@ -1214,6 +1217,9 @@ function startRealtimeEvents() {
       if (payload?.session_id !== state.activeSessionId) return;
       state.agentBusy = !!payload.busy;
       updateComposerUI();
+      if (!state.agentBusy) {
+        processNextQueueItem();
+      }
     } catch (err) {
       console.warn("[Events Hub] Invalid agent_status event:", err);
     }
@@ -2583,7 +2589,7 @@ function appendContentStep(assistant, text) {
 }
 
 async function processNextQueueItem() {
-  if (state.isProcessing || state.messageQueue.length === 0) {
+  if (state.isProcessing || state.agentBusy || state.messageQueue.length === 0) {
     updateComposerUI();
     return;
   }
@@ -2713,6 +2719,18 @@ async function processNextQueueItem() {
       }),
       signal: state.currentAbortController.signal,
     });
+    if (response.status === 409) {
+      const assistantIdx = state.messages.indexOf(assistant);
+      if (assistantIdx !== -1) {
+        state.messages.splice(assistantIdx, 1);
+      }
+      nextItem.processed = false;
+      state.messageQueue.unshift(nextItem);
+      state.agentBusy = true;
+      renderMessages();
+      updateComposerUI();
+      return;
+    }
     if (!response.ok || !response.body) {
       let errText = response.statusText || `HTTP ${response.status}`;
       try {
