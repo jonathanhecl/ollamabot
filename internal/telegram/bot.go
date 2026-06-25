@@ -1156,7 +1156,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			}
 		},
 		AttachmentFactory: func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler {
-			return &telegramAttachmentHandler{recorder: recorder}
+			return &telegramAttachmentHandler{
+				recorder: recorder,
+				bot:      b,
+				chatID:   chatID,
+			}
 		},
 		OnSleepActivity: func() {
 			if b.sleepMgr != nil {
@@ -1371,6 +1375,61 @@ func (b *Bot) sendPhoto(chatID int64, photoPath string, caption string, replyToI
 	writer.Close()
 
 	url := b.apiBase + "/sendPhoto"
+	resp, err := b.httpClient.Post(url, writer.FormDataContentType(), &body)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      *struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return 0, err
+	}
+	if !apiResp.OK {
+		return 0, fmt.Errorf("telegram api error: %s", apiResp.Description)
+	}
+	if apiResp.Result != nil {
+		return apiResp.Result.MessageID, nil
+	}
+	return 0, nil
+}
+
+// sendDocument sends a general file document to a Telegram chat with an optional caption.
+func (b *Bot) sendDocument(chatID int64, filePath string, caption string, replyToID int64) (int64, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
+	if caption != "" {
+		_ = writer.WriteField("caption", caption)
+		_ = writer.WriteField("parse_mode", "Markdown")
+	}
+	if replyToID != 0 {
+		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
+	}
+
+	part, err := writer.CreateFormFile("document", filepath.Base(filePath))
+	if err != nil {
+		return 0, err
+	}
+	_, err = io.Copy(part, file)
+	if err != nil {
+		return 0, err
+	}
+	writer.Close()
+
+	url := b.apiBase + "/sendDocument"
 	resp, err := b.httpClient.Post(url, writer.FormDataContentType(), &body)
 	if err != nil {
 		return 0, err
@@ -3159,11 +3218,22 @@ func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, e
 // telegramAttachmentHandler bridges tool-generated attachments into the Telegram session recorder.
 type telegramAttachmentHandler struct {
 	recorder *sessions.Recorder
+	bot      *Bot
+	chatID   int64
 }
 
 func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
 	if h.recorder != nil {
-		h.recorder.AddAttachmentRef(ref, mime)
+		h.recorder.AddAttachmentRef(ref, mime, path)
+	}
+	if h.bot != nil && h.chatID != 0 {
+		// Only send non-images as documents; images are handled via progress/image completion handlers
+		if !strings.HasPrefix(mime, "image/") {
+			_, err := h.bot.sendDocument(h.chatID, path, fmt.Sprintf("📄 *%s*", ref), 0)
+			if err != nil {
+				log.Printf("[Telegram] Error sending document attachment %s: %v", ref, err)
+			}
+		}
 	}
 }
 

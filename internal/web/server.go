@@ -2487,7 +2487,7 @@ type webAttachmentHandler struct {
 
 func (h *webAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
 	if h.recorder != nil {
-		h.recorder.AddAttachmentRef(ref, mime)
+		h.recorder.AddAttachmentRef(ref, mime, path)
 	}
 }
 

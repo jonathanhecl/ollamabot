@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -429,14 +430,32 @@ func (r *Recorder) OnDone(resp ollama.ChatResponse) {
 }
 
 // AddAttachmentRef appends an attachment reference to the current assistant message.
-func (r *Recorder) AddAttachmentRef(ref string, mime string) {
+// AddAttachmentRef appends an attachment reference to the current assistant message.
+func (r *Recorder) AddAttachmentRef(ref string, mime string, path string) {
 	r.mu.Lock()
 	msg := r.getOrCreateAssistantMsg()
 	msg.AttachmentRefs = append(msg.AttachmentRefs, ref)
+
+	kind := "file"
+	if strings.HasPrefix(mime, "image/") {
+		kind = "image"
+	} else if strings.HasPrefix(mime, "audio/") {
+		kind = "audio"
+	}
+
+	var size int64
+	if path != "" {
+		if info, err := os.Stat(path); err == nil {
+			size = info.Size()
+		}
+	}
+
 	msg.Attachments = append(msg.Attachments, AttachmentMeta{
 		Name: ref,
 		Mime: mime,
-		Kind: "image",
+		Kind: kind,
+		Path: path,
+		Size: size,
 	})
 	r.mu.Unlock()
 	r.NotifyUpdate(false)

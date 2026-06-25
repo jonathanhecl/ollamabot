@@ -758,6 +758,32 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["send_files"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "send_files",
+			Description: "Send files or directories from the workspace to the user's session. Single files are shared directly. Multiple files or directories are automatically zipped.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"paths": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "List of relative or absolute file/directory paths in the workspace to send.",
+					},
+					"zip_name": map[string]any{
+						"type":        "string",
+						"description": "Optional name for the output zip archive if zipping multiple files (defaults to 'shared_files.zip').",
+					},
+				},
+				"required": []string{"paths"},
+			},
+		},
+	})
+
 	return r
 }
 
@@ -907,6 +933,28 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("missing path")
 		}
 		return ReadFile(r.workspace, path)
+	case "send_files":
+		pathsVal := args["paths"]
+		if pathsVal == nil {
+			return "", fmt.Errorf("missing paths")
+		}
+		var paths []string
+		if slice, ok := pathsVal.([]any); ok {
+			for _, item := range slice {
+				if str, ok := item.(string); ok {
+					paths = append(paths, str)
+				}
+			}
+		} else if slice, ok := pathsVal.([]string); ok {
+			paths = slice
+		} else if str, ok := pathsVal.(string); ok {
+			paths = []string{str}
+		}
+		if len(paths) == 0 {
+			return "", fmt.Errorf("paths must contain at least one file or folder path")
+		}
+		zipName, _ := args["zip_name"].(string)
+		return SendFiles(r.workspace, r.sessionsPath, r.sessionID, paths, zipName, r.attachmentHandler)
 	case "Write":
 		filePath, _ := args["file_path"].(string)
 		contents, _ := args["contents"].(string)
