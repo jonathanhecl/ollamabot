@@ -47,8 +47,8 @@ func TestProcessTurnUsesConfiguredMainModel(t *testing.T) {
 	client := ollama.NewClient(ts.URL)
 
 	result, err := ProcessTurn(context.Background(), Deps{
-		Config: cfg,
-		Client: client,
+		ConfigMgr: config.NewManager(cfg),
+		Client:    client,
 	}, TurnRequest{
 		Channel: "web",
 		Messages: []router.MediaMessage{

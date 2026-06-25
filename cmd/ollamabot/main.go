@@ -134,29 +134,30 @@ func run(args []string) error {
 		cfg.OllamaBaseURL = normalized
 	}
 
-	client := ollama.NewClient(cfg.OllamaBaseURL)
+	cfgMgr := config.NewManager(cfg)
+	client := ollama.NewClient(cfgMgr.Get().OllamaBaseURL)
 	runner := probe.NewRunner(client)
 	ctx := context.Background()
 
 	if len(remaining) == 0 {
-		ms := memory.NewStore(cfg.MemoryPath)
+		ms := memory.NewStore(cfgMgr.Get().MemoryPath)
 		var sleepMgr *learning.SleepManager
-		if cfg.SleepModeEnabled {
-			sleepMgr = learning.NewSleepManager(cfg, client, ms)
+		if cfgMgr.Get().SleepModeEnabled {
+			sleepMgr = learning.NewSleepManager(cfgMgr, client, ms)
 			sleepMgr.Start(ctx)
 		}
-		approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
-		goalMgr := agent.NewGoalManager(cfg, client)
+		approvalService := sessions.NewApprovalService(sessions.NewStore(cfgMgr.Get().SessionsPath), cfgMgr.Get().Workspace)
+		goalMgr := agent.NewGoalManager(cfgMgr, client)
 		goalMgr.SetApprovalService(approvalService)
 		_ = goalMgr.ResumeActiveGoals()
-		autoMgr := agent.NewAutonomousManager(cfg, client, ms)
-		planMonitor := agent.NewPlanMonitor(cfg, client, ms)
+		autoMgr := agent.NewAutonomousManager(cfgMgr, client, ms)
+		planMonitor := agent.NewPlanMonitor(cfgMgr, client, ms)
 		planMonitor.SetApprovalService(approvalService)
 		planMonitor.Start(ctx)
 		defer planMonitor.Stop()
 
-		hasServer := cfg.ServerEnabled
-		hasTelegram := cfg.TelegramBotToken != ""
+		hasServer := cfgMgr.Get().ServerEnabled
+		hasTelegram := cfgMgr.Get().TelegramBotToken != ""
 
 		if !hasServer && !hasTelegram {
 			return fmt.Errorf("both Web Server and Telegram Bot are disabled.\n\n"+
@@ -167,11 +168,11 @@ func run(args []string) error {
 
 		if hasTelegram {
 			if hasServer {
-				startTelegramBot(cfg, client, sleepMgr, *envPath, goalMgr, planMonitor, approvalService)
+				startTelegramBot(cfgMgr, client, sleepMgr, *envPath, goalMgr, planMonitor, approvalService)
 			} else {
 				fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
 				fmt.Println("Server disabled in .env (SERVER_ENABLED=false). Starting Telegram bot service in foreground...")
-				bot := telegram.NewBotWithEnv(cfg, client, *envPath)
+				bot := telegram.NewBotWithEnv(cfgMgr, client, *envPath)
 				if sleepMgr != nil {
 					bot.SetSleepManager(sleepMgr)
 				}
@@ -186,8 +187,8 @@ func run(args []string) error {
 
 		if hasServer {
 			fmt.Printf("OllamaBot version: %s\n", getVersionInfo())
-			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfg.ServerPort)
-			srv := web.NewServerWithEnv(cfg, client, runner, web.SnapshotPath(""), *envPath)
+			fmt.Printf("OllamaBot web: http://localhost:%s\n", cfgMgr.Get().ServerPort)
+			srv := web.NewServerWithEnv(cfgMgr, client, runner, web.SnapshotPath(""), *envPath)
 			srv.SetApprovalService(approvalService)
 			if sleepMgr != nil {
 				srv.SetSleepManager(sleepMgr)
@@ -210,7 +211,7 @@ func run(args []string) error {
 	case "docs":
 		return runDocs(ctx, remaining[1:], cfg, client, runner)
 	case "serve":
-		return runServe(remaining[1:], cfg, client, runner, *envPath)
+		return runServe(remaining[1:], cfgMgr, client, runner, *envPath)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", remaining[0])
@@ -340,23 +341,25 @@ func runDocs(ctx context.Context, args []string, cfg config.Config, client *olla
 	return nil
 }
 
-func runServe(args []string, cfg config.Config, client *ollama.Client, runner *probe.Runner, envPath string) error {
+func runServe(args []string, cfg *config.Manager, client *ollama.Client, runner *probe.Runner, envPath string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
-	port := flags.String("port", cfg.ServerPort, "server port")
+	port := flags.String("port", cfg.Get().ServerPort, "server port")
 	cachePath := flags.String("cache", web.SnapshotPath(""), "probe snapshot cache path")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	cfg.ServerPort = *port
+	cfg.Update(func(c *config.Config) {
+		c.ServerPort = *port
+	})
 
-	ms := memory.NewStore(cfg.MemoryPath)
+	ms := memory.NewStore(cfg.Get().MemoryPath)
 	var sleepMgr *learning.SleepManager
-	if cfg.SleepModeEnabled {
+	if cfg.Get().SleepModeEnabled {
 		sleepMgr = learning.NewSleepManager(cfg, client, ms)
 		sleepMgr.Start(context.Background())
 	}
 
-	approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.SessionsPath), cfg.Workspace)
+	approvalService := sessions.NewApprovalService(sessions.NewStore(cfg.Get().SessionsPath), cfg.Get().Workspace)
 	goalMgr := agent.NewGoalManager(cfg, client)
 	goalMgr.SetApprovalService(approvalService)
 	_ = goalMgr.ResumeActiveGoals()
@@ -378,8 +381,8 @@ func runServe(args []string, cfg config.Config, client *ollama.Client, runner *p
 	return srv.ListenAndServe()
 }
 
-func startTelegramBot(cfg config.Config, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string, goalMgr *agent.GoalManager, planMonitor *agent.PlanMonitor, approvalService *sessions.ApprovalService) {
-	if cfg.TelegramBotToken == "" {
+func startTelegramBot(cfg *config.Manager, client *ollama.Client, sleepMgr *learning.SleepManager, envPath string, goalMgr *agent.GoalManager, planMonitor *agent.PlanMonitor, approvalService *sessions.ApprovalService) {
+	if cfg.Get().TelegramBotToken == "" {
 		return
 	}
 	go func() {

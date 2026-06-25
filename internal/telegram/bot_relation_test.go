@@ -74,7 +74,7 @@ func TestCheckMessagesRelationship(t *testing.T) {
 				OllamaDefaultModel: "test-model",
 			}
 			client := ollama.NewClient(server.URL)
-			bot := NewBot(cfg, client)
+			bot := NewBot(config.NewManager(cfg), client)
 
 			history := []rawMsg{
 				{Role: "user", Content: "What is Go?"},

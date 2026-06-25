@@ -36,7 +36,7 @@ var staticFiles embed.FS
 
 type Server struct {
 	mu                  sync.RWMutex
-	cfg                 config.Config
+	cfgMgr              *config.Manager
 	envPath             string
 	client              *ollama.Client
 	runner              *probe.Runner
@@ -138,16 +138,16 @@ type ChatRequest struct {
 	SessionID string         `json:"session_id,omitempty"`
 }
 
-func NewServer(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
+func NewServer(cfg *config.Manager, client *ollama.Client, runner *probe.Runner, cachePath string) *Server {
 	return NewServerWithEnv(cfg, client, runner, cachePath, ".env")
 }
 
-func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
-	mr := router.New(client, routerConfig(cfg))
-	ss := sessions.NewStore(cfg.SessionsPath)
-	ms := memory.NewStore(cfg.MemoryPath)
+func NewServerWithEnv(cfg *config.Manager, client *ollama.Client, runner *probe.Runner, cachePath string, envPath string) *Server {
+	mr := router.New(client, routerConfig(cfg.Get()))
+	ss := sessions.NewStore(cfg.Get().SessionsPath)
+	ms := memory.NewStore(cfg.Get().MemoryPath)
 	return &Server{
-		cfg:               cfg,
+		cfgMgr:            cfg,
 		envPath:           envPath,
 		client:            client,
 		runner:            runner,
@@ -155,7 +155,7 @@ func NewServerWithEnv(cfg config.Config, client *ollama.Client, runner *probe.Ru
 		cachePath:         cachePath,
 		sessionStore:      ss,
 		memoryStore:       ms,
-		approvalService:   sessions.NewApprovalService(ss, cfg.Workspace),
+		approvalService:   sessions.NewApprovalService(ss, cfg.Get().Workspace),
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]chan string),
 		planConfirmations: make(map[string]pendingWebPlanConfirmation),
@@ -255,7 +255,7 @@ func (s *Server) ListenAndServe() error {
 
 	// Start background projects heartbeat ticker.
 	if s.autoMgr == nil {
-		s.autoMgr = agent.NewAutonomousManager(cfg, s.client, s.memoryStore)
+		s.autoMgr = agent.NewAutonomousManager(s.cfgMgr, s.client, s.memoryStore)
 	}
 	s.autoMgr.Start(context.Background())
 	defer s.autoMgr.Stop()
@@ -301,15 +301,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 }
 
 func (s *Server) config() config.Config {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.cfg
+	return s.cfgMgr.Get()
 }
 
 func (s *Server) deps() (config.Config, *ollama.Client, *probe.Runner, *router.Router) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return s.cfg, s.client, s.runner, s.mediaro
+	return s.cfgMgr.Get(), s.client, s.runner, s.mediaro
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -388,137 +386,129 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	_ = os.MkdirAll(skillsPath, 0o755)
 
 	s.mu.Lock()
-	s.cfg.OllamaBaseURL = baseURL
-	s.cfg.ServerEnabled = input.ServerEnabled
-	s.cfg.OllamaProbeModels = func() []string {
-		var ms []string
-		for _, part := range strings.Split(input.OllamaProbeModels, ",") {
-			part = strings.TrimSpace(part)
-			if part != "" {
-				ms = append(ms, part)
+	s.cfgMgr.Update(func(cfg *config.Config) {
+		cfg.OllamaBaseURL = baseURL
+		cfg.ServerEnabled = input.ServerEnabled
+		cfg.OllamaProbeModels = func() []string {
+			var ms []string
+			for _, part := range strings.Split(input.OllamaProbeModels, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" {
+					ms = append(ms, part)
+				}
 			}
+			return ms
+		}()
+		cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(input.ServerPort), ":")
+		if cfg.ServerPort == "" {
+			cfg.ServerPort = "8080"
 		}
-		return ms
-	}()
-	s.cfg.ServerPort = strings.TrimPrefix(strings.TrimSpace(input.ServerPort), ":")
-	if s.cfg.ServerPort == "" {
-		s.cfg.ServerPort = "8080"
-	}
-	s.cfg.OllamaDefaultModel = strings.TrimSpace(input.ModelDefault)
-	s.cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
-	s.cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
-	s.cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
-	s.cfg.OllamaModelImage = strings.TrimSpace(input.ModelImage)
-	s.cfg.OllamaImageSteps = input.ImageSteps
-	if s.cfg.OllamaImageSteps <= 0 {
-		s.cfg.OllamaImageSteps = 4
-	}
-	s.cfg.OllamaThinkEnabled = input.OllamaThinkEnabled
-	s.cfg.WebSearchEnabled = input.WebSearchEnabled
-	s.cfg.ServerExposeNetwork = input.ServerExposeNetwork
-	s.cfg.SessionAutoName = input.SessionAutoName
-	s.cfg.PlanConfirmation = strings.TrimSpace(input.PlanConfirmation)
-	if s.cfg.PlanConfirmation == "" {
-		s.cfg.PlanConfirmation = "smart"
-	}
-	s.cfg.TelegramSessionExpiryMin = input.TelegramSessionExpiryMin
-	if s.cfg.TelegramSessionExpiryMin <= 0 {
-		s.cfg.TelegramSessionExpiryMin = 30
-	}
-	s.cfg.TelegramStartupNotification = input.TelegramStartupNotification
-	// Telegram Bot Token: only update if explicitly provided and not masked sentinel.
-	// Empty string is treated as "no change" to prevent partial settings POSTs
-	// (e.g. from saveRoleModels) from accidentally clearing the token.
-	newBotToken := strings.TrimSpace(input.TelegramBotToken)
-	if newBotToken != "***" {
-		s.cfg.TelegramBotToken = newBotToken
-	}
-	// Telegram Authorized IDs: only update if explicitly provided.
-	// Empty string is treated as "no change" for the same reason.
-	rawAuthorizedIDs := strings.TrimSpace(input.TelegramAuthorizedIDs)
-	if rawAuthorizedIDs != "" {
-		var ids []string
-		for _, id := range strings.Split(rawAuthorizedIDs, ",") {
-			id = strings.TrimSpace(id)
-			if id != "" {
-				ids = append(ids, id)
+		cfg.OllamaDefaultModel = strings.TrimSpace(input.ModelDefault)
+		cfg.OllamaModelVision = strings.TrimSpace(input.ModelVision)
+		cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
+		cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
+		cfg.OllamaModelImage = strings.TrimSpace(input.ModelImage)
+		cfg.OllamaImageSteps = input.ImageSteps
+		if cfg.OllamaImageSteps <= 0 {
+			cfg.OllamaImageSteps = 4
+		}
+		cfg.OllamaThinkEnabled = input.OllamaThinkEnabled
+		cfg.WebSearchEnabled = input.WebSearchEnabled
+		cfg.ServerExposeNetwork = input.ServerExposeNetwork
+		cfg.SessionAutoName = input.SessionAutoName
+		cfg.PlanConfirmation = strings.TrimSpace(input.PlanConfirmation)
+		if cfg.PlanConfirmation == "" {
+			cfg.PlanConfirmation = "smart"
+		}
+		cfg.TelegramSessionExpiryMin = input.TelegramSessionExpiryMin
+		if cfg.TelegramSessionExpiryMin <= 0 {
+			cfg.TelegramSessionExpiryMin = 30
+		}
+		cfg.TelegramStartupNotification = input.TelegramStartupNotification
+		newBotToken := strings.TrimSpace(input.TelegramBotToken)
+		if newBotToken != "***" {
+			cfg.TelegramBotToken = newBotToken
+		}
+		rawAuthorizedIDs := strings.TrimSpace(input.TelegramAuthorizedIDs)
+		if rawAuthorizedIDs != "" {
+			var ids []string
+			for _, id := range strings.Split(rawAuthorizedIDs, ",") {
+				id = strings.TrimSpace(id)
+				if id != "" {
+					ids = append(ids, id)
+				}
 			}
+			cfg.TelegramAuthorizedIDs = ids
 		}
-		s.cfg.TelegramAuthorizedIDs = ids
-	}
-	s.cfg.Workspace = workspace
-	s.cfg.WorkspaceRaw = workspaceRaw
-	s.cfg.SessionsPath = sessionsPath
-	s.cfg.SessionsPathRaw = sessionsPathRaw
-	s.cfg.MemoryPath = memoryPath
-	s.cfg.MemoryPathRaw = memoryPathRaw
-	s.cfg.SkillsPath = skillsPath
-	s.cfg.SkillsPathRaw = skillsPathRaw
-	s.cfg.SleepModeEnabled = input.SleepModeEnabled
-	s.cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
-	s.cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
-	s.cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
-	s.cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
-	s.cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
-	newServerPass := strings.TrimSpace(input.ServerPassword)
-	if newServerPass != "***" {
-		s.cfg.ServerPassword = newServerPass
-	}
-	// Search providers: parse CSV from UI
-	rawProviders := strings.TrimSpace(input.WebSearchPriority)
-	if rawProviders != "" && rawProviders != "none" {
-		var ps []string
-		for _, p := range strings.Split(rawProviders, ",") {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				ps = append(ps, p)
+		cfg.Workspace = workspace
+		cfg.WorkspaceRaw = workspaceRaw
+		cfg.SessionsPath = sessionsPath
+		cfg.SessionsPathRaw = sessionsPathRaw
+		cfg.MemoryPath = memoryPath
+		cfg.MemoryPathRaw = memoryPathRaw
+		cfg.SkillsPath = skillsPath
+		cfg.SkillsPathRaw = skillsPathRaw
+		cfg.SleepModeEnabled = input.SleepModeEnabled
+		cfg.SleepModeInactivityThreshold = strings.TrimSpace(input.SleepModeInactivityThreshold)
+		cfg.SleepModeResumeDelay = strings.TrimSpace(input.SleepModeResumeDelay)
+		cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
+		cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
+		cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
+		newServerPass := strings.TrimSpace(input.ServerPassword)
+		if newServerPass != "***" {
+			cfg.ServerPassword = newServerPass
+		}
+		rawProviders := strings.TrimSpace(input.WebSearchPriority)
+		if rawProviders != "" && rawProviders != "none" {
+			var ps []string
+			for _, p := range strings.Split(rawProviders, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					ps = append(ps, p)
+				}
 			}
+			cfg.SearchProviders = ps
+		} else if rawProviders == "none" || rawProviders == "" {
+			cfg.SearchProviders = []string{"none"}
 		}
-		s.cfg.SearchProviders = ps
-	} else if rawProviders == "none" || rawProviders == "" {
-		s.cfg.SearchProviders = []string{"none"}
-	}
+		newKey := strings.TrimSpace(input.BraveSearchAPIKey)
+		if newKey != "***" {
+			cfg.BraveSearchAPIKey = newKey
+		}
+		newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
+		if newTavilyKey != "***" {
+			cfg.TavilyAPIKey = newTavilyKey
+		}
+		cfg.WebSearchEnabled = len(cfg.SearchProviders) > 0 &&
+			!(len(cfg.SearchProviders) == 1 && cfg.SearchProviders[0] == "none")
+	})
 
-	// Brave API key: only update if not masked sentinel.
-	// Only clear if the provider is active; if inactive, keep the existing key.
-	newKey := strings.TrimSpace(input.BraveSearchAPIKey)
-	if newKey != "***" {
-		s.cfg.BraveSearchAPIKey = newKey
-	}
-
-	newTavilyKey := strings.TrimSpace(input.TavilySearchAPIKey)
-	if newTavilyKey != "***" {
-		s.cfg.TavilyAPIKey = newTavilyKey
-	}
-	// Update WebSearchEnabled based on providers
-	s.cfg.WebSearchEnabled = len(s.cfg.SearchProviders) > 0 &&
-		!(len(s.cfg.SearchProviders) == 1 && s.cfg.SearchProviders[0] == "none")
+	currCfg := s.cfgMgr.Get()
 	s.client = ollama.NewClient(baseURL)
 	s.runner = probe.NewRunner(s.client)
-	s.mediaro = router.New(s.client, routerConfig(s.cfg))
+	s.mediaro = router.New(s.client, routerConfig(currCfg))
 	s.sessionStore = sessions.NewStore(sessionsPath)
 	s.memoryStore = memory.NewStore(memoryPath)
 	if s.autoMgr != nil {
 		s.autoMgr.Stop()
 	}
-	s.autoMgr = agent.NewAutonomousManager(s.cfg, s.client, s.memoryStore)
+	s.autoMgr = agent.NewAutonomousManager(s.cfgMgr, s.client, s.memoryStore)
 	s.autoMgr.Start(context.Background())
 	if s.sleepMgr != nil {
 		s.sleepMgr.Pause()
 	}
-	if s.cfg.SleepModeEnabled {
-		s.sleepMgr = learning.NewSleepManager(s.cfg, s.client, s.memoryStore)
+	if currCfg.SleepModeEnabled {
+		s.sleepMgr = learning.NewSleepManager(s.cfgMgr, s.client, s.memoryStore)
 		s.sleepMgr.Start(context.Background())
 	} else {
 		s.sleepMgr = nil
 	}
-	cfg := s.cfg
 	s.mu.Unlock()
 
 	if strings.TrimSpace(s.envPath) != "" {
-		_ = config.SaveBasic(s.envPath, cfg)
+		_ = config.SaveBasic(s.envPath, currCfg)
 	}
-	writeJSON(w, http.StatusOK, settingsResponse(cfg))
+	writeJSON(w, http.StatusOK, settingsResponse(currCfg))
 }
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
@@ -685,7 +675,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	var turnRecorder *sessions.Recorder
 	result, err := engine.ProcessTurn(agentCtx, engine.Deps{
-		Config:          cfg,
+		ConfigMgr:       s.cfgMgr,
 		Client:          client,
 		SessionStore:    s.sessionStore,
 		MemoryStore:     s.memoryStore,
@@ -955,7 +945,7 @@ func (h *sseStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message
 }
 
 // runChatStream handles the chat streaming loop by delegating to the iterative agent.
-func runChatStream(ctx context.Context, cfg config.Config, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher, recorder *sessions.Recorder) ([]ollama.Message, error) {
+func runChatStream(ctx context.Context, cfg *config.Manager, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher, recorder *sessions.Recorder) ([]ollama.Message, error) {
 	a := agent.NewAgent(cfg, client, registry)
 	handler := &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
 

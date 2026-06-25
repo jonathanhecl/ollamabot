@@ -227,7 +227,7 @@ type telegramPlanMessage struct {
 
 // Bot represents the Telegram polling bot
 type Bot struct {
-	cfg                  config.Config
+	cfg                  *config.Manager
 	client               *ollama.Client
 	sessions             *sessions.Store
 	sessManager          *SessionManager
@@ -254,17 +254,21 @@ type Bot struct {
 	msgIDMap             map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
 }
 
-func NewBot(cfg config.Config, client *ollama.Client) *Bot {
-	token := cfg.TelegramBotToken
-	ms := memory.NewStore(cfg.MemoryPath)
-	ss := sessions.NewStore(cfg.SessionsPath)
+func (b *Bot) config() config.Config {
+	return b.cfg.Get()
+}
+
+func NewBot(cfg *config.Manager, client *ollama.Client) *Bot {
+	token := cfg.Get().TelegramBotToken
+	ms := memory.NewStore(cfg.Get().MemoryPath)
+	ss := sessions.NewStore(cfg.Get().SessionsPath)
 	return &Bot{
 		cfg:                  cfg,
 		client:               client,
 		sessions:             ss,
-		sessManager:          NewSessionManager(cfg.SessionsPath),
+		sessManager:          NewSessionManager(cfg.Get().SessionsPath),
 		memoryStore:          ms,
-		approvalService:      sessions.NewApprovalService(ss, cfg.Workspace),
+		approvalService:      sessions.NewApprovalService(ss, cfg.Get().Workspace),
 		autoMgr:              agent.NewAutonomousManager(cfg, client, ms),
 		goalMgr:              agent.NewGoalManager(cfg, client),
 		apiBase:              "https://api.telegram.org/bot" + token,
@@ -279,7 +283,7 @@ func NewBot(cfg config.Config, client *ollama.Client) *Bot {
 	}
 }
 
-func NewBotWithEnv(cfg config.Config, client *ollama.Client, envPath string) *Bot {
+func NewBotWithEnv(cfg *config.Manager, client *ollama.Client, envPath string) *Bot {
 	bot := NewBot(cfg, client)
 	bot.envPath = envPath
 	return bot
@@ -570,11 +574,11 @@ func (b *Bot) handleMessage(msg *Message) {
 }
 
 func (b *Bot) isAuthorized(fromID int64) bool {
-	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+	if len(b.config().TelegramAuthorizedIDs) == 0 {
 		return true
 	}
 	idStr := fmt.Sprintf("%d", fromID)
-	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+	for _, authID := range b.config().TelegramAuthorizedIDs {
 		if strings.TrimSpace(authID) == idStr {
 			return true
 		}
@@ -587,7 +591,7 @@ func (b *Bot) startNewSession(chatIDStr string) string {
 	sess := sessions.Session{
 		ID:        sessionID,
 		Title:     "Telegram Chat (" + chatIDStr + ")",
-		Model:     config.ResolveModel(b.cfg, config.ModelRoleMain),
+		Model:     config.ResolveModel(b.config(), config.ModelRoleMain),
 		CreatedAt: time.Now(),
 		UpdatedAt: time.Now(),
 	}
@@ -621,9 +625,9 @@ func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, n
 		return false
 	}
 
-	modelToUse := b.cfg.OllamaModelSubagent
+	modelToUse := b.config().OllamaModelSubagent
 	if strings.TrimSpace(modelToUse) == "" {
-		modelToUse = b.cfg.OllamaDefaultModel
+		modelToUse = b.config().OllamaDefaultModel
 	}
 
 	var sb strings.Builder
@@ -700,7 +704,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		ctx := context.Background()
 		version, err := b.client.Version(ctx)
 		if err != nil {
-			b.sendMessage(chatID, fmt.Sprintf("🔴 *Ollama Status:* Disconnected\nCould not connect to Ollama at %s:\n%v", b.cfg.OllamaBaseURL, err), 0, "Markdown")
+			b.sendMessage(chatID, fmt.Sprintf("🔴 *Ollama Status:* Disconnected\nCould not connect to Ollama at %s:\n%v", b.config().OllamaBaseURL, err), 0, "Markdown")
 			return
 		}
 		ps, err := b.client.Ps(ctx)
@@ -772,13 +776,13 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			b.sendMessage(chatID, "ℹ️ *Usage:* `/memory <query>` to search semantic memory.", 0, "Markdown")
 			return
 		}
-		if b.cfg.OllamaModelEmbed == "" {
+		if b.config().OllamaModelEmbed == "" {
 			b.sendMessage(chatID, "⚠️ *Error:* No embedding model is configured.", 0, "Markdown")
 			return
 		}
 		ctx := context.Background()
 		resp, err := b.client.Embed(ctx, ollama.EmbedRequest{
-			Model: b.cfg.OllamaModelEmbed,
+			Model: b.config().OllamaModelEmbed,
 			Input: args,
 		})
 		if err != nil {
@@ -813,7 +817,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			return
 		}
 
-		reports, err := runner.Inventory(ctx, b.cfg.OllamaProbeModels)
+		reports, err := runner.Inventory(ctx, b.config().OllamaProbeModels)
 		if err != nil {
 			b.sendMessage(chatID, fmt.Sprintf("❌ *Error reloading:* %v", err), 0, "Markdown")
 			return
@@ -829,7 +833,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 
 		snapshot := cache.Snapshot{
 			GeneratedAt:   time.Now(),
-			BaseURL:       b.cfg.OllamaBaseURL,
+			BaseURL:       b.config().OllamaBaseURL,
 			OllamaVersion: version.Version,
 			Models:        reports,
 			Running:       ps.Models,
@@ -1084,7 +1088,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	tempHistory := append(history, userMsg)
 
 	// Check if session has expired (inactivity limit) and if new message is related to history
-	expiryMin := b.cfg.TelegramSessionExpiryMin
+	expiryMin := b.config().TelegramSessionExpiryMin
 	if expiryMin <= 0 {
 		expiryMin = 30
 	}
@@ -1116,7 +1120,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	sessions.NotifyUpdate(sessionID)
 
 	turnResult, err := engine.ProcessTurn(ctx, engine.Deps{
-		Config:          b.cfg,
+		ConfigMgr:       b.cfg,
 		Client:          b.client,
 		SessionStore:    b.sessions,
 		MemoryStore:     b.memoryStore,
@@ -1514,7 +1518,7 @@ func (b *Bot) getFile(fileID string) (*File, error) {
 }
 
 func (b *Bot) downloadFile(filePath string) ([]byte, error) {
-	token := b.cfg.TelegramBotToken
+	token := b.config().TelegramBotToken
 	url := "https://api.telegram.org/file/bot" + token + "/" + filePath
 	resp, err := b.httpClient.Get(url)
 	if err != nil {
@@ -1558,7 +1562,7 @@ func (b *Bot) handleDocumentUpload(chatID int64, msg *Message, sessionID string)
 		name = "file"
 	}
 
-	dir := filepath.Join(b.cfg.Workspace, b.cfg.SessionsPath, sessionID, "uploads")
+	dir := filepath.Join(b.config().Workspace, b.config().SessionsPath, sessionID, "uploads")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		log.Printf("[Telegram] Document mkdir error: %v", err)
 		b.sendMessage(chatID, "❌ Could not save the file.", msg.MessageID, "")
@@ -1601,7 +1605,7 @@ func (b *Bot) handleDocumentUpload(chatID int64, msg *Message, sessionID string)
 // injectTelegramUploadsContext prepends a system note listing uploaded files, so
 // the agent is aware of them without the user needing to repeat themselves.
 func (b *Bot) injectTelegramUploadsContext(sessionID string, messages []ollama.Message) []ollama.Message {
-	dir := filepath.Join(b.cfg.Workspace, b.cfg.SessionsPath, sessionID, "uploads")
+	dir := filepath.Join(b.config().Workspace, b.config().SessionsPath, sessionID, "uploads")
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) == 0 {
 		return messages
@@ -1639,7 +1643,7 @@ func (b *Bot) injectTelegramAttachmentsContext(sessionID string, messages []olla
 	if strings.TrimSpace(sessionID) == "" {
 		return messages
 	}
-	dir := filepath.Join(b.cfg.SessionsPath, sessionID, "attachments")
+	dir := filepath.Join(b.config().SessionsPath, sessionID, "attachments")
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) == 0 {
 		return messages
@@ -2083,10 +2087,10 @@ func toTelegramHTML(text string) string {
 }
 
 func (b *Bot) sendStartupNotification() {
-	if !b.cfg.TelegramStartupNotification {
+	if !b.config().TelegramStartupNotification {
 		return
 	}
-	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+	if len(b.config().TelegramAuthorizedIDs) == 0 {
 		return
 	}
 
@@ -2094,39 +2098,39 @@ func (b *Bot) sendStartupNotification() {
 	sb.WriteString("🚀 *OllamaBot Initialized*\n\n")
 
 	sb.WriteString("🤖 *Active Models:*\n")
-	sb.WriteString(fmt.Sprintf("• *Main:* `%s`\n", b.cfg.OllamaDefaultModel))
-	if b.cfg.OllamaModelVision != "" {
-		sb.WriteString(fmt.Sprintf("• *Vision:* `%s`\n", b.cfg.OllamaModelVision))
+	sb.WriteString(fmt.Sprintf("• *Main:* `%s`\n", b.config().OllamaDefaultModel))
+	if b.config().OllamaModelVision != "" {
+		sb.WriteString(fmt.Sprintf("• *Vision:* `%s`\n", b.config().OllamaModelVision))
 	}
-	if b.cfg.OllamaModelAudio != "" {
-		sb.WriteString(fmt.Sprintf("• *Audio:* `%s`\n", b.cfg.OllamaModelAudio))
+	if b.config().OllamaModelAudio != "" {
+		sb.WriteString(fmt.Sprintf("• *Audio:* `%s`\n", b.config().OllamaModelAudio))
 	}
-	if b.cfg.OllamaModelEmbed != "" {
-		sb.WriteString(fmt.Sprintf("• *Memory:* `%s`\n", b.cfg.OllamaModelEmbed))
+	if b.config().OllamaModelEmbed != "" {
+		sb.WriteString(fmt.Sprintf("• *Memory:* `%s`\n", b.config().OllamaModelEmbed))
 	}
 	sb.WriteString("\n")
 
 	sb.WriteString("🛠️ *Active Capabilities:*\n")
 	sb.WriteString("• 💬 Local Chat\n")
 	hasCap := cache.Checker(snapshotPath())
-	canVision := b.cfg.OllamaModelVision != "" || hasCap == nil || hasCap(b.cfg.OllamaDefaultModel, "vision")
-	canAudio := b.cfg.OllamaModelAudio != "" || (hasCap != nil && hasCap(b.cfg.OllamaDefaultModel, "audio"))
+	canVision := b.config().OllamaModelVision != "" || hasCap == nil || hasCap(b.config().OllamaDefaultModel, "vision")
+	canAudio := b.config().OllamaModelAudio != "" || (hasCap != nil && hasCap(b.config().OllamaDefaultModel, "audio"))
 	if canVision {
 		sb.WriteString("• 👁️ Image Analysis\n")
 	}
 	if canAudio {
 		sb.WriteString("• 🎙️ Voice Transcription\n")
 	}
-	if b.cfg.WebSearchEnabled {
+	if b.config().WebSearchEnabled {
 		sb.WriteString("• 🔍 Web Search\n")
 	}
-	if b.cfg.OllamaModelEmbed != "" {
+	if b.config().OllamaModelEmbed != "" {
 		sb.WriteString("• 💾 Long-Term Memory (RAG)\n")
 	}
 
 	messageText := strings.TrimSpace(sb.String())
 
-	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+	for _, authID := range b.config().TelegramAuthorizedIDs {
 		id, err := parseChatID(authID)
 		if err == nil {
 			_, _ = b.sendMessage(id, messageText, 0, "Markdown")
@@ -2145,7 +2149,7 @@ func (b *Bot) convertToWav(inputBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("ffmpeg not found in PATH: %w", err)
 	}
 
-	tempDir := filepath.Join(b.cfg.Workspace, "temp")
+	tempDir := filepath.Join(b.config().Workspace, "temp")
 	_ = os.MkdirAll(tempDir, 0755)
 
 	inputPath := filepath.Join(tempDir, fmt.Sprintf("temp_input_%d.bin", time.Now().UnixNano()))
@@ -2441,7 +2445,7 @@ func (h *telegramImageProgressHandler) OnProgress(genID string, completed, total
 		return
 	}
 
-	tempDir := filepath.Join(h.bot.cfg.Workspace, "temp")
+	tempDir := filepath.Join(h.bot.config().Workspace, "temp")
 	_ = os.MkdirAll(tempDir, 0755)
 	tempPath := filepath.Join(tempDir, fmt.Sprintf("progress_%s.png", genID))
 	err = os.WriteFile(tempPath, imgBytes, 0644)
@@ -2856,27 +2860,27 @@ func (b *Bot) buildSettingsText() string {
 	var sb strings.Builder
 	sb.WriteString("⚙️ *OllamaBot Settings*\n\n")
 	sb.WriteString("*Current Model Configuration:*\n")
-	sb.WriteString(fmt.Sprintf("• 🤖 *Main (Default):* `%s`\n", b.cfg.OllamaDefaultModel))
+	sb.WriteString(fmt.Sprintf("• 🤖 *Main (Default):* `%s`\n", b.config().OllamaDefaultModel))
 
-	vis := b.cfg.OllamaModelVision
+	vis := b.config().OllamaModelVision
 	if vis == "" {
 		vis = "disabled 🚫"
 	}
 	sb.WriteString(fmt.Sprintf("• 👁️ *Vision:* `%s`\n", vis))
 
-	aud := b.cfg.OllamaModelAudio
+	aud := b.config().OllamaModelAudio
 	if aud == "" {
 		aud = "disabled 🚫"
 	}
 	sb.WriteString(fmt.Sprintf("• 🎙️ *Audio:* `%s`\n", aud))
 
-	emb := b.cfg.OllamaModelEmbed
+	emb := b.config().OllamaModelEmbed
 	if emb == "" {
 		emb = "disabled 🚫"
 	}
 	sb.WriteString(fmt.Sprintf("• 💾 *Memory (Embed):* `%s`\n", emb))
 
-	lrn := b.cfg.OllamaModelLearning
+	lrn := b.config().OllamaModelLearning
 	if lrn == "" {
 		lrn = "disabled 🚫"
 	}
@@ -2918,15 +2922,15 @@ func (b *Bot) handleSettingsRoleCallback(cb *CallbackQuery) {
 	var currentModel string
 	switch role {
 	case "main":
-		currentModel = b.cfg.OllamaDefaultModel
+		currentModel = b.config().OllamaDefaultModel
 	case "vision":
-		currentModel = b.cfg.OllamaModelVision
+		currentModel = b.config().OllamaModelVision
 	case "audio":
-		currentModel = b.cfg.OllamaModelAudio
+		currentModel = b.config().OllamaModelAudio
 	case "embed":
-		currentModel = b.cfg.OllamaModelEmbed
+		currentModel = b.config().OllamaModelEmbed
 	case "learn":
-		currentModel = b.cfg.OllamaModelLearning
+		currentModel = b.config().OllamaModelLearning
 	}
 	if currentModel == "" {
 		currentModel = "none"
@@ -3004,27 +3008,29 @@ func (b *Bot) handleSettingsModelCallback(cb *CallbackQuery) {
 		modelVal = ""
 	}
 
-	b.cfg.OllamaBaseURL = strings.TrimSpace(b.cfg.OllamaBaseURL)
+	b.cfg.Update(func(cfg *config.Config) {
+		cfg.OllamaBaseURL = strings.TrimSpace(cfg.OllamaBaseURL)
 
-	switch role {
-	case "main":
-		b.cfg.OllamaDefaultModel = modelVal
-	case "vision":
-		b.cfg.OllamaModelVision = modelVal
-	case "audio":
-		b.cfg.OllamaModelAudio = modelVal
-	case "embed":
-		b.cfg.OllamaModelEmbed = modelVal
-	case "learn":
-		b.cfg.OllamaModelLearning = modelVal
-	}
+		switch role {
+		case "main":
+			cfg.OllamaDefaultModel = modelVal
+		case "vision":
+			cfg.OllamaModelVision = modelVal
+		case "audio":
+			cfg.OllamaModelAudio = modelVal
+		case "embed":
+			cfg.OllamaModelEmbed = modelVal
+		case "learn":
+			cfg.OllamaModelLearning = modelVal
+		}
+	})
 
 	envPath := b.envPath
 	if envPath == "" {
 		envPath = ".env"
 	}
 
-	if err := config.SaveBasic(envPath, b.cfg); err != nil {
+	if err := config.SaveBasic(envPath, b.config()); err != nil {
 		log.Printf("[Telegram] Failed to save basic config: %v", err)
 		_ = b.answerCallbackQuery(cb.ID, "❌ Failed to save config", true)
 		return
@@ -3103,7 +3109,7 @@ func (b *Bot) registerCommands() {
 }
 
 func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, err error) {
-	if len(b.cfg.TelegramAuthorizedIDs) == 0 {
+	if len(b.config().TelegramAuthorizedIDs) == 0 {
 		return
 	}
 
@@ -3140,7 +3146,7 @@ func (b *Bot) notifyTaskCompletion(proj agent.Project, task agent.ProjectTodo, e
 	messageText := strings.TrimSpace(sb.String())
 	chunks := splitMessage(messageText, 4000)
 
-	for _, authID := range b.cfg.TelegramAuthorizedIDs {
+	for _, authID := range b.config().TelegramAuthorizedIDs {
 		id, err := parseChatID(authID)
 		if err == nil {
 			for _, chunk := range chunks {

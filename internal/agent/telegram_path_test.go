@@ -34,7 +34,7 @@ func TestRun_textOnlyTelegramPath(t *testing.T) {
 	model := "granite4.1:8b"
 	cfg := config.Config{Workspace: t.TempDir()}
 	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
-	a := agent.NewAgent(cfg, client, registry)
+	a := agent.NewAgent(config.NewManager(cfg), client, registry)
 
 	msgs := []ollama.Message{{Role: "user", Content: "Reply with exactly: pong"}}
 	final, err := a.Run(ctx, model, msgs, false, &discardHandler{})

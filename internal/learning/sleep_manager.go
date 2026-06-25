@@ -32,7 +32,7 @@ type Subtask struct {
 
 type SleepManager struct {
 	mu           sync.RWMutex
-	cfg          config.Config
+	cfgMgr       *config.Manager
 	client       *ollama.Client
 	sessionStore *sessions.Store
 	memoryStore  *memory.Store
@@ -45,14 +45,18 @@ type SleepManager struct {
 	taskQueue    []Subtask
 }
 
-func NewSleepManager(cfg config.Config, client *ollama.Client, memoryStore *memory.Store) *SleepManager {
+func (sm *SleepManager) config() config.Config {
+	return sm.cfgMgr.Get()
+}
+
+func NewSleepManager(cfg *config.Manager, client *ollama.Client, memoryStore *memory.Store) *SleepManager {
 	return &SleepManager{
-		cfg:          cfg,
+		cfgMgr:       cfg,
 		client:       client,
-		sessionStore: sessions.NewStore(cfg.SessionsPath),
+		sessionStore: sessions.NewStore(cfg.Get().SessionsPath),
 		memoryStore:  memoryStore,
 		lastActivity: time.Now(),
-		statePath:    filepath.Join(cfg.SessionsPath, "learning_state.json"),
+		statePath:    filepath.Join(cfg.Get().SessionsPath, "learning_state.json"),
 	}
 }
 
@@ -70,9 +74,7 @@ func (sm *SleepManager) NotifyUserActivity() {
 }
 
 func (sm *SleepManager) Start(ctx context.Context) {
-	sm.mu.Lock()
-	enabled := sm.cfg.SleepModeEnabled
-	sm.mu.Unlock()
+	enabled := sm.config().SleepModeEnabled
 
 	if !enabled {
 		log.Println("[sleep] Sleep Mode is disabled in config")
@@ -84,9 +86,7 @@ func (sm *SleepManager) Start(ctx context.Context) {
 	log.Println("[sleep] Sleep manager background service starting...")
 
 	inactivityThreshold := 30 * time.Minute
-	sm.mu.RLock()
-	threshStr := sm.cfg.SleepModeInactivityThreshold
-	sm.mu.RUnlock()
+	threshStr := sm.config().SleepModeInactivityThreshold
 	if dur, err := time.ParseDuration(threshStr); err == nil {
 		inactivityThreshold = dur
 	}
@@ -111,7 +111,7 @@ func (sm *SleepManager) Start(ctx context.Context) {
 					if !isSleeping && !isLearning {
 						sm.mu.Lock()
 						sm.isSleeping = true
-						subagentsEnabled := sm.cfg.SleepModeSubagentsEnabled
+						subagentsEnabled := sm.config().SleepModeSubagentsEnabled
 						var queue []Subtask
 						if subagentsEnabled {
 							sessList, err := sm.sessionStore.List()
@@ -142,7 +142,7 @@ func (sm *SleepManager) Start(ctx context.Context) {
 						}
 					} else if isSleeping && !isLearning {
 						sm.mu.Lock()
-						subagentsEnabled := sm.cfg.SleepModeSubagentsEnabled
+						subagentsEnabled := sm.config().SleepModeSubagentsEnabled
 						queueLen := len(sm.taskQueue)
 						sm.mu.Unlock()
 
@@ -180,12 +180,9 @@ func normalizeModelName(name string) string {
 }
 
 func (sm *SleepManager) checkHardwareAndSelectModel(ctx context.Context) (string, error) {
-	sm.mu.RLock()
-	subagentModel := sm.cfg.OllamaModelSubagent
-	learningModel := sm.cfg.OllamaModelLearning
-	defaultModel := sm.cfg.OllamaDefaultModel
-	sm.mu.RUnlock()
-
+	subagentModel := sm.config().OllamaModelSubagent
+	learningModel := sm.config().OllamaModelLearning
+	defaultModel := sm.config().OllamaDefaultModel
 	var primaryModel string
 	if subagentModel != "" {
 		primaryModel = subagentModel
@@ -440,12 +437,12 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 
 	learningModel := modelToUse
 	if learningModel == "" {
-		learningModel = sm.cfg.OllamaModelSubagent
+		learningModel = sm.config().OllamaModelSubagent
 		if learningModel == "" {
-			learningModel = sm.cfg.OllamaModelLearning
+			learningModel = sm.config().OllamaModelLearning
 		}
 		if learningModel == "" {
-			learningModel = sm.cfg.OllamaDefaultModel
+			learningModel = sm.config().OllamaDefaultModel
 		}
 	}
 	if learningModel == "" {
@@ -476,14 +473,14 @@ Your goal:
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String())
 
-	registry := tools.NewRegistry(sm.cfg.WebSearchEnabled, sm.cfg.Workspace, sm.memoryStore, sm.client, sm.cfg.OllamaModelEmbed, tools.SearchConfig{
-		Providers:    sm.cfg.SearchProviders,
-		BraveAPIKey:  sm.cfg.BraveSearchAPIKey,
-		TavilyAPIKey: sm.cfg.TavilyAPIKey,
+	registry := tools.NewRegistry(sm.config().WebSearchEnabled, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{
+		Providers:    sm.config().SearchProviders,
+		BraveAPIKey:  sm.config().BraveSearchAPIKey,
+		TavilyAPIKey: sm.config().TavilyAPIKey,
 	})
-	registry.SetSkillsPath(sm.cfg.SkillsPath)
+	registry.SetSkillsPath(sm.config().SkillsPath)
 
-	reflectorAgent := agent.NewAgent(sm.cfg, sm.client, registry)
+	reflectorAgent := agent.NewAgent(sm.cfgMgr, sm.client, registry)
 	reflectorAgent.SetOptions(map[string]any{
 		"temperature": 0.1,
 	})
@@ -553,7 +550,7 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 }
 
 func (sm *SleepManager) appendToAuditLog(sessionID string, actions []string, summary string) {
-	auditPath := filepath.Join(sm.cfg.SkillsPath, "audit_log.md")
+	auditPath := filepath.Join(sm.config().SkillsPath, "audit_log.md")
 
 	if _, err := os.Stat(auditPath); os.IsNotExist(err) {
 		initialHeader := "# Skills Continuous Learning Audit Log\n\nThis file tracks all autonomous updates, creations, and deletions of skills or settings.\n\n"

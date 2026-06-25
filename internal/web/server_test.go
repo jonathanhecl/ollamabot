@@ -415,6 +415,7 @@ func TestResolveMedia_ThreeConsecutiveAudios(t *testing.T) {
 
 func TestClarifyTool(t *testing.T) {
 	s := &Server{
+		cfgMgr:         config.NewManager(config.Config{}),
 		clarifications: make(map[string]chan string),
 	}
 
@@ -490,9 +491,9 @@ func TestSelectDefaultOption(t *testing.T) {
 
 func TestAuthentication(t *testing.T) {
 	s := &Server{
-		cfg: config.Config{
+		cfgMgr: config.NewManager(config.Config{
 			ServerPassword: "secretpassword",
-		},
+		}),
 	}
 
 	handler := s.authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -580,10 +581,10 @@ Weather helper
 `)
 
 	s := &Server{
-		cfg: config.Config{
+		cfgMgr: config.NewManager(config.Config{
 			SkillsPath:    skillsRoot,
 			SkillsPathRaw: skillsRoot,
-		},
+		}),
 	}
 
 	t.Run("list", func(t *testing.T) {

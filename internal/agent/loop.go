@@ -35,7 +35,7 @@ type StreamHandler interface {
 }
 
 type Agent struct {
-	cfg         config.Config
+	cfgMgr      *config.Manager
 	client      *ollama.Client
 	registry    *tools.Registry
 	paths       *pathMemory
@@ -44,18 +44,22 @@ type Agent struct {
 	mu          sync.RWMutex
 }
 
-func NewAgent(cfg config.Config, client *ollama.Client, registry *tools.Registry) *Agent {
+func (a *Agent) config() config.Config {
+	return a.cfgMgr.Get()
+}
+
+func NewAgent(cfg *config.Manager, client *ollama.Client, registry *tools.Registry) *Agent {
 	// Configure image generation model in registry if available
 	if registry != nil {
-		registry.SetImageModel(cfg.OllamaModelImage)
-		registry.SetImageSteps(cfg.OllamaImageSteps)
-		registry.SetPlanConfirmMode(cfg.PlanConfirmation)
+		registry.SetImageModel(cfg.Get().OllamaModelImage)
+		registry.SetImageSteps(cfg.Get().OllamaImageSteps)
+		registry.SetPlanConfirmMode(cfg.Get().PlanConfirmation)
 	}
 	return &Agent{
-		cfg:      cfg,
+		cfgMgr:   cfg,
 		client:   client,
 		registry: registry,
-		paths:    newPathMemory(cfg.Workspace),
+		paths:    newPathMemory(cfg.Get().Workspace),
 	}
 }
 
@@ -87,9 +91,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 	// Proactive Auto-RAG context pre-fetching
 	var recalledMemoriesBlock string
-	if a.registry != nil && a.registry.MemoryStore() != nil && a.cfg.OllamaModelEmbed != "" && goal != "" {
+	if a.registry != nil && a.registry.MemoryStore() != nil && a.config().OllamaModelEmbed != "" && goal != "" {
 		embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
-			Model: a.cfg.OllamaModelEmbed,
+			Model: a.config().OllamaModelEmbed,
 			Input: goal,
 		})
 		if err == nil && len(embedResp.Embeddings) > 0 {
@@ -117,7 +121,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	}
 
 	// Load and inject custom skills from configurable skills path
-	skillsDir := a.cfg.SkillsPath
+	skillsDir := a.config().SkillsPath
 	var skillsBlock string
 	if cat, err := skills.NewCatalog(skillsDir); err == nil {
 		if loaded, err := cat.LoadAll(); err == nil && len(loaded) > 0 {
@@ -150,7 +154,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		// Inject memory tools instruction
-		if a.cfg.OllamaModelEmbed != "" {
+		if a.config().OllamaModelEmbed != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n- Store important facts, user preferences, decisions, and context using memory_add. Write self-contained, descriptive, and reusable memory entries (containing error patterns, technologies involved, file context, and the exact working solution) so they can be retrieved and applied effectively in both the current project and other contexts.\n- Search memory when the question may benefit from past knowledge using memory_search. Always search memory first before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: To prevent duplicate or obsolete memories, ALWAYS search for related facts first. If you learn updated information about an existing memory, you must DELETE the old version (using memory_delete with its ID) BEFORE adding the new version. Do not store near-identical or overlapping facts.\n- Prioritize: only store information that is likely to be useful later.\n- Lessons Learned: When you solve a difficult error, bug, or discover workspace-specific setups (e.g. missing dependencies, required environment variables, unique build scripts), store a concise 'lesson learned' memory with context using memory_add so you do not repeat the mistake in future tasks.",
@@ -158,7 +162,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		// Inject image generation capability instruction
-		if strings.TrimSpace(a.cfg.OllamaModelImage) != "" {
+		if strings.TrimSpace(a.config().OllamaModelImage) != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{
 				Role:    "system",
 				Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for standard square images, 1024x512 for landscape, 512x1024 for portrait. You can also specify custom smaller or aspect-ratio dimensions (like 64, 128, 256, etc.) directly when generating specific UI assets like icons, buttons, or logos. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language. Do NOT output the generated image filename, path, or reference (e.g. do not say 'Reference: generated_...' or 'Referencia: ...') in your response to the user, as the user interface automatically renders the generated image bubble under your message. Simply confirm that the image is ready.",
@@ -221,7 +225,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		})
 
 		// Inject reinforcement for plan confirmation
-		planMode := a.cfg.PlanConfirmation
+		planMode := a.config().PlanConfirmation
 		if planMode == "" {
 			planMode = "smart"
 		}
@@ -292,7 +296,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				// Run optimization/summarization
-				modelToUse := a.cfg.OllamaModelSubagent
+				modelToUse := a.config().OllamaModelSubagent
 				if strings.TrimSpace(modelToUse) == "" {
 					modelToUse = model
 				}
@@ -531,7 +535,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 								sb.WriteString(result)
 								sb.WriteString("\n\n[PROACTIVE SYSTEM ASSISTANCE: The requested file was not found. Here are some files in your workspace with similar names that you might have meant to access:]")
 								for _, s := range suggs {
-									rel, err := filepath.Rel(a.cfg.Workspace, s)
+									rel, err := filepath.Rel(a.config().Workspace, s)
 									if err == nil && !strings.HasPrefix(rel, "..") {
 										fmt.Fprintf(&sb, "\n- %s", rel)
 									} else {
@@ -548,7 +552,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					if toolName == "Edit" && strings.Contains(result, "old_string not found") {
 						filePath, _ := params["file_path"].(string)
 						if filePath != "" {
-							content, readErr := tools.ReadFile(a.cfg.Workspace, filePath)
+							content, readErr := tools.ReadFile(a.config().Workspace, filePath)
 							if readErr == nil {
 								lines := strings.Split(content, "\n")
 								var sb strings.Builder
@@ -603,7 +607,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				// Check for repetitive loops.
-				signature, label := sessions.FormatApprovalSignature(toolName, params, a.cfg.Workspace)
+				signature, label := sessions.FormatApprovalSignature(toolName, params, a.config().Workspace)
 				key := toolName + ":" + signature
 				toolCallCounts[key]++
 				repeatCount := toolCallCounts[key]

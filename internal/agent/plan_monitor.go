@@ -22,7 +22,7 @@ type PlanNotificationFunc func(sessionID string, plan sessions.SessionPlan, mess
 
 type PlanMonitor struct {
 	mu              sync.RWMutex
-	cfg             config.Config
+	cfgMgr          *config.Manager
 	client          *ollama.Client
 	sessionStore    *sessions.Store
 	memoryStore     *memory.Store
@@ -35,17 +35,21 @@ type PlanMonitor struct {
 	notifiers       map[string]PlanNotificationFunc
 }
 
-func NewPlanMonitor(cfg config.Config, client *ollama.Client, memoryStore *memory.Store) *PlanMonitor {
+func (pm *PlanMonitor) config() config.Config {
+	return pm.cfgMgr.Get()
+}
+
+func NewPlanMonitor(cfg *config.Manager, client *ollama.Client, memoryStore *memory.Store) *PlanMonitor {
 	if memoryStore == nil {
-		memoryStore = memory.NewStore(cfg.MemoryPath)
+		memoryStore = memory.NewStore(cfg.Get().MemoryPath)
 	}
-	store := sessions.NewStore(cfg.SessionsPath)
+	store := sessions.NewStore(cfg.Get().SessionsPath)
 	return &PlanMonitor{
-		cfg:             cfg,
+		cfgMgr:          cfg,
 		client:          client,
 		sessionStore:    store,
 		memoryStore:     memoryStore,
-		approvalService: sessions.NewApprovalService(store, cfg.Workspace),
+		approvalService: sessions.NewApprovalService(store, cfg.Get().Workspace),
 		isWorking:       make(map[string]bool),
 		interval:        2 * time.Minute,
 		staleAfter:      defaultPlanStaleAfter,
@@ -245,14 +249,14 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		Role:    "system",
 		Content: resumeContent,
 	})
-	registry := tools.NewRegistry(pm.cfg.WebSearchEnabled, pm.cfg.Workspace, pm.memoryStore, pm.client, pm.cfg.OllamaModelEmbed, tools.SearchConfig{
-		Providers:    pm.cfg.SearchProviders,
-		BraveAPIKey:  pm.cfg.BraveSearchAPIKey,
-		TavilyAPIKey: pm.cfg.TavilyAPIKey,
+	registry := tools.NewRegistry(pm.config().WebSearchEnabled, pm.config().Workspace, pm.memoryStore, pm.client, pm.config().OllamaModelEmbed, tools.SearchConfig{
+		Providers:    pm.config().SearchProviders,
+		BraveAPIKey:  pm.config().BraveSearchAPIKey,
+		TavilyAPIKey: pm.config().TavilyAPIKey,
 	})
 	registry.SetSessionStore(pm.sessionStore)
 	registry.SetSessionID(sessionID)
-	registry.SetSessionsPath(pm.cfg.SessionsPath)
+	registry.SetSessionsPath(pm.config().SessionsPath)
 	registry.SetApprovalService(pm.approvalService)
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 	registry.SetPlanProgressHandler(func(id string, plan sessions.SessionPlan) {
@@ -264,12 +268,12 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		sessionID:    sessionID,
 		baseMessages: sess.Messages,
 	}
-	a := NewAgent(pm.cfg, pm.client, registry)
-	model := config.ResolveModel(pm.cfg, config.ModelRoleMain)
+	a := NewAgent(pm.cfgMgr, pm.client, registry)
+	model := config.ResolveModel(pm.config(), config.ModelRoleMain)
 	if strings.TrimSpace(model) == "" {
-		model = pm.cfg.OllamaDefaultModel
+		model = pm.config().OllamaDefaultModel
 	}
-	finalHistory, err := a.Run(ctx, model, ollamaMessages, pm.cfg.OllamaThinkEnabled, handler)
+	finalHistory, err := a.Run(ctx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
 	if err != nil {
 		log.Printf("[PlanMonitor] agent run for session %s failed: %v", sessionID, err)
 		pm.notify(sessionID, plan, fmt.Sprintf("Plan monitor error: %v", err))

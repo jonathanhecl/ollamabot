@@ -101,7 +101,7 @@ func TestContextOptimizationFlow(t *testing.T) {
 	}
 
 	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
-	a := NewAgent(cfg, client, registry)
+	a := NewAgent(config.NewManager(cfg), client, registry)
 
 	// Create messages that are long enough to exceed the 90% threshold (900 tokens, which is ~3600 characters)
 	largeContent := strings.Repeat("abcd ", 800) // 4000 characters ~ 1000 tokens

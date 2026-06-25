@@ -20,7 +20,7 @@ import (
 
 type GoalManager struct {
 	mu              sync.Mutex
-	cfg             config.Config
+	cfgMgr          *config.Manager
 	client          *ollama.Client
 	sessionStore    *sessions.Store
 	memoryStore     *memory.Store
@@ -30,15 +30,19 @@ type GoalManager struct {
 	notifiersMu     sync.RWMutex
 }
 
-func NewGoalManager(cfg config.Config, client *ollama.Client) *GoalManager {
-	ss := sessions.NewStore(cfg.SessionsPath)
-	ms := memory.NewStore(cfg.MemoryPath)
+func (g *GoalManager) config() config.Config {
+	return g.cfgMgr.Get()
+}
+
+func NewGoalManager(cfg *config.Manager, client *ollama.Client) *GoalManager {
+	ss := sessions.NewStore(cfg.Get().SessionsPath)
+	ms := memory.NewStore(cfg.Get().MemoryPath)
 	return &GoalManager{
-		cfg:             cfg,
+		cfgMgr:          cfg,
 		client:          client,
 		sessionStore:    ss,
 		memoryStore:     ms,
-		approvalService: sessions.NewApprovalService(ss, cfg.Workspace),
+		approvalService: sessions.NewApprovalService(ss, cfg.Get().Workspace),
 		activeLoops:     make(map[string]context.CancelFunc),
 		notifiers:       make(map[string]func(message string)),
 	}
@@ -104,7 +108,7 @@ func (g *GoalManager) StartGoal(sessionID string, objective string) error {
 
 	// Try loading the objective from a file if it refers to an existing file in the workspace
 	if !strings.Contains(objective, "\n") && len(objective) < 260 {
-		filePath := filepath.Join(g.cfg.Workspace, objective)
+		filePath := filepath.Join(g.config().Workspace, objective)
 		if _, err := os.Stat(filePath); err == nil {
 			if data, err := os.ReadFile(filePath); err == nil {
 				objective = string(data)
@@ -313,18 +317,18 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		}
 
 		// Setup tool registry
-		registry := tools.NewRegistry(g.cfg.WebSearchEnabled, g.cfg.Workspace, g.memoryStore, g.client, g.cfg.OllamaModelEmbed, tools.SearchConfig{
-			Providers:    g.cfg.SearchProviders,
-			BraveAPIKey:  g.cfg.BraveSearchAPIKey,
-			TavilyAPIKey: g.cfg.TavilyAPIKey,
+		registry := tools.NewRegistry(g.config().WebSearchEnabled, g.config().Workspace, g.memoryStore, g.client, g.config().OllamaModelEmbed, tools.SearchConfig{
+			Providers:    g.config().SearchProviders,
+			BraveAPIKey:  g.config().BraveSearchAPIKey,
+			TavilyAPIKey: g.config().TavilyAPIKey,
 		})
 		registry.SetSessionStore(g.sessionStore)
 		registry.SetSessionID(sessionID)
-		registry.SetSessionsPath(g.cfg.SessionsPath)
+		registry.SetSessionsPath(g.config().SessionsPath)
 		registry.SetApprovalService(g.approvalService)
 		registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 
-		a := NewAgent(g.cfg, g.client, registry)
+		a := NewAgent(g.cfgMgr, g.client, registry)
 		handler := &goalStreamHandler{
 			sessionStore: g.sessionStore,
 			sessionID:    sessionID,
@@ -336,7 +340,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		var runErr error
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
-			finalHistory, runErr = a.Run(ctx, g.cfg.OllamaDefaultModel, ollamaMessages, true, handler)
+			finalHistory, runErr = a.Run(ctx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
 			if runErr == nil {
 				break
 			}
@@ -355,17 +359,17 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 					return
 				}
 				// Re-instantiate agent and registry to ensure fresh state if needed
-				registry = tools.NewRegistry(g.cfg.WebSearchEnabled, g.cfg.Workspace, g.memoryStore, g.client, g.cfg.OllamaModelEmbed, tools.SearchConfig{
-					Providers:    g.cfg.SearchProviders,
-					BraveAPIKey:  g.cfg.BraveSearchAPIKey,
-					TavilyAPIKey: g.cfg.TavilyAPIKey,
+				registry = tools.NewRegistry(g.config().WebSearchEnabled, g.config().Workspace, g.memoryStore, g.client, g.config().OllamaModelEmbed, tools.SearchConfig{
+					Providers:    g.config().SearchProviders,
+					BraveAPIKey:  g.config().BraveSearchAPIKey,
+					TavilyAPIKey: g.config().TavilyAPIKey,
 				})
 				registry.SetSessionStore(g.sessionStore)
 				registry.SetSessionID(sessionID)
-				registry.SetSessionsPath(g.cfg.SessionsPath)
+				registry.SetSessionsPath(g.config().SessionsPath)
 				registry.SetApprovalService(g.approvalService)
 				registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
-				a = NewAgent(g.cfg, g.client, registry)
+				a = NewAgent(g.cfgMgr, g.client, registry)
 			}
 		}
 
@@ -494,9 +498,9 @@ type progressEvaluation struct {
 }
 
 func (g *GoalManager) evaluateProgress(ctx context.Context, objective string, messages []json.RawMessage) (bool, string, error) {
-	modelToUse := g.cfg.OllamaModelSubagent
+	modelToUse := g.config().OllamaModelSubagent
 	if strings.TrimSpace(modelToUse) == "" {
-		modelToUse = g.cfg.OllamaDefaultModel
+		modelToUse = g.config().OllamaDefaultModel
 	}
 
 	var historyText strings.Builder

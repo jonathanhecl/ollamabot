@@ -153,6 +153,7 @@ func TestHandleHealth(t *testing.T) {
 
 	client := ollama.NewClient(ts.URL)
 	s := &Server{
+		cfgMgr: config.NewManager(config.Config{}),
 		client: client,
 	}
 
@@ -180,6 +181,7 @@ func TestHandleHealth(t *testing.T) {
 func TestHandleHealth_Error(t *testing.T) {
 	client := ollama.NewClient("http://127.0.0.1:59999") // unlikely to be running
 	s := &Server{
+		cfgMgr: config.NewManager(config.Config{}),
 		client: client,
 	}
 

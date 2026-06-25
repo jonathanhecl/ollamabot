@@ -31,7 +31,7 @@ func TestClassifyToolRiskDangerousCommands(t *testing.T) {
 func TestClassifyToolRiskPathOutsideWorkspace(t *testing.T) {
 	got := ClassifyToolRisk("execute_command", map[string]any{
 		"command": "python3",
-		"args":    []any{"/tmp/outside.py"},
+		"args":    []any{"../outside.py"},
 	}, t.TempDir())
 	if got.Level != RiskNeedsApproval {
 		t.Fatalf("expected outside path to need approval, got level=%v summary=%q", got.Level, got.Summary)

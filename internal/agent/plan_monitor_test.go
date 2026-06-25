@@ -111,7 +111,7 @@ func TestPlanMonitorResumesDeferredPlan(t *testing.T) {
 		OllamaModelSubagent: "test-model",
 	}
 	client := ollama.NewClient(server.URL)
-	pm := NewPlanMonitor(cfg, client, memory.NewStore(memoryPath))
+	pm := NewPlanMonitor(config.NewManager(cfg), client, memory.NewStore(memoryPath))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

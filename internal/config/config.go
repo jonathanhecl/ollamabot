@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type Config struct {
@@ -546,3 +547,36 @@ func unquote(value string) string {
 	}
 	return value
 }
+
+// Manager manages a shared, thread-safe configuration instance.
+type Manager struct {
+	mu  sync.RWMutex
+	cfg Config
+}
+
+// NewManager creates a new thread-safe configuration manager.
+func NewManager(cfg Config) *Manager {
+	return &Manager{cfg: cfg}
+}
+
+// Get returns a copy of the current configuration.
+func (m *Manager) Get() Config {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.cfg
+}
+
+// Set updates the configuration.
+func (m *Manager) Set(cfg Config) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cfg = cfg
+}
+
+// Update allows modifying fields in the configuration under a write lock.
+func (m *Manager) Update(fn func(*Config)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	fn(&m.cfg)
+}
+

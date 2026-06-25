@@ -100,7 +100,7 @@ func TestGoalManager_Lifecycle(t *testing.T) {
 	defer server.Close()
 
 	client := ollama.NewClient(server.URL)
-	goalMgr := NewGoalManager(cfg, client)
+	goalMgr := NewGoalManager(config.NewManager(cfg), client)
 
 	sessionID := "session_1"
 	store := sessions.NewStore(sessionsPath)
@@ -253,7 +253,7 @@ func TestGoalManager_ResumeActiveGoals(t *testing.T) {
 	defer server.Close()
 
 	client := ollama.NewClient(server.URL)
-	goalMgr := NewGoalManager(cfg, client)
+	goalMgr := NewGoalManager(config.NewManager(cfg), client)
 
 	err = goalMgr.ResumeActiveGoals()
 	if err != nil {
@@ -322,7 +322,7 @@ func TestGoalManager_EvaluateProgress(t *testing.T) {
 
 			cfg := config.Config{}
 			client := ollama.NewClient(server.URL)
-			goalMgr := NewGoalManager(cfg, client)
+			goalMgr := NewGoalManager(config.NewManager(cfg), client)
 
 			achieved, reasoning, err := goalMgr.evaluateProgress(context.Background(), "some objective", nil)
 			if (err != nil) != tt.wantErr {

@@ -47,7 +47,7 @@ var OnTaskCompletion TaskNotificationFunc
 // AutonomousManager manages background tickers and executions of workspace projects
 type AutonomousManager struct {
 	mu          sync.RWMutex
-	cfg         config.Config
+	cfgMgr      *config.Manager
 	client      *ollama.Client
 	memoryStore *memory.Store
 	isWorking   map[string]bool
@@ -56,10 +56,14 @@ type AutonomousManager struct {
 	interval    time.Duration
 }
 
+func (am *AutonomousManager) config() config.Config {
+	return am.cfgMgr.Get()
+}
+
 // NewAutonomousManager creates a new instance of AutonomousManager
-func NewAutonomousManager(cfg config.Config, client *ollama.Client, memoryStore *memory.Store) *AutonomousManager {
+func NewAutonomousManager(cfg *config.Manager, client *ollama.Client, memoryStore *memory.Store) *AutonomousManager {
 	return &AutonomousManager{
-		cfg:         cfg,
+		cfgMgr:      cfg,
 		client:      client,
 		memoryStore: memoryStore,
 		isWorking:   map[string]bool{},
@@ -119,7 +123,7 @@ func (am *AutonomousManager) SetInterval(d time.Duration) {
 
 // ListProjects scans the workspace root for folders containing "project.json"
 func (am *AutonomousManager) ListProjects() ([]Project, error) {
-	workspaceRoot := am.cfg.Workspace
+	workspaceRoot := am.config().Workspace
 	if _, err := os.Stat(workspaceRoot); os.IsNotExist(err) {
 		return []Project{}, nil
 	}
@@ -147,7 +151,7 @@ func (am *AutonomousManager) ListProjects() ([]Project, error) {
 
 // LoadProject loads a project's state from its project.json
 func (am *AutonomousManager) LoadProject(id string) (Project, error) {
-	projPath := filepath.Join(am.cfg.Workspace, id, "project.json")
+	projPath := filepath.Join(am.config().Workspace, id, "project.json")
 	data, err := os.ReadFile(projPath)
 	if err != nil {
 		return Project{}, err
@@ -162,7 +166,7 @@ func (am *AutonomousManager) LoadProject(id string) (Project, error) {
 // SaveProject saves the project state to project.json inside its folder
 func (am *AutonomousManager) SaveProject(proj Project) error {
 	proj.UpdatedAt = time.Now()
-	projDir := filepath.Join(am.cfg.Workspace, proj.ID)
+	projDir := filepath.Join(am.config().Workspace, proj.ID)
 	if err := os.MkdirAll(projDir, 0755); err != nil {
 		return err
 	}
@@ -192,10 +196,10 @@ func (am *AutonomousManager) CreateProject(ctx context.Context, name, goal strin
 	}
 
 	// Avoid duplicates
-	projDir := filepath.Join(am.cfg.Workspace, id)
+	projDir := filepath.Join(am.config().Workspace, id)
 	if _, err := os.Stat(projDir); err == nil {
 		id = fmt.Sprintf("%s-%d", id, time.Now().Unix()%1000)
-		projDir = filepath.Join(am.cfg.Workspace, id)
+		projDir = filepath.Join(am.config().Workspace, id)
 	}
 
 	proj := Project{
@@ -261,7 +265,7 @@ type rawTodo struct {
 
 // generateInitialTodos calls Ollama to design a checklist of tasks
 func (am *AutonomousManager) generateInitialTodos(ctx context.Context, name, goal string) ([]ProjectTodo, error) {
-	model := am.cfg.OllamaDefaultModel
+	model := am.config().OllamaDefaultModel
 	if model == "" {
 		return nil, fmt.Errorf("no default model configured")
 	}
@@ -444,7 +448,7 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 	task.UpdatedAt = time.Now()
 	_ = am.SaveProject(proj)
 
-	model := am.cfg.OllamaDefaultModel
+	model := am.config().OllamaDefaultModel
 	if model == "" {
 		task.Status = "failed"
 		task.Result = "No default model configured in settings. Cannot execute."
@@ -459,17 +463,17 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 	log.Printf("[autonomous] Task execution started for project %q: %q", proj.Name, task.Content)
 
 	// Encapsulate workspace: all tool operations inside this project dir!
-	projectWorkspaceDir := filepath.Join(am.cfg.Workspace, projectID)
+	projectWorkspaceDir := filepath.Join(am.config().Workspace, projectID)
 	_ = os.MkdirAll(projectWorkspaceDir, 0755)
 
 	// Create registry scoped inside this project directory
-	registry := tools.NewRegistry(am.cfg.WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.cfg.OllamaModelEmbed, tools.SearchConfig{
-		Providers:   am.cfg.SearchProviders,
-		BraveAPIKey: am.cfg.BraveSearchAPIKey,
+	registry := tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
+		Providers:   am.config().SearchProviders,
+		BraveAPIKey: am.config().BraveSearchAPIKey,
 	})
 
 	// Instantiate iterative agent
-	a := NewAgent(am.cfg, am.client, registry)
+	a := NewAgent(am.cfgMgr, am.client, registry)
 
 	// Generate Tick execution system context
 	var systemInstructions strings.Builder
@@ -514,11 +518,11 @@ Task Description: %s
 			case <-time.After(10 * time.Second):
 			}
 			// Re-create registry and agent to start fresh
-			registry = tools.NewRegistry(am.cfg.WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.cfg.OllamaModelEmbed, tools.SearchConfig{
-				Providers:   am.cfg.SearchProviders,
-				BraveAPIKey: am.cfg.BraveSearchAPIKey,
+			registry = tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
+				Providers:   am.config().SearchProviders,
+				BraveAPIKey: am.config().BraveSearchAPIKey,
 			})
-			a = NewAgent(am.cfg, am.client, registry)
+			a = NewAgent(am.cfgMgr, am.client, registry)
 		}
 	}
 	elapsed := time.Since(startTime)
@@ -613,13 +617,13 @@ Task Description: %s
 
 // DeleteProject deletes the project folder inside workspace
 func (am *AutonomousManager) DeleteProject(id string) error {
-	projDir := filepath.Join(am.cfg.Workspace, id)
+	projDir := filepath.Join(am.config().Workspace, id)
 	return os.RemoveAll(projDir)
 }
 
 // GetProjectLogs returns all generated tick execution markdown log filenames for a project
 func (am *AutonomousManager) GetProjectLogs(id string) ([]string, error) {
-	logsDir := filepath.Join(am.cfg.Workspace, id, "logs")
+	logsDir := filepath.Join(am.config().Workspace, id, "logs")
 	if _, err := os.Stat(logsDir); os.IsNotExist(err) {
 		return []string{}, nil
 	}

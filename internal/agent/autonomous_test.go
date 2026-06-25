@@ -56,7 +56,7 @@ func TestAutonomousManager_GenerateInitialTodos(t *testing.T) {
 				OllamaDefaultModel: "test-model",
 			}
 			client := ollama.NewClient(server.URL)
-			am := NewAutonomousManager(cfg, client, nil)
+			am := NewAutonomousManager(config.NewManager(cfg), client, nil)
 
 			todos, err := am.generateInitialTodos(context.Background(), "test-project", "some goal")
 			if (err != nil) != tt.wantErr {

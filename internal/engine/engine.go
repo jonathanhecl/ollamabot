@@ -27,7 +27,7 @@ type AttachmentHandlerFactory func(recorder *sessions.Recorder) tools.Attachment
 type PlanProgressHandler func(sessionID string, plan sessions.SessionPlan)
 
 type Deps struct {
-	Config       config.Config
+	ConfigMgr    *config.Manager
 	Client       *ollama.Client
 	Runner       *probe.Runner
 	SessionStore *sessions.Store
@@ -63,7 +63,7 @@ type TurnResult struct {
 }
 
 func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, error) {
-	cfg := deps.Config
+	cfg := deps.ConfigMgr.Get()
 	model := config.ResolveModel(cfg, config.ModelRoleMain)
 	if strings.TrimSpace(model) == "" {
 		return TurnResult{}, fmt.Errorf("no default model configured")
@@ -115,7 +115,7 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 
 	think := agent.ShouldThink(model, cfg.OllamaThinkEnabled, SnapshotPath(deps.CachePath))
 	log.Printf("[Engine] Running turn channel=%q model=%q think=%v messages=%d", req.Channel, model, think, len(ollamaMessages))
-	a := agent.NewAgent(cfg, deps.Client, registry)
+	a := agent.NewAgent(deps.ConfigMgr, deps.Client, registry)
 	finalHistory, runErr := a.Run(ctx, model, ollamaMessages, think, handler)
 	result.FinalHistory = finalHistory
 	if runErr != nil {
@@ -154,7 +154,7 @@ func RouterConfig(cfg config.Config, mainModel string, cachePath string) router.
 }
 
 func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *tools.Registry {
-	cfg := deps.Config
+	cfg := deps.ConfigMgr.Get()
 	registry := tools.NewRegistry(cfg.WebSearchEnabled, cfg.Workspace, deps.MemoryStore, deps.Client, config.ResolveModel(cfg, config.ModelRoleEmbed), tools.SearchConfig{
 		Providers:    cfg.SearchProviders,
 		BraveAPIKey:  cfg.BraveSearchAPIKey,

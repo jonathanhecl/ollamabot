@@ -98,7 +98,7 @@ func TestAgentRunContinuesWithActivePlanAfterTextOnlyResponse(t *testing.T) {
 	registry.SetSessionStore(store)
 	registry.SetSessionID(sess.ID)
 
-	a := NewAgent(cfg, client, registry)
+	a := NewAgent(config.NewManager(cfg), client, registry)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -213,7 +213,7 @@ func TestAgentRunRejectsPlanCompletionWithoutAction(t *testing.T) {
 	registry.SetSessionStore(store)
 	registry.SetSessionID(sess.ID)
 
-	a := NewAgent(cfg, client, registry)
+	a := NewAgent(config.NewManager(cfg), client, registry)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -276,7 +276,7 @@ func TestAgentRunStopsRepeatedToolLoop(t *testing.T) {
 	client := ollama.NewClient(server.URL)
 	cfg := config.Config{Workspace: workspace}
 	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
-	a := NewAgent(cfg, client, registry)
+	a := NewAgent(config.NewManager(cfg), client, registry)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
