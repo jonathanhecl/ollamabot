@@ -446,10 +446,16 @@
             <label style="margin-top: 10px;">
               Max Generation Tokens (num_predict)
               <input id="ollamaMaxTokens" type="number" placeholder="16384" min="256" />
+              <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                Maximum number of tokens the model can generate per response turn. Higher values allow longer replies and code output. If responses get cut off mid-sentence, increase this. Default: 16384.
+              </small>
             </label>
             <label style="margin-top: 10px;">
               Max Context Window (0 = use model default)
               <input id="ollamaMaxContext" type="number" placeholder="0" min="0" />
+              <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                Caps the context window sent to the model. Set to 0 to use the model's full context_length. Lower values reduce memory usage but may truncate conversation history. Default: 0.
+              </small>
             </label>
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
