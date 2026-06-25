@@ -697,9 +697,53 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 		}
 	}
 
-	userMsgIdx := 0
-	assistantMsgIdx := 0
+	// Detect if history has been optimized/summarized
+	var hasSummary bool
+	var summaryIdx int = -1
+	for idx, msg := range finalHistory {
+		if msg.Role == "system" && strings.HasPrefix(msg.Content, "This is a summary of the optimized previous context:") {
+			hasSummary = true
+			summaryIdx = idx
+			break
+		}
+	}
+
+	// Count user and assistant messages in finalHistory that correspond to the base history
+	var finalUserMsgsCount int
+	var finalAssistantMsgsCount int
+	for idx, msg := range finalHistory {
+		if hasSummary && idx <= summaryIdx {
+			continue
+		}
+		if msg.Role == "user" {
+			finalUserMsgsCount++
+		} else if msg.Role == "assistant" {
+			finalAssistantMsgsCount++
+		}
+	}
+
+	// Calculate starting indices aligned to the end of history base list
+	userMsgIdx := len(historyUserMsgs) - finalUserMsgsCount
+	if userMsgIdx < 0 {
+		userMsgIdx = 0
+	}
+	assistantMsgIdx := len(historyAssistantMsgs) - (finalAssistantMsgsCount - 1)
+	if assistantMsgIdx < 0 {
+		assistantMsgIdx = 0
+	}
+
+	// Align timestamps
 	uaIdx := 0
+	if hasSummary {
+		totalUA := finalUserMsgsCount + (finalAssistantMsgsCount - 1)
+		if totalUA > 0 {
+			uaIdx = len(userAssistantTimestamps) - totalUA
+			if uaIdx < 0 {
+				uaIdx = 0
+			}
+		}
+	}
+
 	out := make([]json.RawMessage, 0, len(finalHistory))
 	for _, msg := range finalHistory {
 		if msg.Role == "system" && IsInternalTimelineMessage(msg.Content) {
@@ -790,60 +834,71 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 		out = append(out, raw)
 	}
 
-	baseAssistantCount := 0
-	for _, msg := range r.baseHistory {
-		if msg.Role == "assistant" {
-			baseAssistantCount++
+	// Find all assistant message indices in out
+	var assistantIndices []int
+	for i := range out {
+		var rm RawMsg
+		if err := json.Unmarshal(out[i], &rm); err == nil && rm.Role == "assistant" {
+			assistantIndices = append(assistantIndices, i)
 		}
 	}
 
-	turnIdx := 0
 	allTurns := append([]TurnSnapshot{}, r.turns...)
 	allTurns = append(allTurns, r.currentTurn)
-	for i := range out {
+	numNewTurns := len(allTurns)
+
+	startIdx := len(assistantIndices) - numNewTurns
+	if startIdx < 0 {
+		startIdx = 0
+	}
+
+	for j, idx := range assistantIndices[startIdx:] {
+		turnIdx := j + (numNewTurns - (len(assistantIndices) - startIdx))
+		if turnIdx < 0 || turnIdx >= len(allTurns) {
+			continue
+		}
+		turn := allTurns[turnIdx]
+
 		var rm RawMsg
-		if err := json.Unmarshal(out[i], &rm); err != nil || rm.Role != "assistant" {
+		if err := json.Unmarshal(out[idx], &rm); err != nil {
 			continue
 		}
-		baseAssistantCount--
-		if baseAssistantCount >= 0 {
-			continue
+
+		var thinking string
+		assistantIdx := assistantIndexForNewTurn(finalHistory, turnIdx, numNewTurns)
+		if assistantIdx >= 0 && assistantIdx < len(finalHistory) {
+			thinking = finalHistory[assistantIdx].Thinking
 		}
-		if turnIdx < len(allTurns) {
-			turn := allTurns[turnIdx]
-			var thinking string
-			assistantIdx := assistantIndexForNewTurn(finalHistory, turnIdx, len(r.baseHistory))
-			if assistantIdx >= 0 && assistantIdx < len(finalHistory) {
-				thinking = finalHistory[assistantIdx].Thinking
-			}
-			rm.Steps = FinalizeStepsWithThinking(ResolveImageProgressSteps(turn.Steps, rm.Attachments, r.sessionID), thinking)
-			if turn.Metrics.TotalDuration > 0 {
-				metrics := turn.Metrics
-				rm.Metrics = &metrics
-			}
-			turnIdx++
+		rm.Steps = FinalizeStepsWithThinking(ResolveImageProgressSteps(turn.Steps, rm.Attachments, r.sessionID), thinking)
+		if turn.Metrics.TotalDuration > 0 {
+			metrics := turn.Metrics
+			rm.Metrics = &metrics
 		}
 		rm.Thinking = ""
 		rm.Model = r.model
 		rm.Channel = r.channel
 		if updated, err := json.Marshal(rm); err == nil {
-			out[i] = updated
+			out[idx] = updated
 		}
 	}
 
 	return out
 }
 
-func assistantIndexForNewTurn(history []ollama.Message, newAssistantIdx int, baseLen int) int {
-	count := -1
-	for i := baseLen; i < len(history); i++ {
-		if history[i].Role != "assistant" {
-			continue
+func assistantIndexForNewTurn(history []ollama.Message, newAssistantIdx int, numNewTurns int) int {
+	var assistantIndices []int
+	for i, msg := range history {
+		if msg.Role == "assistant" {
+			assistantIndices = append(assistantIndices, i)
 		}
-		count++
-		if count == newAssistantIdx {
-			return i
-		}
+	}
+	startIdx := len(assistantIndices) - numNewTurns
+	if startIdx < 0 {
+		startIdx = 0
+	}
+	targetIdx := startIdx + newAssistantIdx
+	if targetIdx >= 0 && targetIdx < len(assistantIndices) {
+		return assistantIndices[targetIdx]
 	}
 	return -1
 }

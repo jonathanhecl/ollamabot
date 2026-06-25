@@ -333,6 +333,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				summaryResp, err := a.client.Chat(ctx, summaryReq)
+				if err != nil && modelToUse != model {
+					log.Printf("[Agent Run] Context optimization failed using subagent model %q: %v. Falling back to main model %q", modelToUse, err, model)
+					summaryReq.Model = model
+					summaryResp, err = a.client.Chat(ctx, summaryReq)
+				}
 				if err == nil && strings.TrimSpace(summaryResp.Message.Content) != "" {
 					summaryText := strings.TrimSpace(summaryResp.Message.Content)
 					summaryMsg := ollama.Message{

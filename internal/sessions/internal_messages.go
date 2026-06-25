@@ -13,7 +13,6 @@ func IsInternalTimelineMessage(content string) bool {
 		strings.Contains(content, "There are still pending TODO items") ||
 		strings.Contains(content, "Plan monitor resume:") ||
 		strings.Contains(content, "Previous attempt returned only thinking") ||
-		strings.Contains(content, "This is a summary of the optimized previous context:") ||
 		strings.HasPrefix(content, "Error: Malformed JSON arguments in <invoke") ||
 		strings.HasPrefix(content, "Error: Invalid JSON syntax in <invoke") ||
 		strings.HasPrefix(content, "Error: Missing closing tag </invoke>") ||

@@ -346,3 +346,97 @@ func TestMergeFinalHistoryPreservesBaseAssistantSteps(t *testing.T) {
 		t.Errorf("expected second assistant metrics, got %+v", secondAssistant.Metrics)
 	}
 }
+
+func TestMergeFinalHistoryWithContextOptimization(t *testing.T) {
+	baseHist := []RawMsg{
+		{
+			Role:      "user",
+			Content:   "msg 1",
+			Timestamp: "t1",
+		},
+		{
+			Role:      "assistant",
+			Content:   "hello 1",
+			Timestamp: "t2",
+		},
+		{
+			Role:      "user",
+			Content:   "msg 2",
+			Timestamp: "t3",
+		},
+		{
+			Role:      "assistant",
+			Content:   "hello 2",
+			Timestamp: "t4",
+			Steps: []Step{
+				{Type: "thinking", Content: "think 2"},
+			},
+		},
+		{
+			Role:      "user",
+			Content:   "msg 3 (latest)",
+			Timestamp: "t5",
+		},
+	}
+
+	rec := NewRecorder(nil, "", baseHist, "model", "web")
+	rec.OnThinking("think new")
+	rec.OnContent("response new")
+	rec.OnDone(ollama.ChatResponse{TotalDuration: 99})
+
+	// Ollama history is optimized: msg 1, hello 1, msg 2 are replaced by a summary system message
+	finalHist := []ollama.Message{
+		{
+			Role:    "system",
+			Content: "This is a summary of the optimized previous context:\nSummarized details here...",
+		},
+		{
+			Role:    "assistant",
+			Content: "hello 2",
+		},
+		{
+			Role:    "user",
+			Content: "msg 3 (latest)",
+		},
+		{
+			Role:    "assistant",
+			Content: "response new",
+		},
+	}
+
+	rec.mu.Lock()
+	mergedRaw := rec.mergeFinalHistoryLocked(finalHist)
+	rec.mu.Unlock()
+
+	// Should contain: [summary (system), hello 2 (assistant), msg 3 (user), response new (assistant)]
+	if len(mergedRaw) != 4 {
+		t.Fatalf("expected 4 messages after merge, got %d", len(mergedRaw))
+	}
+
+	var mSystem RawMsg
+	json.Unmarshal(mergedRaw[0], &mSystem)
+	if mSystem.Role != "system" || !strings.Contains(mSystem.Content, "This is a summary") {
+		t.Errorf("expected summary message at index 0, got %+v", mSystem)
+	}
+
+	var mHello2 RawMsg
+	json.Unmarshal(mergedRaw[1], &mHello2)
+	if mHello2.Role != "assistant" || mHello2.Content != "hello 2" || mHello2.Timestamp != "t4" {
+		t.Errorf("mismatched hello 2 message: %+v", mHello2)
+	}
+	if len(mHello2.Steps) != 1 || mHello2.Steps[0].Content != "think 2" {
+		t.Errorf("hello 2 steps were not preserved: %+v", mHello2.Steps)
+	}
+
+	var mUser3 RawMsg
+	json.Unmarshal(mergedRaw[2], &mUser3)
+	if mUser3.Role != "user" || mUser3.Content != "msg 3 (latest)" || mUser3.Timestamp != "t5" {
+		t.Errorf("mismatched latest user message: %+v", mUser3)
+	}
+
+	var mResponseNew RawMsg
+	json.Unmarshal(mergedRaw[3], &mResponseNew)
+	if mResponseNew.Role != "assistant" || mResponseNew.Content != "response new" || mResponseNew.Metrics.TotalDuration != 99 {
+		t.Errorf("mismatched response new message: %+v", mResponseNew)
+	}
+}
