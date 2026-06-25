@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jonathanhecl/ollamabot/internal/config"
 )
 
 const ApprovalTimeout = 5 * time.Minute
@@ -48,7 +50,7 @@ type pendingApprovalRef struct {
 // ApprovalService persists pending approvals and coordinates channel responses.
 type ApprovalService struct {
 	store     *Store
-	workspace string
+	cfgMgr    *config.Manager
 
 	mu        sync.Mutex
 	waiters   map[string]chan ApprovalDecision
@@ -58,10 +60,17 @@ type ApprovalService struct {
 	nextID    int
 }
 
-func NewApprovalService(store *Store, workspace string) *ApprovalService {
+func (s *ApprovalService) workspace() string {
+	if s.cfgMgr == nil {
+		return ""
+	}
+	return s.cfgMgr.Get().Workspace
+}
+
+func NewApprovalService(store *Store, cfg *config.Manager) *ApprovalService {
 	return &ApprovalService{
 		store:     store,
-		workspace: workspace,
+		cfgMgr:    cfg,
 		waiters:   make(map[string]chan ApprovalDecision),
 		pending:   make(map[string]pendingApprovalRef),
 		remember:  make(map[string]bool),
@@ -97,7 +106,7 @@ func (s *ApprovalService) HasGrant(sessionID, tool string, args map[string]any) 
 	if s == nil || s.store == nil || strings.TrimSpace(sessionID) == "" {
 		return false
 	}
-	signature, _ := FormatApprovalSignature(tool, args, s.workspace)
+	signature, _ := FormatApprovalSignature(tool, args, s.workspace())
 	sess, err := s.store.Get(sessionID)
 	if err != nil {
 		return false
@@ -122,7 +131,7 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 		return true, nil
 	}
 
-	signature, label := FormatApprovalSignature(tool, args, s.workspace)
+	signature, label := FormatApprovalSignature(tool, args, s.workspace())
 	now := time.Now()
 	approval := PendingApproval{
 		ID:          fmt.Sprintf("approval_%d_%s", now.UnixNano(), safeApprovalIDPart(tool)),

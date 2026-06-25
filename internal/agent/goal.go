@@ -42,7 +42,7 @@ func NewGoalManager(cfg *config.Manager, client *ollama.Client) *GoalManager {
 		client:          client,
 		sessionStore:    ss,
 		memoryStore:     ms,
-		approvalService: sessions.NewApprovalService(ss, cfg.Get().Workspace),
+		approvalService: sessions.NewApprovalService(ss, cfg),
 		activeLoops:     make(map[string]context.CancelFunc),
 		notifiers:       make(map[string]func(message string)),
 	}

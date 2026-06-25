@@ -49,7 +49,7 @@ func NewPlanMonitor(cfg *config.Manager, client *ollama.Client, memoryStore *mem
 		client:          client,
 		sessionStore:    store,
 		memoryStore:     memoryStore,
-		approvalService: sessions.NewApprovalService(store, cfg.Get().Workspace),
+		approvalService: sessions.NewApprovalService(store, cfg),
 		isWorking:       make(map[string]bool),
 		interval:        2 * time.Minute,
 		staleAfter:      defaultPlanStaleAfter,

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
@@ -112,7 +113,8 @@ func TestApprovalServiceSessionGrant(t *testing.T) {
 	if err := store.Save(sess); err != nil {
 		t.Fatalf("save session: %v", err)
 	}
-	service := sessions.NewApprovalService(store, t.TempDir())
+	cfg := config.Config{Workspace: t.TempDir()}
+	service := sessions.NewApprovalService(store, config.NewManager(cfg))
 	args := map[string]any{"command": "python3", "args": []any{"test_extraction_script.py"}}
 
 	rememberSent := false

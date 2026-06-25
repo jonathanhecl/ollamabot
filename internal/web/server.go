@@ -155,7 +155,7 @@ func NewServerWithEnv(cfg *config.Manager, client *ollama.Client, runner *probe.
 		cachePath:         cachePath,
 		sessionStore:      ss,
 		memoryStore:       ms,
-		approvalService:   sessions.NewApprovalService(ss, cfg.Get().Workspace),
+		approvalService:   sessions.NewApprovalService(ss, cfg),
 		approvals:         make(map[string]chan bool),
 		clarifications:    make(map[string]chan string),
 		planConfirmations: make(map[string]pendingWebPlanConfirmation),
@@ -484,7 +484,11 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	})
 
 	currCfg := s.cfgMgr.Get()
-	s.client = ollama.NewClient(baseURL)
+	if s.client != nil {
+		s.client.SetBaseURL(baseURL)
+	} else {
+		s.client = ollama.NewClient(baseURL)
+	}
 	s.runner = probe.NewRunner(s.client)
 	s.mediaro = router.New(s.client, routerConfig(currCfg))
 	s.sessionStore = sessions.NewStore(sessionsPath)

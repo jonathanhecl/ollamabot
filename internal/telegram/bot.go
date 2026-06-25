@@ -268,7 +268,7 @@ func NewBot(cfg *config.Manager, client *ollama.Client) *Bot {
 		sessions:             ss,
 		sessManager:          NewSessionManager(cfg.Get().SessionsPath),
 		memoryStore:          ms,
-		approvalService:      sessions.NewApprovalService(ss, cfg.Get().Workspace),
+		approvalService:      sessions.NewApprovalService(ss, cfg),
 		autoMgr:              agent.NewAutonomousManager(cfg, client, ms),
 		goalMgr:              agent.NewGoalManager(cfg, client),
 		apiBase:              "https://api.telegram.org/bot" + token,

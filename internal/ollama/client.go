@@ -8,10 +8,12 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
 type Client struct {
+	mu         sync.RWMutex
 	baseURL    string
 	httpClient *http.Client
 }
@@ -24,6 +26,18 @@ func NewClient(baseURL string) *Client {
 		// context.WithTimeout at the call sites where appropriate.
 		httpClient: &http.Client{},
 	}
+}
+
+func (c *Client) SetBaseURL(url string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.baseURL = strings.TrimRight(url, "/")
+}
+
+func (c *Client) BaseURL() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.baseURL
 }
 
 func (c *Client) Version(ctx context.Context) (VersionResponse, error) {
@@ -72,7 +86,7 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 			return ctx.Err()
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(payload))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL()+"/api/chat", bytes.NewReader(payload))
 		if err != nil {
 			return err
 		}
@@ -166,7 +180,7 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 			return ctx.Err()
 		}
 
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/generate", bytes.NewReader(payload))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL()+"/api/generate", bytes.NewReader(payload))
 		if err != nil {
 			return err
 		}
@@ -253,7 +267,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 			reader = bytes.NewReader(payload)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+		req, err := http.NewRequestWithContext(ctx, method, c.BaseURL()+path, reader)
 		if err != nil {
 			return err
 		}

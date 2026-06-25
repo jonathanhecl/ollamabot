@@ -471,6 +471,7 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		Providers:   am.config().SearchProviders,
 		BraveAPIKey: am.config().BraveSearchAPIKey,
 	})
+	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 
 	// Instantiate iterative agent
 	a := NewAgent(am.cfgMgr, am.client, registry)
@@ -522,6 +523,7 @@ Task Description: %s
 				Providers:   am.config().SearchProviders,
 				BraveAPIKey: am.config().BraveSearchAPIKey,
 			})
+			registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 			a = NewAgent(am.cfgMgr, am.client, registry)
 		}
 	}

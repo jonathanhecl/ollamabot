@@ -853,6 +853,9 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 					return "Error: Execution denied by user.", nil
 				}
 				log.Printf("[tool] Risky tool %q execution APPROVED by user", name)
+			} else {
+				log.Printf("[tool] Risky tool %q blocked: execution requires approval but no approval handler is configured", name)
+				return "", fmt.Errorf("tool %q execution blocked: requires approval but no approval handler is configured", name)
 			}
 		} else {
 			log.Printf("[tool] Tool %q assessed safe for current approval policy. Bypassing approval.", name)
