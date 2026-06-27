@@ -523,6 +523,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		// 7. Execute tool calls if any
 		if len(toolCalls) > 0 {
 			emptyChatErrRetries = 0
+			todoTextOnlyRetries = 0
 
 			for _, call := range toolCalls {
 				toolName := call.Function.Name
@@ -670,6 +671,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					case "present_plan", "ask_clarification", "defer_plan_continuation":
 					default:
 						planStepHasAction = true
+						planTextOnlyRetries = 0
 					}
 				}
 
