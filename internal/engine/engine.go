@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -312,10 +311,7 @@ func SnapshotPath(path string) string {
 	if strings.TrimSpace(path) != "" {
 		return path
 	}
-	if _, err := os.Stat("docs"); err == nil {
-		return "docs/probe-cache.json"
-	}
-	return "probe-cache.json"
+	return cache.DefaultPath()
 }
 
 func humanSize(n int64) string {

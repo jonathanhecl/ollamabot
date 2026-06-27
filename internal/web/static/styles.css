@@ -3496,6 +3496,13 @@ textarea {
   color: var(--muted);
 }
 
+.role-assignment-badge.warning {
+  background: rgba(255, 159, 64, 0.08);
+  border-color: rgba(255, 159, 64, 0.4);
+  color: #ff9f40;
+  box-shadow: 0 0 8px rgba(255, 159, 64, 0.15);
+}
+
 .role-unassign-btn {
   background: rgba(255, 111, 111, 0.06);
   border: 1px solid rgba(255, 111, 111, 0.2);

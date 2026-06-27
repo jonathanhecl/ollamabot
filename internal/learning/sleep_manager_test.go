@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func TestNewSleepManager(t *testing.T) {
@@ -56,11 +57,11 @@ func TestNotifyUserActivity(t *testing.T) {
 	}
 
 	sm := NewSleepManager(config.NewManager(cfg), nil, nil)
-	
+
 	// Set initial past activity time
 	past := time.Now().Add(-10 * time.Second)
 	sm.lastActivity = past
-	
+
 	sm.NotifyUserActivity()
 
 	if sm.lastActivity.Before(time.Now().Add(-1 * time.Second)) {
@@ -135,7 +136,7 @@ func TestAppendToAuditLog(t *testing.T) {
 	}
 
 	sm := NewSleepManager(config.NewManager(cfg), nil, nil)
-	
+
 	sm.appendToAuditLog("sess-abc", []string{"Created skill X", "Edited skill Y"}, "Made improvements")
 
 	auditPath := filepath.Join(skillsDir, "audit_log.md")
@@ -171,9 +172,9 @@ func TestCheckHardwareAndSelectModel(t *testing.T) {
 	client := ollama.NewClient(server.URL)
 
 	cfg := config.Config{
-		OllamaDefaultModel:   "default-model:latest",
-		OllamaModelLearning:  "learning-model",
-		OllamaModelSubagent:  "subagent-model:1b",
+		OllamaDefaultModel:  "default-model:latest",
+		OllamaModelLearning: "learning-model",
+		OllamaModelSubagent: "subagent-model:1b",
 	}
 
 	sm := NewSleepManager(config.NewManager(cfg), client, nil)
@@ -238,3 +239,76 @@ func TestCheckHardwareAndSelectModel(t *testing.T) {
 	}
 }
 
+func TestLearningCycleSkipsWhenModelLacksTools(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sleep-mgr-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Mock Ollama server: responds to /api/chat but never returns tool_calls.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Model: "no-tools-model",
+				Message: ollama.Message{
+					Role:    "assistant",
+					Content: "I cannot use tools.",
+				},
+				Done: true,
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+
+	sessionsPath := filepath.Join(tmpDir, "sessions")
+	store := sessions.NewStore(sessionsPath)
+
+	// Create a session with a message so it's considered valid.
+	msgRaw, _ := json.Marshal(map[string]string{"role": "user", "content": "hello"})
+	sess := sessions.Session{
+		ID:       "test-sess-1",
+		Title:    "Test Session",
+		Messages: []json.RawMessage{msgRaw},
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	cfg := config.Config{
+		Workspace:                    filepath.Join(tmpDir, "workspace"),
+		SessionsPath:                 sessionsPath,
+		SkillsPath:                   filepath.Join(tmpDir, "skills"),
+		SleepModeEnabled:             true,
+		SleepModeInactivityThreshold: "5s",
+		OllamaModelLearning:          "no-tools-model",
+	}
+
+	sm := NewSleepManager(config.NewManager(cfg), client, nil)
+
+	// Call runLearningCycleForSessionsWithModel with a model that doesn't support tools.
+	// The probe will fail (no tool_calls in response), so the cycle should skip early.
+	sm.runLearningCycleForSessionsWithModel(context.Background(), []string{"test-sess-1"}, "no-tools-model")
+
+	// After the call, isLearning should be false (cycle completed/skipped, not stuck).
+	if sm.isLearning {
+		t.Error("expected isLearning to be false after skip")
+	}
+
+	// The session should NOT be in AnalyzedSessions (the cycle was skipped before analysis).
+	found := false
+	for _, id := range sm.state.AnalyzedSessions {
+		if id == "test-sess-1" {
+			found = true
+			break
+		}
+	}
+	if found {
+		t.Error("expected session to NOT be in AnalyzedSessions when model lacks tools")
+	}
+}

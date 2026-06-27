@@ -685,10 +685,7 @@ New User Message:
 }
 
 func snapshotPath() string {
-	if _, err := os.Stat("docs"); err == nil {
-		return "docs/probe-cache.json"
-	}
-	return "probe-cache.json"
+	return cache.DefaultPath()
 }
 
 func (b *Bot) handleCommand(chatID int64, cmd string, args string) {

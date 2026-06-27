@@ -28,11 +28,21 @@ type ExpectedProbe struct {
 }
 
 type ProbeRun struct {
-	Name      string              `json:"name"`
-	Model     string              `json:"model"`
-	Status    capabilities.Status `json:"status"`
-	Details   string              `json:"details"`
-	RunAt     time.Time           `json:"run_at"`
+	Name    string              `json:"name"`
+	Model   string              `json:"model"`
+	Status  capabilities.Status `json:"status"`
+	Details string              `json:"details"`
+	RunAt   time.Time           `json:"run_at"`
+}
+
+// DefaultPath returns the default probe-cache snapshot path, preferring
+// docs/probe-cache.json when a docs directory exists, falling back to
+// probe-cache.json in the working directory.
+func DefaultPath() string {
+	if _, err := os.Stat("docs"); err == nil {
+		return "docs/probe-cache.json"
+	}
+	return "probe-cache.json"
 }
 
 func Save(path string, snapshot Snapshot) error {

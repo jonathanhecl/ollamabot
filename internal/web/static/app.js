@@ -2053,6 +2053,16 @@ function renderRoleAssignments() {
       badgeHtml = `<span class="role-assignment-badge fallback">${escapeHtml(r.required ? "None selected ⚠️" : "fallback: " + r.fallback)}</span>`;
     }
 
+    // Warning badge for learning role when model lacks tools capability
+    let warningHtml = "";
+    if (r.id === "learning" && r.value) {
+      const model = state.models.find((m) => m.name === r.value);
+      const canTools = model?.capabilities?.tools === "comprobado" || model?.capabilities?.tools === "inferido";
+      if (!canTools) {
+        warningHtml = `<span class="role-assignment-badge warning">⚠ No tools capability</span>`;
+      }
+    }
+
     let actionHtml = "";
     if (!r.required && r.value) {
       actionHtml = `<button type="button" class="role-unassign-btn" data-role="${escapeAttr(r.id)}">Unassign</button>`;
@@ -2065,6 +2075,7 @@ function renderRoleAssignments() {
       </div>
       <div class="role-assignment-right">
         ${badgeHtml}
+        ${warningHtml}
         ${actionHtml}
       </div>
     `;

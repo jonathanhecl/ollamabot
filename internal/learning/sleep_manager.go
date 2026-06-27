@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/agent"
+	"github.com/jonathanhecl/ollamabot/internal/cache"
+	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
@@ -464,6 +467,34 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 	if learningModel == "" {
 		log.Println("[sleep] No default, learning or subagent model configured. Aborting cycle.")
 		return
+	}
+
+	// Verify the learning model supports tool calls. The reflector agent
+	// relies on tools to manage skills and user profile; without tool
+	// support it loops uselessly until MaxIterations.
+	probePath := cache.DefaultPath()
+	if !cache.SupportsCapability(probePath, learningModel, "tools") {
+		// Model not in cache or lacks tools — run a lightweight probe.
+		if sm.client != nil {
+			probeCtx, probeCancel := context.WithTimeout(ctx, 30*time.Second)
+			runner := probe.NewRunner(sm.client)
+			result, err := runner.Tools(probeCtx, learningModel)
+			probeCancel()
+			if err != nil || result.Status != capabilities.Confirmed {
+				log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
+				return
+			}
+			_ = cache.SaveProbeRun(probePath, cache.ProbeRun{
+				Name:    "tools",
+				Model:   learningModel,
+				Status:  result.Status,
+				Details: result.Details,
+				RunAt:   time.Now(),
+			})
+		} else {
+			log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
+			return
+		}
 	}
 
 	analysisPrompt := fmt.Sprintf(`You are the OllamaBot self-refining learning analyzer.
