@@ -958,27 +958,6 @@ func (h *sseStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message
 	}
 }
 
-// runChatStream handles the chat streaming loop by delegating to the iterative agent.
-func runChatStream(ctx context.Context, cfg *config.Manager, client *ollama.Client, model string, messages []ollama.Message, think bool, registry *tools.Registry, w http.ResponseWriter, flusher http.Flusher, recorder *sessions.Recorder) ([]ollama.Message, error) {
-	a := agent.NewAgent(cfg, client, registry)
-	handler := &sseStreamHandler{w: w, flusher: flusher, model: model, recorder: recorder}
-
-	finalHistory, err := a.Run(ctx, model, messages, think, handler)
-	if err != nil {
-		return finalHistory, err
-	}
-
-	// Send final done chunk to signal completion to frontend
-	writeSSE(w, "done", map[string]any{
-		"model":  model,
-		"reason": "stop",
-	})
-	if flusher != nil {
-		flusher.Flush()
-	}
-	return finalHistory, nil
-}
-
 // resolveMedia pre-processes the latest user message's attachments with the
 // shared media pipeline (router.ResolveMessages) and streams the structured
 // per-attachment results to the frontend as a "media_pre_processing" event.
