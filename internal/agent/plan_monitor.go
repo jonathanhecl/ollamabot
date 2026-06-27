@@ -210,8 +210,18 @@ func (pm *PlanMonitor) finish(sessionID string) {
 func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason string) {
 	defer pm.finish(sessionID)
 
-	sessions.MarkProcessing(sessionID)
+	if !sessions.TryMarkProcessing(sessionID) {
+		log.Printf("[PlanMonitor] Session %s is already being processed, skipping plan resume", sessionID)
+		return
+	}
 	defer sessions.MarkIdle(sessionID)
+
+	releaseSlot := sessions.TryAcquireBackgroundSlot()
+	if releaseSlot == nil {
+		log.Printf("[PlanMonitor] Background slot busy, deferring plan resume for session %s", sessionID)
+		return
+	}
+	defer releaseSlot()
 
 	sess, err := pm.sessionStore.Get(sessionID)
 	if err != nil {

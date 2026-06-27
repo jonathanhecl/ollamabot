@@ -265,8 +265,6 @@ func (g *GoalManager) ClearGoal(sessionID string) error {
 
 func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objective string) {
 	log.Printf("[GoalManager] Starting background loop for session: %s, goal: %q", sessionID, objective)
-	sessions.MarkProcessing(sessionID)
-	defer sessions.MarkIdle(sessionID)
 
 	maxCycles := 20
 	cycleDelay := 5 * time.Second
@@ -279,14 +277,41 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		default:
 		}
 
+		// Try to acquire the session and global background slot for this cycle.
+		// If either is busy, yield and retry next cycle.
+		if !sessions.TryMarkProcessing(sessionID) {
+			log.Printf("[GoalManager] Session %s busy, yielding cycle %d", sessionID, cycle)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(cycleDelay):
+			}
+			continue
+		}
+		releaseSlot := sessions.TryAcquireBackgroundSlot()
+		if releaseSlot == nil {
+			sessions.MarkIdle(sessionID)
+			log.Printf("[GoalManager] Background slot busy, yielding cycle %d", cycle)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(cycleDelay):
+			}
+			continue
+		}
+
 		// Reload session to inspect status changes
 		sess, err := g.sessionStore.Get(sessionID)
 		if err != nil {
+			sessions.MarkIdle(sessionID)
+			releaseSlot()
 			log.Printf("[GoalManager] Error reloading session: %v. Stopping loop.", err)
 			return
 		}
 
 		if sess.GoalStatus != "active" {
+			sessions.MarkIdle(sessionID)
+			releaseSlot()
 			log.Printf("[GoalManager] GoalStatus changed to %s. Stopping loop.", sess.GoalStatus)
 			return
 		}
@@ -349,6 +374,8 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				g.notify(sessionID, fmt.Sprintf("⚠️ Goal loop execution warning: %v. Retrying in 10 seconds...", runErr))
 				select {
 				case <-ctx.Done():
+					sessions.MarkIdle(sessionID)
+					releaseSlot()
 					return
 				case <-time.After(10 * time.Second):
 				}
@@ -356,6 +383,8 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				sess, err = g.sessionStore.Get(sessionID)
 				if err != nil {
 					log.Printf("[GoalManager] Error reloading session for retry: %v. Aborting.", err)
+					sessions.MarkIdle(sessionID)
+					releaseSlot()
 					return
 				}
 				// Re-instantiate agent and registry to ensure fresh state if needed
@@ -376,6 +405,8 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		if runErr != nil {
 			log.Printf("[GoalManager] Error running cycle %d after %d attempts: %v", cycle, maxRunRetries, runErr)
 			g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
+			sessions.MarkIdle(sessionID)
+			releaseSlot()
 			return
 		}
 
@@ -426,6 +457,8 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 
 			g.notify(sessionID, fmt.Sprintf("🎯 *Goal achieved!* \n%s", reasoning))
 			log.Printf("[GoalManager] Goal fully achieved: %s", reasoning)
+			sessions.MarkIdle(sessionID)
+			releaseSlot()
 			return
 		}
 
@@ -444,6 +477,8 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			_ = g.sessionStore.Save(sess)
 
 			g.notify(sessionID, fmt.Sprintf("❌ *Goal failed.* Maximum cycles reached. last reason: %s", reasoning))
+			sessions.MarkIdle(sessionID)
+			releaseSlot()
 			return
 		}
 
@@ -467,6 +502,11 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 
 		_ = g.sessionStore.Save(sess)
 		g.notify(sessionID, fmt.Sprintf("🔍 *Goal progress check (Cycle %d):* %s", cycle, reasoning))
+
+		// Release session and background slot before waiting so other managers
+		// and user turns can interleave between goal cycles.
+		sessions.MarkIdle(sessionID)
+		releaseSlot()
 
 		// Wait before executing the next cycle
 		select {
