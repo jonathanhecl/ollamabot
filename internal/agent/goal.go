@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -365,11 +366,16 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		var runErr error
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
-			finalHistory, runErr = a.Run(ctx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
+			runCtx, runCancel := SubagentContext(ctx, g.config())
+			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
+			runCancel()
 			if runErr == nil {
 				break
 			}
 			log.Printf("[GoalManager] Error running cycle %d (attempt %d/%d): %v", cycle, retry+1, maxRunRetries, runErr)
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				break
+			}
 			if retry < maxRunRetries-1 {
 				g.notify(sessionID, fmt.Sprintf("⚠️ Goal loop execution warning: %v. Retrying in 10 seconds...", runErr))
 				select {
@@ -403,11 +409,24 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		}
 
 		if runErr != nil {
-			log.Printf("[GoalManager] Error running cycle %d after %d attempts: %v", cycle, maxRunRetries, runErr)
-			g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
-			sessions.MarkIdle(sessionID)
-			releaseSlot()
-			return
+			if errors.Is(runErr, context.DeadlineExceeded) {
+				log.Printf("[GoalManager] Cycle %d timed out after %d minutes", cycle, g.config().SubagentTimeoutMinutes)
+				g.notify(sessionID, fmt.Sprintf("⏱️ Goal cycle %d timed out after %d minutes, continuing...", cycle, g.config().SubagentTimeoutMinutes))
+				sessions.MarkIdle(sessionID)
+				releaseSlot()
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(cycleDelay):
+				}
+				continue
+			} else {
+				log.Printf("[GoalManager] Error running cycle %d after %d attempts: %v", cycle, maxRunRetries, runErr)
+				g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
+				sessions.MarkIdle(sessionID)
+				releaseSlot()
+				return
+			}
 		}
 
 		// Sync final history with session

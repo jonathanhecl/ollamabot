@@ -53,6 +53,7 @@ type Config struct {
 	OllamaMaxContext             int
 	ServerPassword               string
 	PlanConfirmation             string
+	SubagentTimeoutMinutes       int
 }
 
 func Load(path string) (Config, error) {
@@ -103,6 +104,7 @@ func Load(path string) (Config, error) {
 		ServerPassword:               "",
 		TelegramSessionExpiryMin:     30,
 		PlanConfirmation:             "smart",
+		SubagentTimeoutMinutes:       10,
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -213,6 +215,11 @@ func Load(path string) (Config, error) {
 		cfg.PlanConfirmation = value
 	} else if value := apply("PLAN_CONFIRMATION"); value != "" {
 		cfg.PlanConfirmation = value
+	}
+	if value := apply("SUBAGENT_TIMEOUT_MINUTES"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.SubagentTimeoutMinutes = val
+		}
 	}
 	if value := apply("WEB_SEARCH_PRIORITY"); value != "" {
 		cfg.SearchProviders = splitCSV(value)
@@ -398,6 +405,8 @@ func SaveBasic(path string, cfg Config) error {
 			"SESSION_AUTO_NAME=%t\n"+
 			"SESSION_EXPIRY_MIN=%d\n"+
 			"SESSION_PLAN_CONFIRMATION=%s\n\n"+
+			"# Resource Limits\n"+
+			"SUBAGENT_TIMEOUT_MINUTES=%d\n\n"+
 			"# Ollama\n"+
 			"OLLAMA_BASE_URL=%s\n"+
 			"OLLAMA_DEFAULT_MODEL=%s\n"+
@@ -438,6 +447,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.SessionAutoName,
 		cfg.TelegramSessionExpiryMin,
 		cfg.PlanConfirmation,
+		cfg.SubagentTimeoutMinutes,
 		cfg.OllamaBaseURL,
 		cfg.OllamaDefaultModel,
 		strings.Join(cfg.OllamaProbeModels, ","),
@@ -597,4 +607,3 @@ func (m *Manager) Update(fn func(*Config)) {
 	defer m.mu.Unlock()
 	fn(&m.cfg)
 }
-

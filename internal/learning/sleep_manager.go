@@ -3,6 +3,7 @@ package learning
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -530,8 +531,14 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 		{Role: "user", Content: analysisPrompt},
 	}
 
-	finalHistory, err := reflectorAgent.Run(ctx, learningModel, messages, true, &sleepStreamHandler{})
+	runCtx, runCancel := agent.SubagentContext(ctx, sm.config())
+	finalHistory, err := reflectorAgent.Run(runCtx, learningModel, messages, true, &sleepStreamHandler{})
+	runCancel()
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			log.Printf("[sleep] Reflection agent timed out after %d minutes", sm.config().SubagentTimeoutMinutes)
+			return
+		}
 		log.Printf("[sleep] Reflection agent run encountered error (likely paused/canceled): %v", err)
 		return
 	}

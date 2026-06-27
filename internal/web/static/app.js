@@ -166,6 +166,7 @@ const els = {
   ollamaImageSteps: document.querySelector("#ollamaImageSteps"),
   ollamaMaxTokens: document.querySelector("#ollamaMaxTokens"),
   ollamaMaxContext: document.querySelector("#ollamaMaxContext"),
+  subagentTimeout: document.querySelector("#subagentTimeout"),
   ollamaThinkToggle: document.querySelector("#ollamaThinkToggle"),
   workspacePath: document.querySelector("#workspacePath"),
   sessionsPath: document.querySelector("#sessionsPath"),
@@ -373,6 +374,7 @@ els.openSettings.addEventListener("click", async () => {
   els.ollamaImageSteps.value = state.settings.image_steps || 4;
   els.ollamaMaxTokens.value = state.settings.ollama_max_tokens || 16384;
   els.ollamaMaxContext.value = state.settings.ollama_max_context || 0;
+  els.subagentTimeout.value = state.settings.subagent_timeout_minutes || 10;
   els.ollamaThinkToggle.checked = state.settings.ollama_think_enabled !== false;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
@@ -1421,6 +1423,7 @@ async function loadSettings() {
   els.ollamaImageSteps.value = state.settings.image_steps || 4;
   els.ollamaMaxTokens.value = state.settings.ollama_max_tokens || 16384;
   els.ollamaMaxContext.value = state.settings.ollama_max_context || 0;
+  els.subagentTimeout.value = state.settings.subagent_timeout_minutes || 10;
   els.ollamaThinkToggle.checked = state.settings.ollama_think_enabled !== false;
   els.workspacePath.value = state.settings.workspace || "";
   els.sessionsPath.value = state.settings.sessions_path || "";
@@ -1532,6 +1535,7 @@ async function saveSettings(event) {
       image_steps: parseInt(els.ollamaImageSteps.value.trim(), 10) || 4,
       ollama_max_tokens: parseInt(els.ollamaMaxTokens.value.trim(), 10) || 16384,
       ollama_max_context: parseInt(els.ollamaMaxContext.value.trim(), 10) || 0,
+      subagent_timeout_minutes: parseInt(els.subagentTimeout.value.trim(), 10) || 10,
       ollama_think_enabled: els.ollamaThinkToggle.checked,
       web_search_enabled: webSearchEnabled,
       web_search_priority: searchProvidersCsv,

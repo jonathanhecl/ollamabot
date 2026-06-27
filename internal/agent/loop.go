@@ -21,6 +21,16 @@ const (
 	MaxIterations = 50
 )
 
+// SubagentContext wraps ctx with a timeout derived from cfg.SubagentTimeoutMinutes.
+// If the value is unset (0) or invalid, it defaults to 10 minutes.
+func SubagentContext(ctx context.Context, cfg config.Config) (context.Context, context.CancelFunc) {
+	minutes := cfg.SubagentTimeoutMinutes
+	if minutes <= 0 {
+		minutes = 10
+	}
+	return context.WithTimeout(ctx, time.Duration(minutes)*time.Minute)
+}
+
 type StreamHandler interface {
 	OnThinking(delta string)
 	OnContent(delta string)

@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -283,10 +284,17 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	if strings.TrimSpace(model) == "" {
 		model = pm.config().OllamaDefaultModel
 	}
-	finalHistory, err := a.Run(ctx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
+	runCtx, runCancel := SubagentContext(ctx, pm.config())
+	finalHistory, err := a.Run(runCtx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
+	runCancel()
 	if err != nil {
-		log.Printf("[PlanMonitor] agent run for session %s failed: %v", sessionID, err)
-		pm.notify(sessionID, plan, fmt.Sprintf("Plan monitor error: %v", err))
+		if errors.Is(err, context.DeadlineExceeded) {
+			log.Printf("[PlanMonitor] agent run for session %s timed out after %d minutes", sessionID, pm.config().SubagentTimeoutMinutes)
+			pm.notify(sessionID, plan, fmt.Sprintf("Plan monitor timed out after %d minutes", pm.config().SubagentTimeoutMinutes))
+		} else {
+			log.Printf("[PlanMonitor] agent run for session %s failed: %v", sessionID, err)
+			pm.notify(sessionID, plan, fmt.Sprintf("Plan monitor error: %v", err))
+		}
 		return
 	}
 	if err := saveOllamaHistory(pm.sessionStore, sessionID, finalHistory); err != nil {

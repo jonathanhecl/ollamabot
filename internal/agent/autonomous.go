@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -405,16 +406,18 @@ func (am *AutonomousManager) Tick(ctx context.Context) {
 
 type dummyStreamHandler struct{}
 
-func (d *dummyStreamHandler) OnThinking(delta string)                 {}
-func (d *dummyStreamHandler) OnContent(delta string)                  {}
-func (d *dummyStreamHandler) OnToolCall(call ollama.ToolCall)         {}
-func (d *dummyStreamHandler) OnToolStart(name string, args any)       {}
-func (d *dummyStreamHandler) OnToolResult(name string, result string) {}
-func (d *dummyStreamHandler) OnMediaPreProcessing(content string)     {}
-func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)         {}
+func (d *dummyStreamHandler) OnThinking(delta string)                                            {}
+func (d *dummyStreamHandler) OnContent(delta string)                                             {}
+func (d *dummyStreamHandler) OnToolCall(call ollama.ToolCall)                                    {}
+func (d *dummyStreamHandler) OnToolStart(name string, args any)                                  {}
+func (d *dummyStreamHandler) OnToolResult(name string, result string)                            {}
+func (d *dummyStreamHandler) OnMediaPreProcessing(content string)                                {}
+func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)                                    {}
 func (d *dummyStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
-func (d *dummyStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {}
-func (d *dummyStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {}
+func (d *dummyStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+}
+func (d *dummyStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
+}
 
 // ExecuteTask runs a single step for the project
 func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, taskIdx int) error {
@@ -507,11 +510,16 @@ Task Description: %s
 	var runErr error
 	maxRunRetries := 3
 	for retry := 0; retry < maxRunRetries; retry++ {
-		finalHistory, runErr = a.Run(ctx, model, messages, true, &dummyStreamHandler{})
+		runCtx, runCancel := SubagentContext(ctx, am.config())
+		finalHistory, runErr = a.Run(runCtx, model, messages, true, &dummyStreamHandler{})
+		runCancel()
 		if runErr == nil {
 			break
 		}
 		log.Printf("[autonomous] Error running agent turn for project %s (attempt %d/%d): %v", projectID, retry+1, maxRunRetries, runErr)
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			break
+		}
 		if retry < maxRunRetries-1 {
 			select {
 			case <-ctx.Done():
@@ -531,7 +539,11 @@ Task Description: %s
 
 	if runErr != nil {
 		task.Status = "failed"
-		task.Result = fmt.Sprintf("Error running agent turn: %v", runErr)
+		if errors.Is(runErr, context.DeadlineExceeded) {
+			task.Result = fmt.Sprintf("Task timed out after %d minutes", am.config().SubagentTimeoutMinutes)
+		} else {
+			task.Result = fmt.Sprintf("Error running agent turn: %v", runErr)
+		}
 		_ = am.SaveProject(proj)
 		if OnTaskCompletion != nil {
 			OnTaskCompletion(proj, *task, runErr)

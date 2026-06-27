@@ -457,6 +457,13 @@
                 Caps the context window sent to the model. Set to 0 to use the model's full context_length. Lower values reduce memory usage but may truncate conversation history. Default: 0.
               </small>
             </label>
+            <label style="margin-top: 10px;">
+              Subagent Timeout (minutes)
+              <input id="subagentTimeout" type="number" placeholder="10" min="1" />
+              <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                Per-invocation timeout for background subagents (autonomous tasks, sleep reflector, goal loops, plan monitor). A stuck subagent is killed after this duration. Default: 10.
+              </small>
+            </label>
             <div class="checkbox-row" style="margin-top: 14px;">
               <label class="think-toggle">
                 <input id="ollamaThinkToggle" type="checkbox" />

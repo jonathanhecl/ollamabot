@@ -128,6 +128,7 @@ type SettingsResponse struct {
 	TelegramBotToken             string `json:"telegram_bot_token"`      // masked ("***") on GET if set
 	TelegramAuthorizedIDs        string `json:"telegram_authorized_ids"` // comma-separated
 	TelegramStartupNotification  bool   `json:"telegram_startup_notification"`
+	SubagentTimeoutMinutes       int    `json:"subagent_timeout_minutes"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -464,6 +465,10 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.OllamaModelLearning = strings.TrimSpace(input.ModelLearning)
 		cfg.SleepModeSubagentsEnabled = input.SleepModeSubagentsEnabled
 		cfg.OllamaModelSubagent = strings.TrimSpace(input.ModelSubagent)
+		cfg.SubagentTimeoutMinutes = input.SubagentTimeoutMinutes
+		if cfg.SubagentTimeoutMinutes <= 0 {
+			cfg.SubagentTimeoutMinutes = 10
+		}
 		newServerPass := strings.TrimSpace(input.ServerPassword)
 		if newServerPass != "***" {
 			cfg.ServerPassword = newServerPass
@@ -1907,6 +1912,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		TelegramBotToken:             cfg.TelegramBotToken,
 		TelegramAuthorizedIDs:        strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		TelegramStartupNotification:  cfg.TelegramStartupNotification,
+		SubagentTimeoutMinutes:       cfg.SubagentTimeoutMinutes,
 	}
 }
 
