@@ -691,14 +691,16 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			continue
 		}
 
-		// 8. Handle empty completions (including content that was purely residual
-		// thinking tokens and is now empty after cleaning).
-		if strings.TrimSpace(cleanedText) == "" && (strings.TrimSpace(assistantThinking.String()) != "" || strings.TrimSpace(assistantText) != "") {
+		// 8. Handle empty completions: model returned no usable content and no
+		// tool calls. This covers two scenarios:
+		//   a) Content was purely thinking tokens (now empty after cleaning).
+		//   b) Model returned a completely empty response (no content, no thinking).
+		if strings.TrimSpace(cleanedText) == "" && len(toolCalls) == 0 {
 			if emptyChatErrRetries < 2 {
 				emptyChatErrRetries++
 				messages = append(messages, ollama.Message{
 					Role:    "system",
-					Content: "Previous attempt returned only thinking. Please produce a visible text response or call a tool.",
+					Content: "Previous attempt returned an empty response. Please produce a visible text response or call a tool.",
 				})
 				continue
 			}
