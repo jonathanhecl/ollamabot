@@ -154,6 +154,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	planTextOnlyRetries := 0
 	todoTextOnlyRetries := 0
 	completedCleanly := false
+	contextOptimizationFailed := false
+	lengthRetries := 0
 
 	for i := 0; i < MaxIterations; i++ {
 		var systemPrefix []ollama.Message
@@ -296,7 +298,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		totalTokens := estimateTokens(formattedActiveMessages)
 		threshold := int(float64(limit) * 0.9)
 
-		if limit > 0 && totalTokens >= threshold {
+		if limit > 0 && totalTokens >= threshold && !contextOptimizationFailed {
 			// Find the last user message in 'messages' to split history
 			lastUserIndex := -1
 			for idx := len(messages) - 1; idx >= 0; idx-- {
@@ -383,6 +385,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 				} else if err != nil {
 					log.Printf("[Agent Run] Context optimization failed: %v", err)
+					contextOptimizationFailed = true
 				}
 			}
 		}
@@ -426,6 +429,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		var toolCalls []ollama.ToolCall
 		seenTool := map[string]struct{}{}
 		done := false
+		doneReason := ""
 		var contentFilter StreamThinkingFilter
 
 		err := a.client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
@@ -458,6 +462,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 			if chunk.Done {
 				done = true
+				doneReason = chunk.DoneReason
 				log.Printf("[Agent] Stream done: reason=%s eval_count=%d total_duration=%dms", chunk.DoneReason, chunk.EvalCount, chunk.TotalDuration/1e6)
 				if chunk.DoneReason == "length" {
 					log.Printf("[Agent] WARNING: Response truncated due to token limit (num_predict=%d). Consider increasing OLLAMA_MAX_TOKENS.", numPredict)
@@ -519,6 +524,21 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			ToolCalls: toolCalls,
 		}
 		messages = append(messages, assistantMsg)
+
+		// 6b. Handle length-truncated responses: the model hit num_predict mid-generation.
+		// If there are no tool calls to process, nudge the model to continue rather than
+		// accepting incomplete content as the final answer.
+		if doneReason == "length" && len(toolCalls) == 0 {
+			if lengthRetries < 2 {
+				lengthRetries++
+				messages = append(messages, ollama.Message{
+					Role:    "system",
+					Content: "Your previous response was truncated due to token limit. Please continue from where you left off and complete your response.",
+				})
+				continue
+			}
+			log.Printf("[Agent] WARNING: Response still truncated after %d continuation retries. Accepting partial response.", lengthRetries)
+		}
 
 		// 7. Execute tool calls if any
 		if len(toolCalls) > 0 {
