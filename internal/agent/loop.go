@@ -152,6 +152,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	emptyChatErrRetries := 0
 	planStepHasAction := false
 	planTextOnlyRetries := 0
+	todoTextOnlyRetries := 0
 	completedCleanly := false
 
 	for i := 0; i < MaxIterations; i++ {
@@ -292,7 +293,6 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 		}
 
-		limit := a.getContextLimit(ctx, model)
 		totalTokens := estimateTokens(formattedActiveMessages)
 		threshold := int(float64(limit) * 0.9)
 
@@ -702,10 +702,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				})
 				continue
 			}
+			return messages, fmt.Errorf("agent returned empty response after %d retries", emptyChatErrRetries)
 		}
 
 		// 9. Enforce Todo Completion: refuse to end loop if Todos are pending
 		if hasPending {
+			if todoTextOnlyRetries >= 5 {
+				return messages, fmt.Errorf("agent stalled with pending TODO items after %d text-only retries", todoTextOnlyRetries)
+			}
+			todoTextOnlyRetries++
 			messages = append(messages, ollama.Message{
 				Role:    "system",
 				Content: "There are still pending TODO items. Continue executing the remaining steps with tool calls — do not finish the turn with plain text.",
@@ -797,7 +802,7 @@ func (a *Agent) getContextLimit(ctx context.Context, model string) int64 {
 			}
 		}
 	}
-	return 2048
+	return 8192
 }
 
 func estimateTokens(messages []ollama.Message) int {
