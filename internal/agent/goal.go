@@ -67,12 +67,50 @@ func (g *GoalManager) ResumeActiveGoals() error {
 	defer g.mu.Unlock()
 
 	for _, sMeta := range sessList {
-		if sMeta.GoalStatus == "active" && sMeta.GoalObjective != "" {
-			log.Printf("[GoalManager] Resuming active goal for session %s on startup", sMeta.ID)
-			ctx, cancel := context.WithCancel(context.Background())
-			g.activeLoops[sMeta.ID] = cancel
-			go g.runGoalLoop(ctx, sMeta.ID, sMeta.GoalObjective)
+		if sMeta.GoalStatus != "active" || sMeta.GoalObjective == "" {
+			continue
 		}
+
+		sess, err := g.sessionStore.Get(sMeta.ID)
+		if err != nil {
+			log.Printf("[GoalManager] Error loading session %s for resume: %v", sMeta.ID, err)
+			continue
+		}
+
+		// Detect interrupted cycle from a previous process crash
+		if sess.GoalCycleActive {
+			log.Printf("[GoalManager] Session %s had interrupted goal cycle, appending restart notification", sMeta.ID)
+			interruptMsg := sessions.RawMsg{
+				Role:      "system",
+				Content:   "Previous cycle was interrupted due to a process restart. Review the conversation state and continue from where you left off.",
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+			rawInterruptMsg, _ := json.Marshal(interruptMsg)
+			sess.Messages = append(sess.Messages, rawInterruptMsg)
+			sess.GoalCycleActive = false
+		}
+
+		// Increment restart count and guard against infinite restart loops
+		sess.GoalRestartCount++
+		if sess.GoalRestartCount > 3 {
+			log.Printf("[GoalManager] Session %s exceeded restart limit (%d), pausing goal", sMeta.ID, sess.GoalRestartCount)
+			sess.GoalStatus = "paused"
+			_ = g.sessionStore.Save(sess)
+			continue
+		}
+
+		// Clear any stale in-memory processing flag before starting
+		sessions.MarkIdle(sMeta.ID)
+
+		if err := g.sessionStore.Save(sess); err != nil {
+			log.Printf("[GoalManager] Error saving session %s for resume: %v", sMeta.ID, err)
+			continue
+		}
+
+		log.Printf("[GoalManager] Resuming active goal for session %s on startup (restart count: %d)", sMeta.ID, sess.GoalRestartCount)
+		ctx, cancel := context.WithCancel(context.Background())
+		g.activeLoops[sMeta.ID] = cancel
+		go g.runGoalLoop(ctx, sMeta.ID, sess.GoalObjective)
 	}
 	return nil
 }
@@ -135,6 +173,8 @@ func (g *GoalManager) StartGoal(sessionID string, objective string) error {
 	sess.GoalObjective = objective
 	sess.GoalStatus = "active"
 	sess.GoalReasoning = "Initializing objective evaluation..."
+	sess.GoalCycleActive = false
+	sess.GoalRestartCount = 0
 
 	// Append starting status message to the session
 	startMsg := sessions.RawMsg{
@@ -317,6 +357,19 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			return
 		}
 
+		// Mark cycle as active in persisted state so a crash can be detected on restart
+		sess.GoalCycleActive = true
+		_ = g.sessionStore.Save(sess)
+
+		// clearCycleFlag clears the persisted GoalCycleActive flag after the cycle completes.
+		clearCycleFlag := func() {
+			s, err := g.sessionStore.Get(sessionID)
+			if err == nil {
+				s.GoalCycleActive = false
+				_ = g.sessionStore.Save(s)
+			}
+		}
+
 		log.Printf("[GoalManager] Session %s executing cycle %d/%d...", sessionID, cycle, maxCycles)
 
 		// Convert session messages to agent loop input
@@ -412,6 +465,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			if errors.Is(runErr, context.DeadlineExceeded) {
 				log.Printf("[GoalManager] Cycle %d timed out after %d minutes", cycle, g.config().SubagentTimeoutMinutes)
 				g.notify(sessionID, fmt.Sprintf("⏱️ Goal cycle %d timed out after %d minutes, continuing...", cycle, g.config().SubagentTimeoutMinutes))
+				clearCycleFlag()
 				sessions.MarkIdle(sessionID)
 				releaseSlot()
 				select {
@@ -423,6 +477,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			} else {
 				log.Printf("[GoalManager] Error running cycle %d after %d attempts: %v", cycle, maxRunRetries, runErr)
 				g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
+				clearCycleFlag()
 				sessions.MarkIdle(sessionID)
 				releaseSlot()
 				return
@@ -474,6 +529,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			sess.Messages = append(sess.Messages, rawCompMsg)
 			_ = g.sessionStore.Save(sess)
 
+			clearCycleFlag()
 			g.notify(sessionID, fmt.Sprintf("🎯 *Goal achieved!* \n%s", reasoning))
 			log.Printf("[GoalManager] Goal fully achieved: %s", reasoning)
 			sessions.MarkIdle(sessionID)
@@ -495,6 +551,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			sess.Messages = append(sess.Messages, rawFailMsg)
 			_ = g.sessionStore.Save(sess)
 
+			clearCycleFlag()
 			g.notify(sessionID, fmt.Sprintf("❌ *Goal failed.* Maximum cycles reached. last reason: %s", reasoning))
 			sessions.MarkIdle(sessionID)
 			releaseSlot()
@@ -522,6 +579,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		_ = g.sessionStore.Save(sess)
 		g.notify(sessionID, fmt.Sprintf("🔍 *Goal progress check (Cycle %d):* %s", cycle, reasoning))
 
+		clearCycleFlag()
 		// Release session and background slot before waiting so other managers
 		// and user turns can interleave between goal cycles.
 		sessions.MarkIdle(sessionID)

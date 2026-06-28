@@ -25,20 +25,22 @@ type Feedback struct {
 // Session holds a persisted conversation.
 // Messages are stored in a separate file within the session folder.
 type Session struct {
-	ID              string                 `json:"id"`
-	Title           string                 `json:"title"`
-	Model           string                 `json:"model"`
-	Messages        []json.RawMessage      `json:"messages,omitempty"`
-	Feedback        []Feedback             `json:"feedback,omitempty"`
-	CreatedAt       time.Time              `json:"created_at"`
-	UpdatedAt       time.Time              `json:"updated_at"`
-	LastMessageAt   time.Time              `json:"last_message_at,omitempty"`
-	GoalObjective   string                 `json:"goal_objective,omitempty"`
-	GoalStatus      string                 `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
-	GoalReasoning   string                 `json:"goal_reasoning,omitempty"` // last evaluator reasoning
-	ActivePlan      *SessionPlan           `json:"active_plan,omitempty"`
-	PendingApproval *PendingApproval       `json:"pending_approval,omitempty"`
-	ApprovalGrants  []SessionApprovalGrant `json:"approval_grants,omitempty"`
+	ID               string                 `json:"id"`
+	Title            string                 `json:"title"`
+	Model            string                 `json:"model"`
+	Messages         []json.RawMessage      `json:"messages,omitempty"`
+	Feedback         []Feedback             `json:"feedback,omitempty"`
+	CreatedAt        time.Time              `json:"created_at"`
+	UpdatedAt        time.Time              `json:"updated_at"`
+	LastMessageAt    time.Time              `json:"last_message_at,omitempty"`
+	GoalObjective    string                 `json:"goal_objective,omitempty"`
+	GoalStatus       string                 `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
+	GoalReasoning    string                 `json:"goal_reasoning,omitempty"` // last evaluator reasoning
+	GoalCycleActive  bool                   `json:"goal_cycle_active,omitempty"`
+	GoalRestartCount int                    `json:"goal_restart_count,omitempty"`
+	ActivePlan       *SessionPlan           `json:"active_plan,omitempty"`
+	PendingApproval  *PendingApproval       `json:"pending_approval,omitempty"`
+	ApprovalGrants   []SessionApprovalGrant `json:"approval_grants,omitempty"`
 }
 
 // IsEmpty returns true if the session contains no messages, no active goals, and no feedback, AND has a default/empty title.
@@ -250,20 +252,22 @@ func cloneSession(s Session) Session {
 		pendingApproval = &copied
 	}
 	return Session{
-		ID:              s.ID,
-		Title:           s.Title,
-		Model:           s.Model,
-		Messages:        msgsCopy,
-		Feedback:        fbCopy,
-		CreatedAt:       s.CreatedAt,
-		UpdatedAt:       s.UpdatedAt,
-		LastMessageAt:   s.LastMessageAt,
-		GoalObjective:   s.GoalObjective,
-		GoalStatus:      s.GoalStatus,
-		GoalReasoning:   s.GoalReasoning,
-		ActivePlan:      cloneSessionPlan(s.ActivePlan),
-		PendingApproval: pendingApproval,
-		ApprovalGrants:  approvalGrants,
+		ID:               s.ID,
+		Title:            s.Title,
+		Model:            s.Model,
+		Messages:         msgsCopy,
+		Feedback:         fbCopy,
+		CreatedAt:        s.CreatedAt,
+		UpdatedAt:        s.UpdatedAt,
+		LastMessageAt:    s.LastMessageAt,
+		GoalObjective:    s.GoalObjective,
+		GoalStatus:       s.GoalStatus,
+		GoalReasoning:    s.GoalReasoning,
+		GoalCycleActive:  s.GoalCycleActive,
+		GoalRestartCount: s.GoalRestartCount,
+		ActivePlan:       cloneSessionPlan(s.ActivePlan),
+		PendingApproval:  pendingApproval,
+		ApprovalGrants:   approvalGrants,
 	}
 }
 

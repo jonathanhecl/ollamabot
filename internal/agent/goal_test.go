@@ -339,3 +339,150 @@ func TestGoalManager_EvaluateProgress(t *testing.T) {
 		})
 	}
 }
+
+func TestGoalManager_ResumeActiveGoals_InterruptedCycle(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "ollamabot-goal-interrupt-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	sessionsPath := filepath.Join(tempDir, "sessions")
+	memoryPath := filepath.Join(tempDir, "memory")
+	cfg := config.Config{
+		SessionsPath: sessionsPath,
+		MemoryPath:   memoryPath,
+	}
+
+	store := sessions.NewStore(sessionsPath)
+	err = store.Save(sessions.Session{
+		ID:              "crashed_session",
+		Title:           "Crashed",
+		GoalObjective:   "Finish the task",
+		GoalStatus:      "active",
+		GoalCycleActive: true,
+	})
+	if err != nil {
+		t.Fatalf("failed to setup crashed session: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := ollama.ChatResponse{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: `{"achieved": true, "reasoning": "Done."}`,
+			},
+			Done: true,
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	goalMgr := NewGoalManager(config.NewManager(cfg), client)
+
+	err = goalMgr.ResumeActiveGoals()
+	if err != nil {
+		t.Fatalf("failed to resume: %v", err)
+	}
+
+	// Give the loop a moment to start
+	time.Sleep(200 * time.Millisecond)
+
+	sess, err := store.Get("crashed_session")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+
+	// GoalCycleActive should be cleared
+	if sess.GoalCycleActive {
+		t.Errorf("expected GoalCycleActive to be false after resume, got true")
+	}
+
+	// GoalRestartCount should be incremented
+	if sess.GoalRestartCount != 1 {
+		t.Errorf("expected GoalRestartCount=1, got %d", sess.GoalRestartCount)
+	}
+
+	// The interruption system message should be in the messages
+	found := false
+	for _, raw := range sess.Messages {
+		var m sessions.RawMsg
+		if err := json.Unmarshal(raw, &m); err == nil {
+			if m.Role == "system" && strings.Contains(m.Content, "interrupted due to a process restart") {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected interruption system message in session history")
+	}
+
+	_ = goalMgr.ClearGoal("crashed_session")
+}
+
+func TestGoalManager_ResumeActiveGoals_RestartLimit(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "ollamabot-goal-restartlimit-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	sessionsPath := filepath.Join(tempDir, "sessions")
+	memoryPath := filepath.Join(tempDir, "memory")
+	cfg := config.Config{
+		SessionsPath: sessionsPath,
+		MemoryPath:   memoryPath,
+	}
+
+	store := sessions.NewStore(sessionsPath)
+	err = store.Save(sessions.Session{
+		ID:               "loop_crasher",
+		Title:            "Loop Crasher",
+		GoalObjective:    "Keep crashing",
+		GoalStatus:       "active",
+		GoalRestartCount: 3,
+	})
+	if err != nil {
+		t.Fatalf("failed to setup session: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := ollama.ChatResponse{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: `{"achieved": true, "reasoning": "Done."}`,
+			},
+			Done: true,
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	goalMgr := NewGoalManager(config.NewManager(cfg), client)
+
+	err = goalMgr.ResumeActiveGoals()
+	if err != nil {
+		t.Fatalf("failed to resume: %v", err)
+	}
+
+	// The goal should be paused, not resumed
+	sess, err := store.Get("loop_crasher")
+	if err != nil {
+		t.Fatalf("failed to get session: %v", err)
+	}
+	if sess.GoalStatus != "paused" {
+		t.Errorf("expected goal status paused, got %s", sess.GoalStatus)
+	}
+
+	goalMgr.mu.Lock()
+	_, running := goalMgr.activeLoops["loop_crasher"]
+	goalMgr.mu.Unlock()
+	if running {
+		t.Errorf("expected no active loop for session that exceeded restart limit")
+	}
+}
