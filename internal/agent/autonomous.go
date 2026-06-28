@@ -122,6 +122,20 @@ func (am *AutonomousManager) SetInterval(d time.Duration) {
 	am.interval = d
 }
 
+// UpdateClient swaps the Ollama client without stopping the ticker.
+func (am *AutonomousManager) UpdateClient(c *ollama.Client) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.client = c
+}
+
+// UpdateMemoryStore swaps the memory store without stopping the ticker.
+func (am *AutonomousManager) UpdateMemoryStore(ms *memory.Store) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.memoryStore = ms
+}
+
 // ListProjects scans the workspace root for folders containing "project.json"
 func (am *AutonomousManager) ListProjects() ([]Project, error) {
 	workspaceRoot := am.config().Workspace

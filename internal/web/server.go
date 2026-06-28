@@ -257,12 +257,13 @@ func (s *Server) ListenAndServe() error {
 		addr = "127.0.0.1" + addr
 	}
 
-	// Start background projects heartbeat ticker.
+	// Start background projects heartbeat ticker (only if not injected by main).
 	if s.autoMgr == nil {
+		log.Println("[autonomous] No manager injected, creating local instance")
 		s.autoMgr = agent.NewAutonomousManager(s.cfgMgr, s.client, s.memoryStore)
+		s.autoMgr.Start(context.Background())
+		defer s.autoMgr.Stop()
 	}
-	s.autoMgr.Start(context.Background())
-	defer s.autoMgr.Stop()
 
 	log.Printf("ollamabot web listening on %s", addr)
 	return http.ListenAndServe(addr, s.authenticate(mux))
@@ -510,10 +511,12 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	s.sessionStore = sessions.NewStore(sessionsPath)
 	s.memoryStore = memory.NewStore(memoryPath)
 	if s.autoMgr != nil {
-		s.autoMgr.Stop()
+		s.autoMgr.UpdateClient(s.client)
+		s.autoMgr.UpdateMemoryStore(s.memoryStore)
+	} else {
+		s.autoMgr = agent.NewAutonomousManager(s.cfgMgr, s.client, s.memoryStore)
+		s.autoMgr.Start(context.Background())
 	}
-	s.autoMgr = agent.NewAutonomousManager(s.cfgMgr, s.client, s.memoryStore)
-	s.autoMgr.Start(context.Background())
 	if s.sleepMgr != nil {
 		s.sleepMgr.Pause()
 	}

@@ -269,7 +269,6 @@ func NewBot(cfg *config.Manager, client *ollama.Client) *Bot {
 		sessManager:          NewSessionManager(cfg.Get().SessionsPath),
 		memoryStore:          ms,
 		approvalService:      sessions.NewApprovalService(ss, cfg),
-		autoMgr:              agent.NewAutonomousManager(cfg, client, ms),
 		goalMgr:              agent.NewGoalManager(cfg, client),
 		apiBase:              "https://api.telegram.org/bot" + token,
 		httpClient:           &http.Client{Timeout: 40 * time.Second},
@@ -291,6 +290,10 @@ func NewBotWithEnv(cfg *config.Manager, client *ollama.Client, envPath string) *
 
 func (b *Bot) SetSleepManager(sm *learning.SleepManager) {
 	b.sleepMgr = sm
+}
+
+func (b *Bot) SetAutonomousManager(am *agent.AutonomousManager) {
+	b.autoMgr = am
 }
 
 func (b *Bot) SetGoalManager(gm *agent.GoalManager) {
@@ -746,6 +749,10 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		markup := b.buildSettingsMarkup()
 		_, _ = b.sendMessageWithMarkup(chatID, text, 0, "Markdown", markup)
 	case "/projects":
+		if b.autoMgr == nil {
+			b.sendMessage(chatID, "⚠️ Autonomous projects not available.", 0, "Markdown")
+			return
+		}
 		projects, err := b.autoMgr.ListProjects()
 		if err != nil {
 			b.sendMessage(chatID, fmt.Sprintf("❌ *Error listing projects:* %v", err), 0, "Markdown")
