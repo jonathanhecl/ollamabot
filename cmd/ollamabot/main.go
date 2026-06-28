@@ -182,6 +182,7 @@ func run(args []string) error {
 					bot.SetGoalManager(goalMgr)
 				}
 				bot.SetPlanMonitor(planMonitor)
+				bot.SetAutonomousManager(autoMgr)
 				bot.SetApprovalService(approvalService)
 				return bot.Start(ctx)
 			}
