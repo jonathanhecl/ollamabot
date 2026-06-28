@@ -21,7 +21,7 @@ func TestPathMemoryRescue(t *testing.T) {
 	pm := newPathMemory(temp)
 
 	// Remember a successful tool parameter call
-	pm.RememberToolResult("Write", map[string]any{"file_path": targetFile}, "success", false)
+	pm.RememberToolResult("write_file", map[string]any{"file_path": targetFile}, "success", false)
 
 	// 1. Absolute path already exists
 	abs, rescued, ok := pm.Resolve(targetFile)
@@ -84,4 +84,3 @@ func TestPathMemoryWalkAndSuggestions(t *testing.T) {
 		t.Errorf("expected at least 2 suggestions for 'help', got %d: %v", len(suggsFuzzy), suggsFuzzy)
 	}
 }
-

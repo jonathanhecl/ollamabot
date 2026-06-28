@@ -1827,13 +1827,13 @@ func getTelegramToolLabel(name string, args any) string {
 		if p, ok := params["path"].(string); ok && p != "" {
 			return fmt.Sprintf("read_file(\"%s\")", p)
 		}
-	case "Write":
+	case "write_file":
 		if p, ok := params["file_path"].(string); ok && p != "" {
-			return fmt.Sprintf("Write(\"%s\")", p)
+			return fmt.Sprintf("write_file(\"%s\")", p)
 		}
-	case "Edit":
+	case "edit_file":
 		if p, ok := params["file_path"].(string); ok && p != "" {
-			return fmt.Sprintf("Edit(\"%s\")", p)
+			return fmt.Sprintf("edit_file(\"%s\")", p)
 		}
 	case "execute_command":
 		if cmd, ok := params["command"].(string); ok && cmd != "" {

@@ -41,7 +41,7 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 	call := ollama.ToolCall{
 		Type: "function",
 		Function: ollama.ToolFunction{
-			Name:      "Write",
+			Name:      "write_file",
 			Arguments: argsBytes,
 		},
 	}

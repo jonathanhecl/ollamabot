@@ -64,7 +64,7 @@ func TestAgentRunContinuesWithActivePlanAfterTextOnlyResponse(t *testing.T) {
 						ToolCalls: []ollama.ToolCall{{
 							Type: "function",
 							Function: ollama.ToolFunction{
-								Name:      "TodoWrite",
+								Name:      "todo_write",
 								Arguments: todoArgs,
 							},
 						}, {
@@ -179,7 +179,7 @@ func TestAgentRunRejectsPlanCompletionWithoutAction(t *testing.T) {
 						ToolCalls: []ollama.ToolCall{{
 							Type: "function",
 							Function: ollama.ToolFunction{
-								Name:      "TodoWrite",
+								Name:      "todo_write",
 								Arguments: todoArgs,
 							},
 						}, {

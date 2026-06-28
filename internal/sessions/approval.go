@@ -49,8 +49,8 @@ type pendingApprovalRef struct {
 
 // ApprovalService persists pending approvals and coordinates channel responses.
 type ApprovalService struct {
-	store     *Store
-	cfgMgr    *config.Manager
+	store  *Store
+	cfgMgr *config.Manager
 
 	mu        sync.Mutex
 	waiters   map[string]chan ApprovalDecision
@@ -301,7 +301,7 @@ func FormatApprovalSignature(tool string, args map[string]any, workspace string)
 		parts := append([]string{command}, argv...)
 		label = strings.Join(parts, " ")
 		return "execute_command:" + strings.Join(parts, "\x00"), label
-	case "Write", "Edit":
+	case "write_file", "edit_file":
 		filePath, _ := args["file_path"].(string)
 		abs := normalizeApprovalPath(filePath, workspace)
 		label = fmt.Sprintf("%s %s", tool, abs)

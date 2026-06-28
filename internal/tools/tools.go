@@ -277,11 +277,11 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 	})
 
 	// Register Write Tool
-	r.enabled["Write"] = true
+	r.enabled["write_file"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
 		Function: ollama.ToolDefinition{
-			Name:        "Write",
+			Name:        "write_file",
 			Description: "Write file contents atomically to a path in the workspace. Overwrites existing files.",
 			Parameters: map[string]any{
 				"type": "object",
@@ -301,11 +301,11 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 	})
 
 	// Register Edit Tool
-	r.enabled["Edit"] = true
+	r.enabled["edit_file"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
 		Function: ollama.ToolDefinition{
-			Name:        "Edit",
+			Name:        "edit_file",
 			Description: "Edit existing file content by replacing an exact old string with a new string.",
 			Parameters: map[string]any{
 				"type": "object",
@@ -333,11 +333,11 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 	})
 
 	// Register TodoWrite Tool
-	r.enabled["TodoWrite"] = true
+	r.enabled["todo_write"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
 		Function: ollama.ToolDefinition{
-			Name:        "TodoWrite",
+			Name:        "todo_write",
 			Description: "Maintain a live TODO checklist of steps during this turn. Use it when solving multi-step tasks. Statuses are: 'pending', 'in_progress', 'completed', 'cancelled'.",
 			Parameters: map[string]any{
 				"type": "object",
@@ -955,7 +955,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		zipName, _ := args["zip_name"].(string)
 		return SendFiles(r.workspace, r.sessionsPath, r.sessionID, paths, zipName, r.attachmentHandler)
-	case "Write":
+	case "write_file":
 		filePath, _ := args["file_path"].(string)
 		contents, _ := args["contents"].(string)
 		if filePath == "" {
@@ -966,7 +966,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", err
 		}
 		return "Write successful.", nil
-	case "Edit":
+	case "edit_file":
 		filePath, _ := args["file_path"].(string)
 		oldString, _ := args["old_string"].(string)
 		newString, _ := args["new_string"].(string)
@@ -982,7 +982,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "No changes made.", nil
 		}
 		return "Edit successful. Changes made:\n" + diff, nil
-	case "TodoWrite":
+	case "todo_write":
 		todosVal := args["todos"]
 		merge, _ := args["merge"].(bool)
 		if todosVal == nil {

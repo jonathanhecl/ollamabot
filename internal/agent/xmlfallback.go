@@ -33,9 +33,9 @@ var toolNameMapping = map[string]string{
 	"skillcreate":            "skill_create",
 	"skilledit":              "skill_edit",
 	"skilldelete":            "skill_delete",
-	"write":                  "Write",
-	"edit":                   "Edit",
-	"todowrite":              "TodoWrite",
+	"write":                  "write_file",
+	"edit":                   "edit_file",
+	"todowrite":              "todo_write",
 }
 
 // parseXMLFallback recovers a tool call from a raw model reply that did not use

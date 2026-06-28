@@ -106,7 +106,6 @@ func (m *pathMemory) FindSuggestions(p string) []string {
 	return suggestions
 }
 
-
 // add stores an absolute path under its basename.
 func (m *pathMemory) add(p string) {
 	if p == "" || !filepath.IsAbs(p) {
@@ -225,7 +224,7 @@ func (m *pathMemory) rescueUniqueBasename(p string) (string, bool) {
 
 func pathParamKeyForTool(toolName string) string {
 	switch toolName {
-	case "Write", "Edit":
+	case "write_file", "edit_file":
 		return "file_path"
 	case "read_file":
 		return "path"
