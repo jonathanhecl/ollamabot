@@ -161,3 +161,13 @@ go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ## Mensajes internos ocultos en web (2026-06-24)
 
 - Prompts internos del loop (plan monitor, enforcement de plan/TODO) ya no se persisten ni se muestran como burbujas en la timeline web.
+
+## User Feedback Loop + Duplicate Skill Prevention (2026-06-28)
+
+- **Global text feedback**: new `internal/learning/feedback.go` with `FeedbackEntry`, `SaveFeedback`, `LoadFeedback`, `ClearFeedback`. Stored in `sessions/feedback.json`.
+- **Web API**: `POST /api/feedback` accepts `{ text, category }` (correction/preference/praise).
+- **Telegram**: `/feedback <text>` command saves feedback as correction.
+- **Web UI**: Feedback button + dialog with category dropdown and textarea.
+- **Sleep manager**: loads text feedback in `runLearningCycleForSessionsWithModel`, appends to analysis prompt as `## User Text Feedback`, clears after successful reflector run. System prompt updated to prioritize explicit user feedback.
+- **Duplicate skill prevention**: `CreateSkill` now checks existing skills for name similarity (Levenshtein ratio >= 0.8) and description similarity (Jaccard index >= 0.6). Blocks creation and suggests `skill_edit` instead.
+- Tests: `feedback_test.go` (save/load/clear round-trip), `skills_tools_test.go` (duplicate name block, duplicate description block, no-similar success).

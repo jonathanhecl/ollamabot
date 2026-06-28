@@ -214,6 +214,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/sessions/{id}/generations/{filename}", s.handleDownloadGeneration)
 	mux.HandleFunc("DELETE /api/sessions/{id}", s.handleDeleteSession)
 	mux.HandleFunc("POST /api/sessions/{id}/feedback", s.handleSessionFeedback)
+	mux.HandleFunc("POST /api/feedback", s.handleGlobalFeedback)
 	mux.HandleFunc("POST /api/sessions/{id}/goal", s.handleSessionGoal)
 	mux.HandleFunc("POST /api/sessions/{id}/abort", s.handleAbortSession)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
@@ -1614,6 +1615,37 @@ func (s *Server) handleSessionFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessions.NotifyUpdate(id)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleGlobalFeedback(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Text     string `json:"text"`
+		Category string `json:"category"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if strings.TrimSpace(input.Text) == "" {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("text is required"))
+		return
+	}
+	validCategories := map[string]bool{"correction": true, "preference": true, "praise": true}
+	if !validCategories[input.Category] {
+		writeError(w, http.StatusBadRequest, fmt.Errorf("category must be 'correction', 'preference', or 'praise'"))
+		return
+	}
+
+	entry := learning.FeedbackEntry{
+		Text:      strings.TrimSpace(input.Text),
+		Category:  input.Category,
+		CreatedAt: time.Now(),
+	}
+	if err := learning.SaveFeedback(s.config().SessionsPath, entry); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 

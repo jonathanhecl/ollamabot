@@ -497,6 +497,20 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 		}
 	}
 
+	// Load global text feedback submitted by the user.
+	textFeedbackEntries, fbErr := LoadFeedback(sm.config().SessionsPath)
+	var textFeedbackSection string
+	if fbErr != nil {
+		log.Printf("[sleep] Error loading text feedback: %v", fbErr)
+	} else if len(textFeedbackEntries) > 0 {
+		var tfb strings.Builder
+		tfb.WriteString("\n--- USER TEXT FEEDBACK ---\n")
+		for _, e := range textFeedbackEntries {
+			fmt.Fprintf(&tfb, "- [%s] %s\n", e.Category, e.Text)
+		}
+		textFeedbackSection = tfb.String()
+	}
+
 	analysisPrompt := fmt.Sprintf(`You are the OllamaBot self-refining learning analyzer.
 Analyze the following conversation histories from %d consolidated sessions for:
 - Potential errors, user frustration, repetitive mistakes, or areas where the assistant struggled.
@@ -505,20 +519,21 @@ Analyze the following conversation histories from %d consolidated sessions for:
 ---
 CONVERSATION HISTORIES:
 %s
-%s---
+%s%s---
 
 Your goal:
 1. Pay special attention to messages marked with user feedback reactions:
    - A 👎 (negative) indicates the user was unhappy with that response — investigate what went wrong and create/modify skills to prevent the issue.
    - A 👍 (positive) confirms the approach was good — reinforce those patterns in skills if applicable.
-2. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
-3. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
-4. Call the appropriate tools to make these improvements. You have access to:
+2. Pay HIGHEST priority to explicit user text feedback (corrections, preferences, praise). These are direct instructions from the user about what to improve or remember.
+3. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
+4. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
+5. Call the appropriate tools to make these improvements. You have access to:
    - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent. If a similar skill exists, modify it using 'skill_edit' instead of creating a duplicate file to prevent cluttering.
    - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
 
 If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
-Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String())
+Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String(), textFeedbackSection)
 
 	registry := tools.NewRegistry(sm.config().WebSearchEnabled, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{
 		Providers:    sm.config().SearchProviders,
@@ -541,7 +556,9 @@ When editing or creating skills, use standard SKILL.md format:
 - ## Description header.
 - ## Instructions header containing list items starting with - [ ], -, or numbered steps.
 
-To prevent duplicates, you MUST check the existing skills with 'skill_list' before creating a new one. If a skill with similar intent exists, modify it instead of creating a new one.
+To prevent duplicates, you MUST check the existing skills with 'skill_list' before creating a new one. If a skill with similar intent exists, modify it instead of creating a new one. The 'skill_create' tool will also block creation if a similar skill already exists.
+
+User text feedback (corrections, preferences, praise) is the HIGHEST priority signal. Always act on explicit feedback before inferring patterns from conversation history.
 
 Keep the user profile ('agent/USER_PROFILE.md') structured:
 - Name
@@ -584,6 +601,13 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 			if strings.HasPrefix(tc.Function.Name, "skill_") {
 				actions = append(actions, fmt.Sprintf("Called tool %s with args %s", tc.Function.Name, string(tc.Function.Arguments)))
 			}
+		}
+	}
+
+	// Clear processed text feedback entries.
+	if len(textFeedbackEntries) > 0 {
+		if err := ClearFeedback(sm.config().SessionsPath); err != nil {
+			log.Printf("[sleep] Error clearing text feedback: %v", err)
 		}
 	}
 

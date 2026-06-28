@@ -693,10 +693,25 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/image <prompt>` - Force generate an image\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/image <prompt>` - Force generate an image\n- `/feedback <text>` - Submit feedback for the agent to learn from\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
+	case "/feedback":
+		if strings.TrimSpace(args) == "" {
+			b.sendMessage(chatID, "📝 *Usage:* `/feedback <text>`\n\nSubmit feedback for the agent to learn from. Examples:\n- `/feedback You should always respond in Spanish`\n- `/feedback Don't use bullet points for short answers`\n- `/feedback Great job with the code refactoring`", 0, "Markdown")
+			return
+		}
+		entry := learning.FeedbackEntry{
+			Text:      strings.TrimSpace(args),
+			Category:  "correction",
+			CreatedAt: time.Now(),
+		}
+		if err := learning.SaveFeedback(b.config().SessionsPath, entry); err != nil {
+			b.sendMessage(chatID, fmt.Sprintf("❌ *Failed to save feedback:* %v", err), 0, "Markdown")
+			return
+		}
+		b.sendMessage(chatID, "✅ *Feedback saved!* The agent will process it during the next learning cycle.", 0, "Markdown")
 	case "/status":
 		ctx := context.Background()
 		version, err := b.client.Version(ctx)

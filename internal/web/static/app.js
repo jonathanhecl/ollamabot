@@ -300,6 +300,11 @@ const els = {
   backToDetailBtn: document.querySelector("#backToDetailBtn"),
   logReaderTitle: document.querySelector("#logReaderTitle"),
   logReaderContent: document.querySelector("#logReaderContent"),
+  openFeedback: document.querySelector("#openFeedback"),
+  feedbackDialog: document.querySelector("#feedbackDialog"),
+  feedbackCategory: document.querySelector("#feedbackCategory"),
+  feedbackText: document.querySelector("#feedbackText"),
+  feedbackSubmitBtn: document.querySelector("#feedbackSubmitBtn"),
 };
 
 // Bind Memory click handler
@@ -314,6 +319,38 @@ els.openSkills.addEventListener("click", () => {
 // Bind Projects click handler
 els.openProjects.addEventListener("click", () => {
   openProjectsDashboard();
+});
+
+// Bind Feedback click handler
+els.openFeedback.addEventListener("click", () => {
+  els.feedbackText.value = "";
+  els.feedbackCategory.value = "correction";
+  els.feedbackDialog.showModal();
+});
+els.feedbackSubmitBtn.addEventListener("click", async () => {
+  const text = els.feedbackText.value.trim();
+  if (!text) return;
+  const category = els.feedbackCategory.value;
+  els.feedbackSubmitBtn.disabled = true;
+  els.feedbackSubmitBtn.textContent = "Submitting...";
+  try {
+    const response = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, category }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || "Failed to submit feedback");
+    }
+    showToast("Feedback submitted. The agent will process it during the next learning cycle.");
+    els.feedbackDialog.close();
+  } catch (err) {
+    showToast(`Feedback error: ${err.message}`);
+  } finally {
+    els.feedbackSubmitBtn.disabled = false;
+    els.feedbackSubmitBtn.textContent = "Submit Feedback";
+  }
 });
 
 els.openModels.addEventListener("click", () => {

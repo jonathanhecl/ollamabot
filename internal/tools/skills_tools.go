@@ -200,12 +200,121 @@ func GetSkill(skillsPath, name string) (string, error) {
 	return string(data), nil
 }
 
+// levenshteinDistance computes the edit distance between two strings.
+func levenshteinDistance(a, b string) int {
+	ra := []rune(a)
+	rb := []rune(b)
+	n, m := len(ra), len(rb)
+	if n == 0 {
+		return m
+	}
+	if m == 0 {
+		return n
+	}
+	prev := make([]int, m+1)
+	curr := make([]int, m+1)
+	for j := 0; j <= m; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= n; i++ {
+		curr[0] = i
+		for j := 1; j <= m; j++ {
+			cost := 1
+			if ra[i-1] == rb[j-1] {
+				cost = 0
+			}
+			curr[j] = minInt(prev[j]+1, curr[j-1]+1, prev[j-1]+cost)
+		}
+		prev, curr = curr, prev
+	}
+	return prev[m]
+}
+
+func minInt(vals ...int) int {
+	min := vals[0]
+	for _, v := range vals[1:] {
+		if v < min {
+			min = v
+		}
+	}
+	return min
+}
+
+// levenshteinRatio returns similarity as a float64 between 0 and 1.
+func levenshteinRatio(a, b string) float64 {
+	if a == "" && b == "" {
+		return 1.0
+	}
+	maxLen := len([]rune(a))
+	if len([]rune(b)) > maxLen {
+		maxLen = len([]rune(b))
+	}
+	if maxLen == 0 {
+		return 1.0
+	}
+	return 1.0 - float64(levenshteinDistance(a, b))/float64(maxLen)
+}
+
+// jaccardSimilarity computes token overlap between two strings.
+func jaccardSimilarity(a, b string) float64 {
+	tokensA := make(map[string]bool)
+	for _, t := range strings.Fields(strings.ToLower(a)) {
+		tokensA[t] = true
+	}
+	tokensB := make(map[string]bool)
+	for _, t := range strings.Fields(strings.ToLower(b)) {
+		tokensB[t] = true
+	}
+	if len(tokensA) == 0 && len(tokensB) == 0 {
+		return 1.0
+	}
+	intersection := 0
+	for t := range tokensA {
+		if tokensB[t] {
+			intersection++
+		}
+	}
+	union := len(tokensA) + len(tokensB) - intersection
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
+}
+
+// findSimilarSkill checks existing skills for name or description similarity.
+// Returns the name of the first similar skill found, or empty string if none.
+func findSimilarSkill(skillsPath, name, description string) (string, error) {
+	existing, err := ListSkillSummaries(skillsPath)
+	if err != nil {
+		return "", err
+	}
+	safeName := cleanSkillName(name)
+	for _, s := range existing {
+		if levenshteinRatio(safeName, s.Name) >= 0.8 {
+			return s.Name, nil
+		}
+		if jaccardSimilarity(description, s.Description) >= 0.6 {
+			return s.Name, nil
+		}
+	}
+	return "", nil
+}
+
 // CreateSkill creates a new skill directory and SKILL.md.
 func CreateSkill(skillsPath, name, description, homepage, instructions string) error {
 	safeName := cleanSkillName(name)
 	if safeName == "" {
 		return fmt.Errorf("invalid skill name")
 	}
+
+	similar, err := findSimilarSkill(skillsPath, name, description)
+	if err != nil {
+		return fmt.Errorf("failed to check for existing skills: %w", err)
+	}
+	if similar != "" {
+		return fmt.Errorf("a similar skill already exists: '%s'. Use skill_edit to modify it instead of creating a duplicate", similar)
+	}
+
 	dir := filepath.Join(skillsPath, safeName)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("failed to create skill directory: %w", err)
