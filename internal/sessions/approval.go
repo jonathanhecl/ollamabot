@@ -301,7 +301,7 @@ func FormatApprovalSignature(tool string, args map[string]any, workspace string)
 		parts := append([]string{command}, argv...)
 		label = strings.Join(parts, " ")
 		return "execute_command:" + strings.Join(parts, "\x00"), label
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "apply_diff":
 		filePath, _ := args["file_path"].(string)
 		abs := normalizeApprovalPath(filePath, workspace)
 		label = fmt.Sprintf("%s %s", tool, abs)

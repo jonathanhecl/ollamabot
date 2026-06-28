@@ -171,3 +171,18 @@ go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
 - **Sleep manager**: loads text feedback in `runLearningCycleForSessionsWithModel`, appends to analysis prompt as `## User Text Feedback`, clears after successful reflector run. System prompt updated to prioritize explicit user feedback.
 - **Duplicate skill prevention**: `CreateSkill` now checks existing skills for name similarity (Levenshtein ratio >= 0.8) and description similarity (Jaccard index >= 0.6). Blocks creation and suggests `skill_edit` instead.
 - Tests: `feedback_test.go` (save/load/clear round-trip), `skills_tools_test.go` (duplicate name block, duplicate description block, no-similar success).
+
+## Tool Naming Convention + New Tools (2026-06-28)
+
+- **Snake_case rename**: `Write` → `write_file`, `Edit` → `edit_file`, `TodoWrite` → `todo_write` across all code, tests, XML fallback aliases, approval, risk, rescue, Telegram display, and README.
+- **4 new tools**:
+  - `search_files`: regex search across workspace files with glob filtering and max results. Read-only, no approval.
+  - `list_files`: directory listing with recursive and glob filter options. Read-only, no approval.
+  - `list_code_definitions`: extracts function/method/type/struct/interface/constant names from Go files via `go/ast`. Read-only, no approval.
+  - `apply_diff`: applies unified diff format to files. Requires approval (same as write_file/edit_file).
+- **Parameter improvements**:
+  - `read_file`: added `offset` (1-indexed line) and `limit` (max lines) for paginated reading of large files.
+  - `write_file`: added `append` boolean to append to existing files instead of overwriting.
+  - `execute_command`: added `timeout` (seconds, default 60) replacing the hardcoded timeout.
+- **Supporting changes**: XML fallback aliases for all 4 new tools, Telegram display formatting, agent loop error recovery for `apply_diff`, risk classification, approval signature, rescue path param mapping.
+- All tests pass, build clean.

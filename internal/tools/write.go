@@ -57,6 +57,15 @@ func ResolveAndValidatePath(workspace, rawPath string) (string, error) {
 
 // WriteFile writes a file atomically within the workspace.
 func WriteFile(workspace, rawPath, contents string) error {
+	return writeFileInternal(workspace, rawPath, contents, false)
+}
+
+// WriteFileAppend appends contents to an existing file within the workspace.
+func WriteFileAppend(workspace, rawPath, contents string) error {
+	return writeFileInternal(workspace, rawPath, contents, true)
+}
+
+func writeFileInternal(workspace, rawPath, contents string, append bool) error {
 	path, err := ResolveAndValidatePath(workspace, rawPath)
 	if err != nil {
 		return err
@@ -72,6 +81,18 @@ func WriteFile(workspace, rawPath, contents string) error {
 	parent := filepath.Dir(path)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
+	}
+
+	if append {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			return fmt.Errorf("failed to open file for append: %w", err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(contents); err != nil {
+			return fmt.Errorf("failed to append to file: %w", err)
+		}
+		return nil
 	}
 
 	tmp, err := os.CreateTemp(parent, "*.write.tmp")

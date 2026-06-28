@@ -16,15 +16,15 @@ func TestParseXMLFallback(t *testing.T) {
 	}{
 		{
 			name:       "simple invoke",
-			input:      `<invoke name="Write">{"file_path": "a.txt", "contents": "hello"}</invoke>`,
-			wantTool:   "Write",
+			input:      `<invoke name="write_file">{"file_path": "a.txt", "contents": "hello"}</invoke>`,
+			wantTool:   "write_file",
 			wantParams: map[string]any{"file_path": "a.txt", "contents": "hello"},
 			wantOk:     true,
 		},
 		{
 			name:       "simple tool_call",
-			input:      `<tool_call name="Edit">{"file_path": "b.go", "old_string": "1"}</tool_call>`,
-			wantTool:   "Edit",
+			input:      `<tool_call name="edit_file">{"file_path": "b.go", "old_string": "1"}</tool_call>`,
+			wantTool:   "edit_file",
 			wantParams: map[string]any{"file_path": "b.go", "old_string": "1"},
 			wantOk:     true,
 		},
@@ -58,8 +58,8 @@ func TestParseXMLFallback(t *testing.T) {
 		},
 		{
 			name:       "trailing comma correction",
-			input:      `<invoke name="Write">{"file_path": "c.txt", "contents": "comma",}</invoke>`,
-			wantTool:   "Write",
+			input:      `<invoke name="write_file">{"file_path": "c.txt", "contents": "comma",}</invoke>`,
+			wantTool:   "write_file",
 			wantParams: map[string]any{"file_path": "c.txt", "contents": "comma"},
 			wantOk:     true,
 		},
@@ -97,26 +97,26 @@ func TestDetectMalformedXMLFallback(t *testing.T) {
 	}{
 		{
 			name:          "well-formed invoke",
-			input:         `<invoke name="Write">{"file_path": "a.txt", "contents": "hello"}</invoke>`,
+			input:         `<invoke name="write_file">{"file_path": "a.txt", "contents": "hello"}</invoke>`,
 			wantMalformed: false,
 		},
 		{
 			name:          "unbalanced braces invoke",
-			input:         `<invoke name="Write">{"file_path": "a.txt"</invoke>`,
+			input:         `<invoke name="write_file">{"file_path": "a.txt"</invoke>`,
 			wantMalformed: true,
-			wantSubstr:    "Malformed JSON arguments in <invoke name=\"Write\">",
+			wantSubstr:    "Malformed JSON arguments in <invoke name=\"write_file\">",
 		},
 		{
 			name:          "invalid JSON syntax tool_call",
-			input:         `<tool_call name="Edit">{"file_path": "a.txt", invalid}</tool_call>`,
+			input:         `<tool_call name="edit_file">{"file_path": "a.txt", invalid}</tool_call>`,
 			wantMalformed: true,
-			wantSubstr:    "Invalid JSON syntax in <tool_call name=\"Edit\">",
+			wantSubstr:    "Invalid JSON syntax in <tool_call name=\"edit_file\">",
 		},
 		{
 			name:          "missing closing tag invoke",
-			input:         `<invoke name="Write">{"file_path": "a.txt", "contents": "hello"}</invok>`,
+			input:         `<invoke name="write_file">{"file_path": "a.txt", "contents": "hello"}</invok>`,
 			wantMalformed: true,
-			wantSubstr:    "Missing closing tag </invoke> for tool Write.",
+			wantSubstr:    "Missing closing tag </invoke> for tool write_file.",
 		},
 		{
 			name:          "custom tag unbalanced braces",

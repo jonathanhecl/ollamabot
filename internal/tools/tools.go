@@ -262,13 +262,22 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "read_file",
-			Description: "Read the contents of a text file within the workspace safely. Returns the file content or lists directory entries if path points to a directory.",
+			Description: "Read the contents of a text file within the workspace safely. Returns the file content or lists directory entries if path points to a directory. Use offset and limit to read specific portions of large files.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"path": map[string]any{
 						"type":        "string",
 						"description": "Relative path within the workspace.",
+					},
+					"offset": map[string]any{
+						"type":        "integer",
+						"description": "1-indexed line number to start reading from. Useful for paginating large files.",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of lines to read. Defaults to 2000.",
+						"default":     2000,
 					},
 				},
 				"required": []string{"path"},
@@ -282,7 +291,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "write_file",
-			Description: "Write file contents atomically to a path in the workspace. Overwrites existing files.",
+			Description: "Write file contents atomically to a path in the workspace. Overwrites existing files. Set append=true to append to an existing file instead.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -293,6 +302,11 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					"contents": map[string]any{
 						"type":        "string",
 						"description": "The full code or text contents to write.",
+					},
+					"append": map[string]any{
+						"type":        "boolean",
+						"description": "If true, appends contents to the end of an existing file instead of overwriting.",
+						"default":     false,
 					},
 				},
 				"required": []string{"file_path", "contents"},
@@ -582,6 +596,11 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 						},
 						"description": "List of arguments to pass to the command.",
 					},
+					"timeout": map[string]any{
+						"type":        "integer",
+						"description": "Timeout in seconds. Defaults to 60.",
+						"default":     60,
+					},
 				},
 				"required": []string{"command"},
 			},
@@ -784,7 +803,125 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	// Register Search Files Tool
+	r.enabled["search_files"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "search_files",
+			Description: "Search for a regex pattern across files in the workspace. Returns matching lines in file:line:content format. Use this to find code, references, or patterns without reading entire files.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"pattern": map[string]any{
+						"type":        "string",
+						"description": "Regular expression pattern to search for.",
+					},
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Directory or file to search in (relative to workspace). Defaults to workspace root.",
+					},
+					"include": map[string]any{
+						"type":        "string",
+						"description": "Glob pattern to filter files (e.g. '*.go', '*.py'). If omitted, searches all files.",
+					},
+					"max_results": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of matches to return. Defaults to 50.",
+						"default":     50,
+					},
+				},
+				"required": []string{"pattern"},
+			},
+		},
+	})
+
+	// Register List Files Tool
+	r.enabled["list_files"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "list_files",
+			Description: "List files and directories at a given path in the workspace. Use recursive=true to walk subdirectories and include to filter by glob pattern.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path": map[string]any{
+						"type":        "string",
+						"description": "Directory path relative to the workspace. Defaults to workspace root.",
+					},
+					"recursive": map[string]any{
+						"type":        "boolean",
+						"description": "If true, lists all files recursively. Defaults to false.",
+						"default":     false,
+					},
+					"include": map[string]any{
+						"type":        "string",
+						"description": "Glob pattern to filter files (e.g. '*.go'). Only applies to files, not directories.",
+					},
+				},
+			},
+		},
+	})
+
+	// Register List Code Definitions Tool
+	r.enabled["list_code_definitions"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "list_code_definitions",
+			Description: "Extract function, method, type, struct, interface, and constant names from a Go source file. Returns name, type, and line number. Use this to navigate code without reading the full file.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "Path to the Go source file, relative to the workspace.",
+					},
+				},
+				"required": []string{"file_path"},
+			},
+		},
+	})
+
+	// Register Apply Diff Tool
+	r.enabled["apply_diff"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "apply_diff",
+			Description: "Apply a unified diff to an existing file in the workspace. More efficient than edit_file for multi-hunk changes. Requires approval.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"file_path": map[string]any{
+						"type":        "string",
+						"description": "Path to the file to patch, relative to the workspace.",
+					},
+					"diff": map[string]any{
+						"type":        "string",
+						"description": "Unified diff content with --- and +++ headers and @@ hunk headers.",
+					},
+				},
+				"required": []string{"file_path", "diff"},
+			},
+		},
+	})
+
 	return r
+}
+
+// toInt converts a map[string]any value to int, handling float64/int/int64.
+func toInt(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	case int64:
+		return int(n)
+	}
+	return 0
 }
 
 // Definitions returns the Ollama tool definitions to expose to the model.
@@ -888,7 +1025,13 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeoutSec := 60
+	if name == "execute_command" {
+		if t := toInt(args["timeout"]); t > 0 {
+			timeoutSec = t
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
 	start := time.Now()
@@ -932,7 +1075,9 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if path == "" {
 			return "", fmt.Errorf("missing path")
 		}
-		return ReadFile(r.workspace, path)
+		offset := toInt(args["offset"])
+		limit := toInt(args["limit"])
+		return ReadFileRange(r.workspace, path, offset, limit)
 	case "send_files":
 		pathsVal := args["paths"]
 		if pathsVal == nil {
@@ -958,12 +1103,21 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 	case "write_file":
 		filePath, _ := args["file_path"].(string)
 		contents, _ := args["contents"].(string)
+		appendMode, _ := args["append"].(bool)
 		if filePath == "" {
 			return "", fmt.Errorf("missing file_path")
 		}
-		err := WriteFile(r.workspace, filePath, contents)
+		var err error
+		if appendMode {
+			err = WriteFileAppend(r.workspace, filePath, contents)
+		} else {
+			err = WriteFile(r.workspace, filePath, contents)
+		}
 		if err != nil {
 			return "", err
+		}
+		if appendMode {
+			return "Append successful.", nil
 		}
 		return "Write successful.", nil
 	case "edit_file":
@@ -1523,6 +1677,43 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		// Text fallback
 		return fmt.Sprintf("Attachment: %s (mime=%s, size=%d bytes)\nContent:\n%s", ref, mime, len(data), string(data)), nil
+	case "search_files":
+		pattern, _ := args["pattern"].(string)
+		if pattern == "" {
+			return "", fmt.Errorf("missing pattern")
+		}
+		searchPath, _ := args["path"].(string)
+		if searchPath == "" {
+			searchPath = "."
+		}
+		includeGlob, _ := args["include"].(string)
+		maxResults := toInt(args["max_results"])
+		return SearchFiles(r.workspace, pattern, searchPath, includeGlob, maxResults)
+	case "list_files":
+		listPath, _ := args["path"].(string)
+		if listPath == "" {
+			listPath = "."
+		}
+		recursive, _ := args["recursive"].(bool)
+		includeGlob, _ := args["include"].(string)
+		return ListFiles(r.workspace, listPath, recursive, includeGlob)
+	case "list_code_definitions":
+		filePath, _ := args["file_path"].(string)
+		if filePath == "" {
+			return "", fmt.Errorf("missing file_path")
+		}
+		defs, err := ListCodeDefinitions(r.workspace, filePath)
+		if err != nil {
+			return "", err
+		}
+		return FormatCodeDefinitions(defs), nil
+	case "apply_diff":
+		filePath, _ := args["file_path"].(string)
+		diffContent, _ := args["diff"].(string)
+		if filePath == "" || diffContent == "" {
+			return "", fmt.Errorf("missing file_path or diff")
+		}
+		return ApplyDiff(r.workspace, filePath, diffContent)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

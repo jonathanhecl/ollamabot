@@ -1835,6 +1835,22 @@ func getTelegramToolLabel(name string, args any) string {
 		if p, ok := params["file_path"].(string); ok && p != "" {
 			return fmt.Sprintf("edit_file(\"%s\")", p)
 		}
+	case "apply_diff":
+		if p, ok := params["file_path"].(string); ok && p != "" {
+			return fmt.Sprintf("apply_diff(\"%s\")", p)
+		}
+	case "search_files":
+		if p, ok := params["pattern"].(string); ok && p != "" {
+			return fmt.Sprintf("search_files(\"%s\")", p)
+		}
+	case "list_files":
+		if p, ok := params["path"].(string); ok && p != "" {
+			return fmt.Sprintf("list_files(\"%s\")", p)
+		}
+	case "list_code_definitions":
+		if p, ok := params["file_path"].(string); ok && p != "" {
+			return fmt.Sprintf("list_code_definitions(\"%s\")", p)
+		}
 	case "execute_command":
 		if cmd, ok := params["command"].(string); ok && cmd != "" {
 			var argsList []string

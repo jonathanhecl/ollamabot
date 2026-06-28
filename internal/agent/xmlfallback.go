@@ -36,6 +36,10 @@ var toolNameMapping = map[string]string{
 	"write":                  "write_file",
 	"edit":                   "edit_file",
 	"todowrite":              "todo_write",
+	"searchfiles":            "search_files",
+	"listfiles":              "list_files",
+	"listcodedefinitions":    "list_code_definitions",
+	"applydiff":              "apply_diff",
 }
 
 // parseXMLFallback recovers a tool call from a raw model reply that did not use

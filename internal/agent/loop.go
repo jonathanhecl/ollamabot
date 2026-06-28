@@ -595,7 +595,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 						var rawPath string
 						if toolName == "read_file" {
 							rawPath, _ = params["path"].(string)
-						} else if toolName == "edit_file" || toolName == "write_file" {
+						} else if toolName == "edit_file" || toolName == "write_file" || toolName == "apply_diff" {
 							rawPath, _ = params["file_path"].(string)
 						}
 						if rawPath != "" {

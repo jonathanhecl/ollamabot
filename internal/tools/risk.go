@@ -34,7 +34,7 @@ const (
 func ClassifyToolRisk(tool string, args map[string]any, workspace string) RiskAssessment {
 	_, label := sessions.FormatApprovalSignature(tool, args, workspace)
 	switch tool {
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "apply_diff":
 		filePath, _ := args["file_path"].(string)
 		if filePath == "" {
 			return RiskAssessment{Level: RiskNeedsApproval, Label: label, Summary: "The target file path is missing, so the write cannot be safely scoped to the workspace."}

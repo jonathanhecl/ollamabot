@@ -11,6 +11,12 @@ const maxReadFileSize = 1 << 20 // 1 MiB
 
 // ReadFile reads a text file within the workspace safely.
 func ReadFile(workspace, rawPath string) (string, error) {
+	return ReadFileRange(workspace, rawPath, 0, 0)
+}
+
+// ReadFileRange reads a text file within the workspace, optionally returning
+// only lines [offset, offset+limit). When offset is 0, the entire file is read.
+func ReadFileRange(workspace, rawPath string, offset, limit int) (string, error) {
 	abs, err := ResolveAndValidatePath(workspace, rawPath)
 	if err != nil {
 		return "", err
@@ -61,7 +67,21 @@ func ReadFile(workspace, rawPath string) (string, error) {
 	if !isText(data) {
 		return "", fmt.Errorf("file appears to be binary")
 	}
-	return string(data), nil
+	if offset <= 0 && limit <= 0 {
+		return string(data), nil
+	}
+	lines := strings.Split(string(data), "\n")
+	if offset > 0 {
+		offset-- // 1-indexed to 0-indexed
+	}
+	if offset >= len(lines) {
+		return "", fmt.Errorf("offset %d exceeds file length %d", offset+1, len(lines))
+	}
+	end := len(lines)
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	return strings.Join(lines[offset:end], "\n"), nil
 }
 
 func isText(data []byte) bool {

@@ -7,7 +7,7 @@ behavior, model choice, tools, sessions, and background jobs do not depend on wh
 ## Features
 
 - **Dual channels**: Web UI (SSE streaming, settings, session browser) and Telegram bot (polling, inline keyboards, media download)
-- **20+ agent tools**: web search, file read/write/edit, shell commands, memory, skills, plans, image generation, and more
+- **28 agent tools**: web search, file read/write/edit, regex search, code navigation, unified diff, shell commands, memory, skills, plans, image generation, and more
 - **Multimodal**: image and audio attachments with dedicated model routing and structured transcription
 - **Long-term memory**: RAG with local embeddings — the agent stores, searches, and consolidates knowledge autonomously
 - **Sleep mode**: background learning cycles that reflect on past conversations when the user is inactive
@@ -135,11 +135,15 @@ The agent has access to the following tools. Risky operations (file writes, shel
 |------|-------------|
 | `web_search` | Search the web via DuckDuckGo, Brave, or Tavily |
 | `fetch_webpage` | Fetch and read raw text content from a URL |
-| `read_file` | Read file contents or list directory entries in the workspace |
-| `Write` | Write file contents atomically to the workspace |
-| `Edit` | Replace exact text in an existing file with fuzzy-match fallback |
-| `TodoWrite` | Maintain a live TODO checklist during multi-step tasks |
-| `execute_command` | Run shell commands (ffmpeg, python3, etc.) in the workspace |
+| `read_file` | Read file contents (with offset/limit pagination) or list directory entries in the workspace |
+| `write_file` | Write file contents atomically to the workspace (supports append mode) |
+| `edit_file` | Replace exact text in an existing file with fuzzy-match fallback |
+| `apply_diff` | Apply a unified diff to an existing file — efficient for multi-hunk changes |
+| `search_files` | Regex search across files in the workspace with glob filtering |
+| `list_files` | List files and directories with recursive and glob filter options |
+| `list_code_definitions` | Extract function/method/type names from Go source files |
+| `todo_write` | Maintain a live TODO checklist during multi-step tasks |
+| `execute_command` | Run shell commands (ffmpeg, python3, etc.) in the workspace with configurable timeout |
 | `memory_search` | Semantic search over long-term memory via embeddings |
 | `memory_add` | Store text in long-term memory for future retrieval |
 | `memory_delete` | Delete an outdated memory entry by ID |

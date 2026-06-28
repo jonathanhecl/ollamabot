@@ -224,7 +224,7 @@ func (m *pathMemory) rescueUniqueBasename(p string) (string, bool) {
 
 func pathParamKeyForTool(toolName string) string {
 	switch toolName {
-	case "write_file", "edit_file":
+	case "write_file", "edit_file", "apply_diff":
 		return "file_path"
 	case "read_file":
 		return "path"
