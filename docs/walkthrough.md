@@ -1,53 +1,53 @@
-# Walkthrough: Notificaciones en Telegram & Tests de Integración del Frontend
+# Walkthrough: Telegram Notifications & Frontend Integration Tests
 
-Hemos completado e integrado exitosamente ambas características requeridas: las notificaciones proactivas de Telegram para tareas de fondo y el conjunto de tests de integración para la Web UI usando Playwright.
-
----
-
-## Cambios Realizados
-
-### 1. Notificaciones Proactivas en Telegram
-- **Definición de Callback**: Declaramos el tipo de callback `TaskNotificationFunc` y la variable global `OnTaskCompletion` en [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
-- **Inyección de Eventos**: Disparamos el callback al finalizar con éxito (estado `completed`) o fallar (estado `failed`) cada tarea individual dentro del método `ExecuteTask` en [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
-- **Envío a Telegram**: En [bot.go](file:///f:/Clouds/Github/ollamabot/internal/telegram/bot.go), registramos el callback `notifyTaskCompletion` al iniciar el bot (`Start`). Este formatea el mensaje en inglés (detallando el ID de proyecto, nombre de la tarea y resultado/error) y lo transmite de forma asíncrona a todos los chat IDs autorizados.
-
-### 2. Tests de Integración Browser (Playwright)
-- **Suite de Pruebas**: Creamos la suite [web_ui.spec.js](file:///f:/Clouds/Github/ollamabot/tests/browser/web_ui.spec.js) con tres pruebas integrales:
-  1. **Inicio de Sesión y Overlay**: Validación de credenciales erróneas e inicio correcto con ocultación del modal de login.
-  2. **Arrastrar y Soltar (Drag & Drop)**: Simulación de arrastre de archivos multimedia sobre el cuerpo de la SPA, validando que el adjunto aparezca previsualizado.
-  3. **Copiar Mensaje & Código**: Validación del copiado de bloques de código y respuestas markdown mediante la simulación de interacciones con el portapapeles.
-- **Orquestador de Tests**: Creamos [run-tests.js](file:///f:/Clouds/Github/ollamabot/tests/browser/run-tests.js), que automatiza todo el ciclo de pruebas:
-  - Generación de recursos estáticos temporales.
-  - Levantamiento de un servidor Ollama Mock en el puerto `11435`.
-  - Compilación y arranque del servidor Go de OllamaBot en modo prueba en el puerto `8081`.
-  - Ejecución de Playwright sobre el navegador Chromium.
-  - Limpieza final de puertos, archivos y ejecutables temporales.
-- **Ignorado en Git**: Añadimos las carpetas temporales generadas por Playwright, `node_modules` y ejecutables a [.gitignore](file:///f:/Clouds/Github/ollamabot/.gitignore) para mantener el repositorio limpio.
+We have successfully completed and integrated both required features: proactive Telegram notifications for background tasks and the integration test suite for the Web UI using Playwright.
 
 ---
 
-## Desafíos y Soluciones Técnicas
+## Changes Made
 
-Durante la fase de validación de los tests de integración, se identificaron y solucionaron tres problemas cruciales:
-1. **Bloqueo del Event Loop en Node**: El uso de `execSync` para arrancar Playwright bloqueaba el hilo del proceso padre de Node, impidiendo que el servidor mock de Ollama respondiera peticiones. Se migró a una arquitectura asíncrona basada en `spawn` y promesas.
-2. **Mocking de DataTransfer en Chromium**: La clase nativa `DataTransfer` no sincroniza colecciones `files` modificadas en JS durante tests automatizados. Se resolvió creando un objeto mock estructurado y asignándolo al evento mediante `Object.defineProperty` sobre una instancia de `Event` genérica.
-3. **Mapeo de Selectores**: Corregimos un desfase de clases en el test de Drag & Drop, actualizando la verificación para buscar el selector `.attachment` real inyectado por el script del frontend (`app.js`).
+### 1. Proactive Telegram Notifications
+- **Callback Definition**: Declared the `TaskNotificationFunc` callback type and the global `OnTaskCompletion` variable in [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
+- **Event Injection**: Fired the callback on successful completion (state `completed`) or failure (state `failed`) of each individual task within the `ExecuteTask` method in [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
+- **Telegram Delivery**: In [bot.go](file:///f:/Clouds/Github/ollamabot/internal/telegram/bot.go), registered the `notifyTaskCompletion` callback on bot `Start`. This formats the message in English (detailing the project ID, task name, and result/error) and transmits it asynchronously to all authorized chat IDs.
+
+### 2. Browser Integration Tests (Playwright)
+- **Test Suite**: Created the suite [web_ui.spec.js](file:///f:/Clouds/Github/ollamabot/tests/browser/web_ui.spec.js) with three integration tests:
+  1. **Login & Overlay**: Validation of incorrect credentials and successful login with login modal hiding.
+  2. **Drag & Drop**: Simulation of dragging media files onto the SPA body, validating that the attachment appears in preview.
+  3. **Copy Message & Code**: Validation of copying code blocks and markdown responses via clipboard interaction simulation.
+- **Test Orchestrator**: Created [run-tests.js](file:///f:/Clouds/Github/ollamabot/tests/browser/run-tests.js), which automates the full test cycle:
+  - Generation of temporary static assets.
+  - Starting a mock Ollama server on port `11435`.
+  - Compiling and starting the Go OllamaBot server in test mode on port `8081`.
+  - Running Playwright on the Chromium browser.
+  - Final cleanup of ports, files, and temporary executables.
+- **Git Ignore**: Added temporary Playwright folders, `node_modules`, and executables to [.gitignore](file:///f:/Clouds/Github/ollamabot/.gitignore) to keep the repository clean.
 
 ---
 
-## Verificación de Resultados
+## Challenges and Technical Solutions
 
-Ejecutamos el conjunto completo de pruebas locales con el comando:
+During the test validation phase, three critical issues were identified and resolved:
+1. **Node Event Loop Blocking**: Using `execSync` to start Playwright blocked the parent Node process thread, preventing the mock Ollama server from responding to requests. Migrated to an async architecture based on `spawn` and promises.
+2. **DataTransfer Mocking in Chromium**: The native `DataTransfer` class doesn't sync modified `files` collections in JS during automated tests. Resolved by creating a structured mock object and assigning it to the event via `Object.defineProperty` on a generic `Event` instance.
+3. **Selector Mapping**: Fixed a class mismatch in the drag & drop test, updating the verification to look for the actual `.attachment` selector injected by the frontend script (`app.js`).
+
+---
+
+## Verification of Results
+
+We ran the full local test suite with the command:
 ```powershell
 node tests/browser/run-tests.js
 ```
 
-### Log de Ejecución Exitosa
+### Successful Execution Log
 
 ```text
 Generating assets...
 Generated mock image asset at: F:\Clouds\Github\ollamabot\tests\browser\assets\test_image.png
-Installing Playwright Chromium browser...
+Install Playwright Chromium browser...
 Starting Mock Ollama Server on port 11435
 Created temporary .env.test configuration
 Compiling Go server...
@@ -72,4 +72,4 @@ Cleaning up servers and temporary files...
 Cleanup completed
 ```
 
-Las 3 pruebas de integración del frontend se ejecutaron de manera secuencial y **aprobaron con éxito** en un tiempo total de **3.2 segundos**, confirmando la solidez de la Web UI.
+All 3 frontend integration tests ran sequentially and **passed successfully** in a total time of **3.2 seconds**, confirming the robustness of the Web UI.

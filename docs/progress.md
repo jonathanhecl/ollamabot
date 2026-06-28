@@ -1,89 +1,89 @@
-# Progreso del Proyecto
+# Project Progress
 
-## Objetivo General
+## General Objective
 
-Crear un agente autonomo modular basado en modelos locales de Ollama. El agente debe detectar que modelos hay instalados, que capacidades tienen, y usar esas capacidades segun corresponda. Los canales previstos son Telegram y una web propia para pruebas rapidas.
+Build a modular autonomous agent based on local Ollama models. The agent detects installed models, their capabilities, and uses those capabilities as appropriate. The supported channels are Telegram and a local web UI.
 
-## Fase 1 Implementada
+## Phase 1 — Implemented
 
-Se implemento una base Go enfocada en documentacion y probes verificables.
+A Go foundation was implemented focused on documentation and verifiable probes.
 
-Hecho:
+Done:
 
-- Proyecto Go creado con modulo `github.com/jonathanhecl/ollamabot`.
-- CLI principal en `cmd/ollamabot`.
-- Configuracion desde `.env` y variables de entorno.
-- Cliente HTTP nativo para Ollama en `internal/ollama`.
-- Mapeo de capacidades en `internal/capabilities`.
-- Probes en `internal/probe`.
-- Generador Markdown en `internal/docs`.
-- Cache JSON de resultados esperados en `internal/cache`.
-- Servidor web local en `internal/web`.
-- `.env.example` con claves iniciales.
-- Ejecucion normal sin parametros: carga `.env` desde la carpeta del ejecutable, lo crea interactivamente si falta (web, puerto, exposicion, contraseña, token Telegram), y levanta la web y/o Telegram segun configuracion.
-- Configuracion de URL de Ollama desde la web, persistida en `.env`.
-- Modal de modelos en la web en lugar de tabla permanente.
-- Chat web con streaming SSE desde Ollama.
-- Visualizacion incremental de `thinking` en bloque separado.
-- Adjuntos multimodales desde archivo o paste: imagenes y audio usan el payload multimodal de Ollama.
-- Previews de imagen/audio antes de enviar y dentro del chat despues del envio.
-- Animacion de espera antes del primer token y brillo/cursor mientras la respuesta sigue en streaming.
-- Preparacion visual para tool calls: si el modelo devuelve `tool_calls`, la web muestra nombre y parametros.
-- Ejecucion real de tools internas con retorno automatico al modelo: loop de hasta 3 rondas, mensajes `role: tool` con campo `name`.
-- Tool `web_search` con DuckDuckGo (sin API key).
-- Tool `read_file` restringida al workspace (sin symlink escape, limite 1 MiB, rechaza binarios; lista directorios).
-- Timeout de 60s y auditoria basica (`log.Printf`) en ejecucion de tools.
-- Eventos SSE `tool_start` y `tool_result` para mostrar ejecucion y resultados en la web.
-- Tests unitarios para config, cliente Ollama, capacidades y generacion de docs.
-- Documentacion local generada en `docs/ollama-reference.md`.
-- Inventario local generado en `docs/local-model-inventory.md`.
-- Snapshot cacheado generado en `docs/probe-cache.json`.
-- Persistencia de probes individuales: cada ejecucion de `probe chat/tools/json/vision/thinking/embeddings/audio` graba un `ProbeRun` (nombre, modelo, estado, detalles, timestamp) en el campo `probe_runs` del snapshot JSON, haciendo upsert por `name+model`.
-- Web validada en `http://localhost:8080`.
-- Router de modelos por rol: modelo main (fallback), mas modelos opcionales dedicados para vision, audio y embeddings. Seleccion por botones en el modal de modelos. Si el main ya tiene la capacidad no hace falta asignar uno dedicado; si no hay ninguno con esa capacidad, el control de adjunto se oculta. Persistido en `.env` (`OLLAMA_MODEL_VISION`, `OLLAMA_MODEL_AUDIO`, `OLLAMA_MODEL_EMBED`) y en localStorage. Badges de rol en la barra de capacidades cuando el modelo dedicado difiere del main.
-- Drag & drop de archivos sobre la web: imagenes y audio se aceptan si el modelo activo (o el dedicado de rol) soporta esa capacidad; de lo contrario se ignoran silenciosamente. Highlight visual con borde punteado mientras se arrastra.
-- Pre-analisis de media por modelo de rol: si hay un modelo dedicado distinto del main para vision o audio, el backend (`internal/router`) lo invoca antes de llamar al main. Ver `docs/media-routing.md` para el flujo completo, la matriz de decision y el formato actual de inyeccion.
-- Sidebar de sesiones en la web: panel lateral izquierdo ocultable con lista de sesiones previas. Cada sesion es una carpeta (`sessions/{id}/`) con `session.json` (metadata), `messages.json` (mensajes) y `attachments/` (archivos binarios extraidos de base64). La ruta de sesiones es configurable via `SESSIONS_PATH` (default `sessions`, relativo al ejecutable). Se puede crear una nueva sesion, cambiar entre sesiones, y el estado se guarda automaticamente al finalizar cada respuesta del modelo.
-- Barra de contexto con porcentaje estimado de uso del context window del modelo main: calcula tokens aproximados (caracteres / 4) sobre `context_length` del modelo activo. Cambia de color a naranja (>70%) o rojo (>90%).
-- Memoria a largo plazo local (RAG): sistema de semantic search usando el modelo definido en `OLLAMA_MODEL_EMBED`. Persiste en `memory.jsonl` dentro de una carpeta configurable (`MEMORY_PATH`, default `memory`, relativo al ejecutable). Cada entrada tiene texto, embedding vector, source y timestamp. La busqueda usa cosine similarity en memoria (O(n) eficiente para uso local). El agente gestiona su memoria de forma autonoma via tools: `memory_add` (almacena), `memory_search` (recupera), `memory_delete` (elimina desactualizado), `memory_list` (revisa lo guardado). Un system prompt inyectado en cada conversacion le da criterio: ser proactivo almacenando hechos importantes, buscar cuando se beneficie del contexto pasado, consolidar borrando versiones viejas y guardando nuevas, y priorizar informacion util. Los resultados de tools se devuelven al modelo como tool result para que decida como usarlos. Endpoints REST: `GET /api/memory`, `POST /api/memory`, `POST /api/memory/search`, `DELETE /api/memory/{id}`.
-- Confirmación de acciones riesgosas para tools (Write/Edit) integrada tanto en la interfaz Web (mediante SSE y modal) como en Telegram (usando inline keyboards interactivos), con omisión automática para ediciones que tengan lugar dentro del directorio 'workspace'.
-- Gestión de Modelos y Carga en Caliente: Botón de "Recargar Modelos" en la Web, comando `/reloadmodels` en Telegram y endpoint HTTP para actualizar inventario y guardar snapshot.
-- Alternativas de Búsqueda Web: Soporte configurable para Brave Search API, Tavily Search API y DuckDuckGo con orden de proveedores reordenable en la Web.
-- Detección de Bucles y Manejo de Errores: Inyección estructurada de errores de ejecución de herramientas en mensajes de rol `tool` para permitir la autocorrección y evitar bucles repetitivos.
-- Limpieza de Tokens Residuales de Thinking: Eliminación de tags de razonamiento (`<think>`, `<thought>`, etc.) mediante Regex en respuestas finales y filtro incremental en streaming SSE.
-- Herramienta de Edición Robusta: Reemplazo con fallback de coincidencia difusa (fuzzy match) de líneas y generación de diffs unificados en la herramienta `Edit`.
-- Gestión de Aprobaciones Asíncronas: Suspensión en el loop del agente para esperar respuestas de aprobación en Web (SSE) y Telegram (botones inline) sin timeouts rígidos de 5 minutos.
-- Consolidación y Desduplicación de Memoria: Umbral de similitud coseno de 0.85 y coincidencia de texto exacta para prevenir duplicados en la memoria RAG.
-- Integración en Telegram Bot (Comandos): Comandos `/status` (VRAM y estado de Ollama), `/settings` (cambio de modelos), `/projects` (tareas en curso) y `/memory` (búsqueda RAG).
-- Sleep Mode y GPU Safety: Reflector de Sleep Mode secuencial en segundo plano que comprueba la carga de hardware en Ollama (`/api/ps`) antes de iniciar la iteración para no ralentizar el equipo.
-- Seguridad en Consola Web: Autenticación básica mediante cabecera `X-Web-Password` y variable de entorno `WEB_PASSWORD` con pantalla de login en la SPA.
-- Explorador Visual de Memoria Semántica: Panel en la Web Console para buscar, agregar, borrar y re-indexar manualmente los vectores RAG tras un cambio de modelo de embeddings.
-- Fechas y Horas en Mensajes: Registro automático de marcas de tiempo en mensajes de chat y visualización de burbujas horarias en la esquina inferior derecha de cada mensaje, similar a Telegram.
-- Alineación y Agrupación de Acciones de Sesión: Ubicación del botón de renombrar (lápiz) y eliminar (x) en un contenedor `.session-actions` a la derecha de cada elemento de la barra lateral, alineados horizontalmente con un diseño unificado de 22x22px y efectos hover optimizados.
-- Monitoreo de Estado y Conexión: Comprobación continua (cada 5 segundos) contra el servidor Go y Ollama, actualizando el estado visual a rojo/offline cuando no hay respuesta o el servidor se detiene.
-- Preservación de Claves API al Desactivar: Tanto en el frontend como en el servidor, se evita que las claves de Tavily o Brave Search se borren al desactivar el proveedor o desmarcar la búsqueda web. La clave permanece guardada de forma segura para cuando se reactive.
-- Botones de Copiar Mensajes y Código: Integración de botones interactivos de copia. Al pasar el mouse por encima de un mensaje, aparece un botón `📋` en la esquina superior derecha para copiar el texto completo en markdown original. Si la respuesta contiene bloques de código, se genera una cabecera premium que muestra el lenguaje de programación y un botón de copia dedicado.
-- Sincronización en Tiempo Real de Telegram y Web UI: Expiración automática de sesiones de Telegram tras 30 minutos de inactividad, auto-generación de títulos tras el primer intercambio y sondeo (polling) en segundo plano en la Web UI cada 2 segundos para sincronizar la lista de sesiones y actualizar los mensajes en tiempo real.
-- Comandos de Sesión en Telegram: Incorporación de los comandos `/sessions` (para listar las últimas 10 sesiones con títulos e IDs) y `/session <ID>` (para cambiar de sesión activa y recuperar el contexto de conversación previo).
-- Panel de Configuración de Sesiones: Nueva pestaña "Sessions" en el diálogo de configuración web, que agrupa el checkbox de Auto-rename session y un campo de entrada de texto para personalizar la expiración de la sesión de Telegram en minutos (por defecto 30). Este campo se encuentra alineado y con el mismo diseño premium de fondo negro y anchura completa que el resto de los campos de la interfaz. Las tareas de generación de título para auto-rename ahora se delegan al modelo de subagent (o al principal si no está configurado), tanto en web como en Telegram.
-- Auto-RAG y Centralización de Configuración: Implementación de la recuperación proactiva de memoria del usuario mediante la pre-consulta de embeddings del mensaje del usuario contra la base de datos RAG en cada consulta (con umbral de similitud de 0.70). Se centralizó el flujo de inyección y recarga dinámica de SOUL.md y USER_PROFILE.md en el bucle principal de ejecución del agente (Agent.Run), eliminando lógica duplicada en los canales Web, Telegram y el AutonomousManager, y permitiendo que el agente perciba sus propias modificaciones de perfil en tiempo real dentro del mismo turno.
-- Notificaciones Proactivas en Telegram: Conexión de las finalizaciones de tareas en segundo plano del `AutonomousManager` mediante un callback global `OnTaskCompletion` inyectado en `Start` y procesado en Telegram para notificar de forma proactiva al usuario tras el éxito o fracaso de sus mini-proyectos.
-- Tests de Integración del Frontend (Browser): Creación de scripts automatizados basados en Node + Playwright (`tests/browser/`) que prueban todo el flujo de autenticación (Login), arrastrar y soltar (Drag & Drop) de archivos multimedia, envío de mensajes y el copiado de respuestas y bloques de código de la interfaz de la Web UI.
-- Solución a Bloqueo de Bucle de Eventos y Mock de Eventos: Corrección de un bloqueo crítico del event loop causado por ejecuciones de subprocesos síncronos en el script de tests, migrando a ejecuciones asíncronas (`spawn`). Se solucionó un error de selectores (`.attachment-preview` vs `.attachment`) en el test de arrastre de archivos, y se implementó un mock seguro de `DataTransfer` usando `Object.defineProperty` en eventos genéricos.
-- Comando /goal y Ejecución Autónoma Persistente: Implementación del comando /goal que permite al usuario establecer un contrato de objetivo persistente en la sesión de chat (con comandos `/goal <objective>`, `/goal pause`, `/goal resume`, `/goal clear` y `/goal` para estado). El agente ejecuta iteraciones de forma autónoma en segundo plano (limitado a 20 ciclos), notificando al usuario en tiempo real y corriendo una evaluación de progreso con subagentes en cada ciclo hasta cumplir el objetivo.
-- Visualización de Audios de Telegram en la Web UI: Corrección en el bot de Telegram para guardar y mapear correctamente los adjuntos de mensajes (`Attachments` e `ImageKinds`) en el historial de sesión, garantizando que el audio en formato WAV (generado por conversión) se persista y reproduzca consistentemente en la interfaz web de chat.
-- Sincronización en Tiempo Real mediante SSE (EventSource): Implementación de un canal de eventos en tiempo real `/api/events` en el servidor web y un sistema global de suscripción/notificación (`sessions.NotifyUpdate`) para sincronizar al instante las actividades de Telegram (mensajes del usuario, respuestas de la IA y cambios de objetivos) y de la interfaz web sin depender únicamente de sondeos periódicos lentos (polling) ni requerir refrescar la página manualmente.
-- Pipeline unificado de medios con transcripción estructurada (ver `docs/media-routing.md`): `router.ResolveMessages` reemplaza la lógica duplicada de web (`resolveMedia`) y Telegram (`resolveTelegramMedia`). La transcripción de audio se extrae SIEMPRE (incluso en passthrough) usando salida estructurada JSON (`format` + schema + `temperature: 0`) con campos `transcription`, `language`, `sounds`, `unreadable`. La decisión de ruteo es por capacidades reales del snapshot de probes (`cache.Checker`): main con capacidad → passthrough; dedicado distinto → route; nadie → descarte sin error con nota. Las transcripciones se persisten en `AttachmentMeta.Transcription` (sesiones compartidas web/Telegram) y se muestran bajo cada reproductor en la web; Telegram no las muestra al usuario. El base64 de audio nunca se reenvía al modelo en turnos siguientes (lo reemplaza la transcripción) y el evento SSE `media_pre_processing` ahora es JSON estructurado por adjunto.
-- Formato de sesión cronológico estricto (refactor de línea de tiempo): cada turno del agente genera un mensaje `assistant` independiente con `steps` internos en orden cronológico (`thinking` → `tool_call` → `tool_result` → `content`). Se eliminó la fusión de asistentes consecutivos tanto en la web (`groupMessagesAndTools`) como en Telegram (`telegramStreamHandler`). El frontend web detecta cambios de turno mediante el evento SSE `assistant_turn`. Los resultados de pre-procesamiento de media ya no se inyectan como mensajes `assistant` separados en la sesión; en su lugar se enriquecen los adjuntos del mensaje `user` original con metadatos `processed_by`, `processed_at`, `description`/`transcription`. El schema de `RawMsg` ahora incluye campos obligatorios de trazabilidad: `model`, `timestamp`, `channel`, `type`, `steps` y `metrics` (por turno). `AttachmentMeta` se extendió con `processed_by`, `processed_at` y `description`. En Telegram, `telegramStreamHandler` acumula `steps` y `metrics` por turno usando `turnSnapshot` y los distribuye a cada mensaje `assistant` al persistir.
-- Pipeline unificado de agente y sesión: web y Telegram ahora delegan los eventos de `agent.Run` en `sessions.Recorder`, que es la única fuente de verdad para persistir `steps`, `metrics`, snapshots parciales y guardado final. El thinking se guarda siempre como `steps[{type:"thinking"}]` para ambos canales y se muestra en la web en tiempo real; Telegram sigue enviando al chat solo la respuesta final limpia y notificaciones breves de tools. La web persiste el mensaje del usuario antes del stream y recarga la sesión al terminar, por lo que el servidor mantiene el formato canónico igual que Telegram. La protección `saveGen` evita que snapshots de streaming obsoletos sobrescriban el guardado final.
-- Reglas horizontales Markdown (`***`, `---`, `___`): se renderizan como `<hr>` en la web y como línea visual en Telegram.
-- Agrupación Visual de Respuestas en la Web: Se reimplementó la agrupación de mensajes de asistente consecutivos en la Web UI (en `groupMessagesAndTools`), combinando sus contenidos, pasos de ejecución y métricas de rendimiento (duración, tokens de prompt y de respuesta), y recalculando el promedio de tokens por segundo total. La sesión y la base de datos conservan los mensajes por turnos separados y estructurados.
-- Planes aprobados como contratos autónomos: `SessionPlan` ahora soporta estado `deferred`, `deferred_until`, resumen de seguimiento y `last_progress_at`; el loop del agente exige herramientas reales antes de `complete_plan_step`, reintenta respuestas de texto plano mientras haya pasos activos, y solo puede terminar con plan completado o diferido explícitamente. Se agregó `defer_plan_continuation`, `PlanMonitor` para reanudar planes diferidos o estancados, checklist fija de progreso en la web, avisos compactos en Telegram y tests para ejecución multi-paso, defer y reanudación.
-- Permisos de sesión unificados y loops: las aprobaciones de herramientas ahora se persisten en la sesión como `pending_approval`, se pueden resolver desde Web o Telegram, y admiten grants de sesión para repetir comandos idénticos sin volver a pedir permiso. `execute_command` normaliza argumentos duplicados y el loop del agente corta al detectar llamadas repetitivas sin progreso.
-- Permisos autónomos por riesgo: los planes activos, goals activos y reanudaciones en background usan una política autónoma que ejecuta comandos seguros sin pedir permiso y solo interrumpe con aprobación si el clasificador detecta riesgo real. Las solicitudes de Telegram incluyen la línea a ejecutar y un resumen del riesgo. El fallback XML ahora reconoce tags de herramienta en minúscula como `<execute_command>`.
+- Go project created with module `github.com/jonathanhecl/ollamabot`.
+- Main CLI in `cmd/ollamabot`.
+- Configuration from `.env` and environment variables.
+- Native HTTP client for Ollama in `internal/ollama`.
+- Capability mapping in `internal/capabilities`.
+- Probes in `internal/probe`.
+- Markdown generator in `internal/docs`.
+- JSON cache of expected results in `internal/cache`.
+- Local web server in `internal/web`.
+- `.env.example` with initial keys.
+- Normal execution without parameters: loads `.env` from the executable folder, creates it interactively if missing (web, port, exposure, password, Telegram token), and starts web and/or Telegram per configuration.
+- Ollama URL configuration from the web UI, persisted to `.env`.
+- Models modal in the web UI instead of a permanent table.
+- Web chat with SSE streaming from Ollama.
+- Incremental display of `thinking` in a separate block.
+- Multimodal attachments from file or paste: images and audio use Ollama's multimodal payload.
+- Image/audio previews before sending and inside the chat after sending.
+- Waiting animation before the first token and glow/cursor while the response is still streaming.
+- Visual preparation for tool calls: if the model returns `tool_calls`, the web shows name and parameters.
+- Real execution of internal tools with automatic return to the model: loop of up to 3 rounds, `role: tool` messages with `name` field.
+- `web_search` tool with DuckDuckGo (no API key required).
+- `read_file` tool restricted to the workspace (no symlink escape, 1 MiB limit, rejects binaries; lists directories).
+- 60s timeout and basic audit logging (`log.Printf`) on tool execution.
+- SSE events `tool_start` and `tool_result` to show execution and results in the web UI.
+- Unit tests for config, Ollama client, capabilities, and docs generation.
+- Local documentation generated in `docs/ollama-reference.md`.
+- Local inventory generated in `docs/local-model-inventory.md`.
+- Cached snapshot generated in `docs/probe-cache.json`.
+- Individual probe persistence: each `probe chat/tools/json/vision/thinking/embeddings/audio` run saves a `ProbeRun` (name, model, status, details, timestamp) in the `probe_runs` field of the JSON snapshot, upserting by `name+model`.
+- Web validated at `http://localhost:8080`.
+- Model router by role: main model (fallback) plus optional dedicated models for vision, audio, and embeddings. Selection via buttons in the models modal. If the main model already has the capability, no dedicated one is needed; if no model has that capability, the attachment control is hidden. Persisted in `.env` (`OLLAMA_MODEL_VISION`, `OLLAMA_MODEL_AUDIO`, `OLLAMA_MODEL_EMBED`) and localStorage. Role badges in the capabilities bar when the dedicated model differs from main.
+- Drag & drop of files onto the web UI: images and audio are accepted if the active model (or the dedicated role model) supports that capability; otherwise they are silently ignored. Visual highlight with dotted border while dragging.
+- Media pre-analysis by role model: if there is a dedicated model different from main for vision or audio, the backend (`internal/router`) invokes it before calling main. See `docs/media-routing.md` for the full flow, decision matrix, and current injection format.
+- Sessions sidebar in the web UI: collapsible left panel with a list of previous sessions. Each session is a folder (`sessions/{id}/`) with `session.json` (metadata), `messages.json` (messages), and `attachments/` (binary files extracted from base64). The sessions path is configurable via `SESSIONS_PATH` (default `sessions`, relative to the executable). You can create a new session, switch between sessions, and state is saved automatically at the end of each model response.
+- Context bar with estimated percentage of the main model's context window usage: calculates approximate tokens (characters / 4) over the active model's `context_length`. Changes color to orange (>70%) or red (>90%).
+- Long-term local memory (RAG): semantic search system using the model defined in `OLLAMA_MODEL_EMBED`. Persists in `memory.jsonl` inside a configurable folder (`MEMORY_PATH`, default `memory`, relative to the executable). Each entry has text, embedding vector, source, and timestamp. Search uses cosine similarity in memory (O(n), efficient for local use). The agent manages its memory autonomously via tools: `memory_add` (store), `memory_search` (retrieve), `memory_delete` (remove outdated), `memory_list` (review stored). A system prompt injected into each conversation gives it criteria: be proactive about storing important facts, search when it benefits from past context, consolidate by deleting old versions and storing new ones, and prioritize useful information. Tool results are returned to the model as tool results for it to decide how to use them. REST endpoints: `GET /api/memory`, `POST /api/memory`, `POST /api/memory/search`, `DELETE /api/memory/{id}`.
+- Confirmation of risky tool actions (Write/Edit) integrated in both the Web interface (via SSE and modal) and Telegram (using interactive inline keyboards), with automatic omission for edits within the 'workspace' directory.
+- Model management and hot reload: "Reload Models" button in the Web UI, `/reloadmodels` command in Telegram, and HTTP endpoint to update inventory and save snapshot.
+- Web search alternatives: configurable support for Brave Search API, Tavily Search API, and DuckDuckGo with reorderable provider priority in the Web UI.
+- Loop detection and error handling: structured injection of tool execution errors into `tool` role messages to allow self-correction and avoid repetitive loops.
+- Residual thinking token cleanup: removal of reasoning tags (`<think>`, `<thought>`, etc.) via regex in final responses and incremental filtering in SSE streaming.
+- Robust edit tool: replacement with fuzzy-match fallback for lines and unified diff generation in the `Edit` tool.
+- Async approval management: suspension in the agent loop to wait for approval responses in Web (SSE) and Telegram (inline buttons) without rigid 5-minute timeouts.
+- Memory consolidation and deduplication: 0.85 cosine similarity threshold and exact text matching to prevent duplicates in RAG memory.
+- Telegram bot command integration: `/status` (VRAM and Ollama state), `/settings` (model switching), `/projects` (active tasks), and `/memory` (RAG search).
+- Sleep mode and GPU safety: sequential sleep mode reflector in background that checks hardware load on Ollama (`/api/ps`) before starting iteration to avoid slowing down the machine.
+- Web console security: basic authentication via `X-Web-Password` header and `WEB_PASSWORD` environment variable with login screen in the SPA.
+- Semantic memory visual explorer: panel in the web console to search, add, delete, and manually re-index RAG vectors after changing the embeddings model.
+- Timestamps in messages: automatic timestamp recording in chat messages and time bubble display in the bottom-right corner of each message, similar to Telegram.
+- Session action alignment and grouping: rename (pencil) and delete (x) buttons placed in a `.session-actions` container to the right of each sidebar item, horizontally aligned with a unified 22x22px design and optimized hover effects.
+- Connection and status monitoring: continuous checking (every 5 seconds) against the Go server and Ollama, updating visual status to red/offline when there's no response or the server stops.
+- API key preservation on disable: both frontend and server prevent Tavily or Brave Search API keys from being deleted when disabling the provider or unchecking web search. The key remains safely stored for when the feature is re-enabled.
+- Copy message and code buttons: interactive copy buttons integrated. On hover over a message, a `📋` button appears in the top-right corner to copy the full markdown text. If the response contains code blocks, a premium header is generated showing the programming language and a dedicated copy button.
+- Real-time Telegram and Web UI sync: automatic expiration of Telegram sessions after 30 minutes of inactivity, auto-generation of titles after the first exchange, and background polling in the Web UI every 2 seconds to sync the session list and update messages in real time.
+- Telegram session commands: `/sessions` (list the last 10 sessions with titles and IDs) and `/session <ID>` (switch to an active session and recover previous conversation context).
+- Sessions configuration panel: new "Sessions" tab in the web settings dialog, grouping the auto-rename session checkbox and a text input to customize Telegram session expiration in minutes (default 30). Title generation tasks for auto-rename now delegate to the subagent model (or main if not configured), both in web and Telegram.
+- Auto-RAG and configuration centralization: proactive user memory retrieval via pre-querying embeddings of the user's message against the RAG database on each query (with 0.70 similarity threshold). The injection and dynamic reload flow of SOUL.md and USER_PROFILE.md was centralized in the agent's main execution loop (Agent.Run), eliminating duplicated logic in Web, Telegram, and AutonomousManager channels, allowing the agent to perceive its own profile modifications in real time within the same turn.
+- Proactive Telegram notifications: connection of background task completions from `AutonomousManager` via a global `OnTaskCompletion` callback injected in `Start` and processed in Telegram to proactively notify the user after success or failure of their mini-projects.
+- Frontend integration tests (browser): creation of automated scripts based on Node + Playwright (`tests/browser/`) that test the full authentication flow (login), drag & drop of media files, message sending, and copying of responses and code blocks in the Web UI.
+- Event loop blocking fix and event mocking: fix for a critical event loop blocking caused by synchronous subprocess executions in the test script, migrating to async executions (`spawn`). Fixed a selector error (`.attachment-preview` vs `.attachment`) in the file drag test, and implemented a safe `DataTransfer` mock using `Object.defineProperty` on generic events.
+- /goal command and persistent autonomous execution: implementation of the /goal command allowing the user to set a persistent goal contract in the chat session (with `/goal <objective>`, `/goal pause`, `/goal resume`, `/goal clear`, and `/goal` for status). The agent executes iterations autonomously in the background (limited to 20 cycles), notifying the user in real time and running progress evaluation with subagents in each cycle until the goal is fulfilled.
+- Telegram audio visualization in Web UI: fix in the Telegram bot to correctly save and map message attachments (`Attachments` and `ImageKinds`) in session history, ensuring WAV audio (generated by conversion) is persisted and plays consistently in the web chat interface.
+- Real-time sync via SSE (EventSource): implementation of a real-time event channel `/api/events` on the web server and a global subscription/notification system (`sessions.NotifyUpdate`) to instantly sync Telegram activities (user messages, AI responses, and goal changes) and the web interface without relying solely on slow periodic polling or requiring manual page refresh.
+- Unified media pipeline with structured transcription (see `docs/media-routing.md`): `router.ResolveMessages` replaces duplicated logic from web (`resolveMedia`) and Telegram (`resolveTelegramMedia`). Audio transcription is ALWAYS extracted (even in passthrough) using structured JSON output (`format` + schema + `temperature: 0`) with fields `transcription`, `language`, `sounds`, `unreadable`. Routing decision is based on real capabilities from the probe snapshot (`cache.Checker`): main with capability → passthrough; dedicated different → route; nobody → discard without error with note. Transcriptions are persisted in `AttachmentMeta.Transcription` (shared sessions web/Telegram) and displayed under each audio player in the web; Telegram does not show them to the user. Audio base64 is never re-sent to the model in subsequent turns (replaced by transcription) and the SSE `media_pre_processing` event is now structured JSON per attachment.
+- Strict chronological session format (timeline refactor): each agent turn generates an independent `assistant` message with internal `steps` in chronological order (`thinking` → `tool_call` → `tool_result` → `content`). Consecutive assistant merging was eliminated in both web (`groupMessagesAndTools`) and Telegram (`telegramStreamHandler`). The web frontend detects turn changes via the `assistant_turn` SSE event. Media pre-processing results are no longer injected as separate `assistant` messages in the session; instead, the original `user` message's attachments are enriched with `processed_by`, `processed_at`, `description`/`transcription` metadata. The `RawMsg` schema now includes mandatory traceability fields: `model`, `timestamp`, `channel`, `type`, `steps`, and `metrics` (per turn). `AttachmentMeta` was extended with `processed_by`, `processed_at`, and `description`. In Telegram, `telegramStreamHandler` accumulates `steps` and `metrics` per turn using `turnSnapshot` and distributes them to each `assistant` message on persist.
+- Unified agent and session pipeline: web and Telegram now delegate `agent.Run` events to `sessions.Recorder`, which is the single source of truth for persisting `steps`, `metrics`, partial snapshots, and final saves. Thinking is always saved as `steps[{type:"thinking"}]` for both channels and displayed in real time on the web; Telegram continues sending only the clean final response and brief tool notifications to the chat. The web persists the user message before streaming and reloads the session on completion, so the server maintains the canonical format just like Telegram. The `saveGen` guard prevents stale streaming snapshots from overwriting the final save.
+- Markdown horizontal rules (`***`, `---`, `___`): rendered as `<hr>` in the web and as a visual line in Telegram.
+- Visual response grouping in the web: reimplementation of consecutive assistant message grouping in the Web UI (in `groupMessagesAndTools`), combining their contents, execution steps, and performance metrics (duration, prompt and response tokens), and recalculating the overall average tokens per second. The session and database retain messages as separate, structured per-turn entries.
+- Approved plans as autonomous contracts: `SessionPlan` now supports `deferred` state, `deferred_until`, follow-up summary, and `last_progress_at`; the agent loop requires real tools before `complete_plan_step`, retries plain-text responses while there are active steps, and can only terminate with a completed or explicitly deferred plan. Added `defer_plan_continuation`, `PlanMonitor` for resuming deferred or stalled plans, fixed progress checklist in the web, compact notices in Telegram, and tests for multi-step execution, defer, and resumption.
+- Unified session permissions and loops: tool approvals are now persisted in the session as `pending_approval`, can be resolved from Web or Telegram, and support session grants to repeat identical commands without re-requesting permission. `execute_command` normalizes duplicate arguments and the agent loop cuts on detecting repetitive calls without progress.
+- Risk-based autonomous permissions: active plans, active goals, and background resumptions use an autonomous policy that executes safe commands without asking permission and only interrupts with approval if the risk classifier detects real risk. Telegram requests include the command line to execute and a risk summary. XML fallback now recognizes lowercase tool tags like `<execute_command>`.
 
 
-Comandos disponibles:
+Available commands:
 
 ```powershell
 go run ./cmd/ollamabot probe models
@@ -96,71 +96,71 @@ go run ./cmd/ollamabot probe thinking --model qwen3:8b
 go run ./cmd/ollamabot probe embeddings --model nomic-embed-text:latest
 go run ./cmd/ollamabot probe audio --model test-gemma4-vision:latest
 go run ./cmd/ollamabot docs generate --out docs
-go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
+go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
 ```
 
-## Decisiones Tomadas
+## Decisions Made
 
 - Stack: Go.
-- Primera fase: documentacion + probes, antes de Telegram/web/agente completo.
-- Sin dependencias externas por ahora; parser `.env` propio y CLI basada en `flag`.
-- Las capacidades reportadas por `/api/show.capabilities` se consideran `comprobado`.
-- El consumo de memoria en vivo sale de `GET /api/ps`, especificamente `size_vram` para modelos cargados.
-- Los encoders vistos en `projector_info`, como audio o vision, se consideran `inferido` si no hay prueba end-to-end.
-- Audio queda experimental hasta confirmar un payload REST estable.
-- `gemma4:e2b` reporta `audio` en `/api/show.capabilities`, pero la prueba local end-to-end con WAV hizo caer el runner de Ollama con error 500.
+- First phase: documentation + probes, before full Telegram/web/agent implementation.
+- No external dependencies; custom `.env` parser and CLI based on `flag`.
+- Capabilities reported by `/api/show.capabilities` are considered `confirmed`.
+- Live memory consumption comes from `GET /api/ps`, specifically `size_vram` for loaded models.
+- Encoders seen in `projector_info`, such as audio or vision, are considered `inferred` if there's no end-to-end test.
+- Audio remains experimental until a stable REST payload is confirmed.
+- `gemma4:e2b` reports `audio` in `/api/show.capabilities`, but local end-to-end testing with WAV caused the Ollama runner to crash with error 500.
 
-## Pendiente
+## Pending
 
-- Agregar tests browser completos para upload/paste cuando el runtime exponga carga de archivos.
-- ~~Confirmacion de acciones riesgosas para tools~~: completado tanto en web como en Telegram con omisión en el directorio 'workspace'.
-- ~~Agregar indexacion automatica de mensajes de chat a la memoria RAG~~: descartado. Las sesiones ya persisten el historial completo de cada conversacion. La memoria RAG se reserva para informacion con utilidad futura, gestionada manualmente por el agente via `memory_add` con criterio propio.
+- Add complete browser tests for upload/paste when the runtime exposes file loading.
+- ~~Confirmation of risky tool actions~~: completed in both web and Telegram with omission in the 'workspace' directory.
+- ~~Add automatic indexing of chat messages to RAG memory~~: discarded. Sessions already persist the full conversation history. RAG memory is reserved for information with future utility, managed manually by the agent via `memory_add` with its own criteria.
 
-## Riesgos y Notas
+## Risks and Notes
 
-- Algunos modelos reportan capacidades que pueden fallar en prompts reales; por eso los probes end-to-end son necesarios.
-- El probe de chat con `qwen3:8b` respondio `ok /think`; el transporte funciona, pero hay que limpiar tokens de control si aparecen en respuestas finales.
-- El acceso a `192.168.0.121:11434` no se valido desde el sandbox en la primera exploracion; queda cubierto por `OLLAMA_BASE_URL`, pero requiere prueba en entorno normal.
-- La web usa datos vivos cuando Ollama responde y puede caer al snapshot cacheado si el inventario vivo falla.
+- Some models report capabilities that may fail on real prompts; that's why end-to-end probes are necessary.
+- The chat probe with `qwen3:8b` responded `ok /think`; transport works, but control tokens need to be cleaned if they appear in final responses.
+- Access to `192.168.0.121:11434` was not validated from the sandbox in the first exploration; it's covered by `OLLAMA_BASE_URL`, but requires testing in a normal environment.
+- The web uses live data when Ollama responds and can fall back to the cached snapshot if the live inventory fails.
 
-## Fix modo plan repetitivo (2026-06-19)
+## Fix: repetitive plan mode (2026-06-19)
 
-- El loop del agente ahora detecta un plan aprobado activo y deja de reforzar `present_plan` en cada iteracion.
-- `present_plan` rechaza llamadas duplicadas cuando ya hay un plan activo en la sesion.
-- `NormalizePlanSteps` divide listas numeradas mal formadas en pasos individuales.
-- Web UI: un solo widget de progreso vivo; el recorder actualiza el step de plan en lugar de acumular bloques.
+- The agent loop now detects an active approved plan and stops reinforcing `present_plan` on each iteration.
+- `present_plan` rejects duplicate calls when there's already an active plan in the session.
+- `NormalizePlanSteps` splits malformed numbered lists into individual steps.
+- Web UI: a single live progress widget; the recorder updates the plan step instead of accumulating blocks.
 
-## Fix imagen generada reemplaza progreso (2026-06-19)
+## Fix: generated image replaces progress (2026-06-19)
 
-- `AddOrUpdateImageStep` actualiza el mismo step al completar (no solo cuando status=running).
-- `FinalizeSteps` conserva status done/error en steps `image_progress` con imageURL.
-- Web UI: deduplica imagen generada vs attachment; reconstruye imageURL al recargar sesion.
-- Tras F5: `ResolveSessionMessages` limpia placeholders `image_progress` sin imagen final; merge de attachments al agrupar mensajes del asistente.
+- `AddOrUpdateImageStep` updates the same step on completion (not only when status=running).
+- `FinalizeSteps` preserves done/error status on `image_progress` steps with imageURL.
+- Web UI: deduplicates generated image vs attachment; reconstructs imageURL on session reload.
+- After F5: `ResolveSessionMessages` cleans `image_progress` placeholders without final image; merges attachments when grouping assistant messages.
 
-## Orden de sesiones por ultimo mensaje (2026-06-19)
+## Session ordering by last message (2026-06-19)
 
-- La lista de sesiones se ordena por `last_message_at` (timestamp del ultimo mensaje), no por `updated_at` del archivo.
+- The session list is sorted by `last_message_at` (timestamp of the last message), not by the file's `updated_at`.
 
-## Cache de listado de sesiones (2026-06-19)
+## Session list cache (2026-06-19)
 
-- `Store` precarga un indice en memoria al inicializar (`warmListCache`).
-- `List()` sirve desde cache sin releer disco; `Save`/`Delete` actualizan solo la entrada afectada.
-- Endpoint ligero `GET /api/sessions/{id}/entry` y SSE `session_updated` refrescan una sola sesion en la UI.
+- `Store` preloads an in-memory index on initialization (`warmListCache`).
+- `List()` serves from cache without re-reading disk; `Save`/`Delete` update only the affected entry.
+- Lightweight endpoint `GET /api/sessions/{id}/entry` and SSE `session_updated` refresh a single session in the UI.
 
 ## Web Skills Explorer (2026-06-19)
 
-- API REST `/api/skills` para listar, ver, editar y eliminar skills del directorio configurado.
-- Boton **Skills** en la Web UI con modales de listado, detalle y edicion (patron Memory Explorer).
+- REST API `/api/skills` to list, view, edit, and delete skills from the configured directory.
+- **Skills** button in the Web UI with list, detail, and edit modals (Memory Explorer pattern).
 
-## Estado de agente sincronizado web/Telegram (2026-06-24)
+## Synchronized agent state web/Telegram (2026-06-24)
 
-- `sessions.MarkProcessing` / `MarkIdle` rastrean turnos activos del agente (engine, PlanMonitor, GoalManager).
-- La API de sesion expone `agent_busy`; SSE emite `agent_status` en cada cambio.
-- La web muestra `processing...` / `awaiting approval` en la barra de estado y spinner en el timeline cuando Telegram o tareas en background estan ejecutando tools.
+- `sessions.MarkProcessing` / `MarkIdle` track active agent turns (engine, PlanMonitor, GoalManager).
+- The session API exposes `agent_busy`; SSE emits `agent_status` on each change.
+- The web shows `processing...` / `awaiting approval` in the status bar and spinner in the timeline when Telegram or background tasks are executing tools.
 
-## Mensajes internos ocultos en web (2026-06-24)
+## Hidden internal messages in web (2026-06-24)
 
-- Prompts internos del loop (plan monitor, enforcement de plan/TODO) ya no se persisten ni se muestran como burbujas en la timeline web.
+- Internal loop prompts (plan monitor, plan/TODO enforcement) are no longer persisted or shown as bubbles in the web timeline.
 
 ## User Feedback Loop + Duplicate Skill Prevention (2026-06-28)
 

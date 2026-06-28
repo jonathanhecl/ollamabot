@@ -1,29 +1,33 @@
 # OllamaBot Docs
 
-Esta carpeta guarda el estado vivo del proyecto: lo hecho, lo pendiente, la referencia de Ollama y las pruebas ejecutadas contra la instancia local.
+This folder holds the living state of the project: what's done, what's pending, Ollama reference, and test results from the local instance.
 
-## Documentos
+## Documents
 
-- [progress.md](progress.md): bitacora de avance, decisiones tomadas y proximos pasos.
-- [ollama-usage.md](ollama-usage.md): guia practica de uso de la API de Ollama para este proyecto.
-- [probe-results.md](probe-results.md): pruebas manuales ejecutadas y resultados observados.
-- [probe-cache.json](probe-cache.json): snapshot cacheado de resultados esperados/modelos para no reprobar todo cada vez.
-- [ollama-reference.md](ollama-reference.md): referencia generada con payloads minimos y links fuente.
-- [local-model-inventory.md](local-model-inventory.md): inventario generado desde `/api/tags` y `/api/show`.
+- [progress.md](progress.md): development log, decisions made, and next steps.
+- [ollama-usage.md](ollama-usage.md): practical guide to using the Ollama API in this project.
+- [probe-results.md](probe-results.md): manual probe runs and observed results.
+- [probe-cache.json](probe-cache.json): cached snapshot of expected results/models to avoid re-probing every time.
+- [ollama-reference.md](ollama-reference.md): generated reference with minimal payloads and source links.
+- [local-model-inventory.md](local-model-inventory.md): inventory generated from `/api/tags` and `/api/show`.
+- [media-routing.md](media-routing.md): full media routing flow for audio/image attachments, including the decision matrix and SSE event format.
+- [walkthrough.md](walkthrough.md): walkthrough of Telegram proactive notifications and frontend integration tests (Playwright).
 
-## Estado Actual
+## Current Status
 
-La fase 1 esta implementada en Go. El sistema ya puede:
+The system is fully implemented in Go and can:
 
-- Ejecutarse sin parametros como flujo normal.
-- Crear `.env` interactivamente si falta.
-- Leer configuracion desde `.env`.
-- Conectarse a Ollama via REST.
-- Listar modelos instalados.
-- Consultar metadata y capacidades con `/api/show`.
-- Ejecutar probes de chat, tools, JSON estructurado, vision, thinking, embeddings y audio experimental.
-- Generar esta documentacion local.
-- Guardar un snapshot cacheado de modelos/resultados esperados.
-- Servir una web local para ver modelos, capacidades, memoria y chatear con un modelo principal.
-
-Telegram y agente autonomo quedan para fases posteriores.
+- Run without parameters as the normal flow.
+- Create `.env` interactively if missing.
+- Read configuration from `.env`.
+- Connect to Ollama via REST.
+- List installed models and query metadata/capabilities via `/api/show`.
+- Run probes for chat, tools, structured JSON, vision, thinking, embeddings, and experimental audio.
+- Generate local documentation.
+- Save a cached snapshot of models/expected results.
+- Serve a local web UI for browsing models, capabilities, memory, sessions, skills, and chatting with a main model.
+- Run a Telegram bot with full feature parity: chat, media, inline keyboards, session management, goals, projects, and feedback.
+- Execute an autonomous agent loop with 20+ tools, plan management, goals, and background projects.
+- Perform multimodal routing (vision/audio) with structured transcription and dedicated model roles.
+- Manage long-term RAG memory with local embeddings.
+- Run sleep-mode learning cycles for background reflection and memory consolidation.
