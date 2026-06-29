@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,5 +54,28 @@ func TestSubagentContextCancelPreventsTimeout(t *testing.T) {
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("context was not cancelled after calling cancel()")
+	}
+}
+
+func TestTimeContextMessageFormat(t *testing.T) {
+	now := time.Now()
+	_, offset := now.Zone()
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	utcOffset := fmt.Sprintf("UTC%s%02d:%02d", sign, offset/3600, (offset%3600)/60)
+	timeStr := now.Format("Monday, January 2, 2006 at 3:04 PM")
+	content := fmt.Sprintf("Current date and time: %s (%s)", timeStr, utcOffset)
+
+	if !strings.HasPrefix(content, "Current date and time: ") {
+		t.Fatalf("expected prefix 'Current date and time: ', got %q", content)
+	}
+	if !strings.Contains(content, "UTC") {
+		t.Fatalf("expected UTC offset in message, got %q", content)
+	}
+	if !strings.Contains(content, now.Format("2006")) {
+		t.Fatalf("expected current year in message, got %q", content)
 	}
 }

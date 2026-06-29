@@ -170,6 +170,21 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	for i := 0; i < MaxIterations; i++ {
 		var systemPrefix []ollama.Message
 
+		// Inject current date and time so the model always knows the temporal context
+		now := time.Now()
+		_, offset := now.Zone()
+		sign := "+"
+		if offset < 0 {
+			sign = "-"
+			offset = -offset
+		}
+		utcOffset := fmt.Sprintf("UTC%s%02d:%02d", sign, offset/3600, (offset%3600)/60)
+		timeStr := now.Format("Monday, January 2, 2006 at 3:04 PM")
+		systemPrefix = append(systemPrefix, ollama.Message{
+			Role:    "system",
+			Content: fmt.Sprintf("Current date and time: %s (%s)", timeStr, utcOffset),
+		})
+
 		// Load SOUL.md dynamically
 		if soul, err := LoadSoul(); err == nil && soul != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{

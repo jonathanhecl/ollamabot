@@ -186,3 +186,10 @@ go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
   - `execute_command`: added `timeout` (seconds, default 60) replacing the hardcoded timeout.
 - **Supporting changes**: XML fallback aliases for all 4 new tools, Telegram display formatting, agent loop error recovery for `apply_diff`, risk classification, approval signature, rescue path param mapping.
 - All tests pass, build clean.
+
+## Current Time Context Injection (2026-06-28)
+
+- **Temporal awareness**: the agent loop now prepends a system message with the current date, time, and UTC offset at the start of every iteration in `internal/agent/loop.go`. Uses `time.Now()` from the system clock — no config or `.env` changes needed.
+- **Format**: `Current date and time: Sunday, June 28, 2026 at 11:16 PM (UTC-03:00)` — human-readable, includes day of week.
+- **Why context injection over a tool**: zero latency, always available, ~20 tokens, follows the existing pattern of dynamic system messages (SOUL, profile, skills, todos).
+- Test: `TestTimeContextMessageFormat` in `internal/agent/loop_test.go`.
