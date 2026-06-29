@@ -407,7 +407,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        "memory_add",
-				Description: "Store a piece of text into long-term memory for future retrieval. Use this to persist important facts, decisions, or context from the current conversation.",
+				Description: "Store a piece of text into long-term memory for future retrieval across sessions. ONLY store information that will be useful in future conversations.\n\nDO store: permanent user preferences, technical decisions, lessons learned from debugging, error patterns and solutions, workspace-specific setup details, and durable facts about the user or project.\n\nDO NOT store: current dates or times, greetings, transient task state, progress of the current task, information that only applies to the current session, or anything the system already provides automatically (e.g. current date/time).\n\nBefore adding, ask yourself: 'Will this be useful in a future session?' If the answer is no, do not store it.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
