@@ -4,6 +4,8 @@ Local-first autonomous agent powered by [Ollama](https://ollama.com). One Go pro
 agent core; **Web** and **Telegram** are transport channels that talk to the same engine. Chat
 behavior, model choice, tools, sessions, and background jobs do not depend on which channel you use.
 
+![ollamabot screenshot](image.png)
+
 ## Features
 
 - **Dual channels**: Web UI (SSE streaming, settings, session browser) and Telegram bot (polling, inline keyboards, media download)
@@ -248,6 +250,18 @@ bash build-mac.sh
 
 # Manual
 go build -ldflags "-X 'main.buildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)'" ./cmd/ollamabot
+```
+
+### Multi-platform & Releases (PowerShell)
+
+You can compile binaries for all major platforms (Windows, Linux, macOS) and create GitHub Releases with the packaged assets using the provided PowerShell scripts:
+
+```powershell
+# Compile and package for all platforms (outputs to dist/)
+.\build-all.ps1 -Version v0.1.0
+
+# Run build-all, create git tag, push to origin, and create GitHub release
+.\release.ps1 v0.1.0
 ```
 
 ## Project structure
