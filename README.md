@@ -4,6 +4,16 @@ Local-first autonomous agent powered explicitly by local models via [Ollama](htt
 
 ![ollamabot screenshot](image.png)
 
+### Dynamic Routing in Action (Example Workflow)
+
+In a single Telegram chat session, you can orchestrate multiple local models for a single prompt turn:
+1. **Voice Input**: You send a voice message. The engine routes the audio to an Ollama model with audio capability (like `gemma4:e2b`) to obtain the text transcript.
+2. **Visual Context**: You also attach a photo of a whiteboard. The engine routes the image to a vision model (like `qwen3.5:2b`) to extract the visual details.
+3. **Reasoning**: The main coordinator model (like `qwen3.5:9b-uncensored`) starts a thinking phase, reasoning step-by-step about the combined text and visual inputs.
+4. **Tool Execution**: The main model decides to invoke the `generate_image` tool, sending a request to a local image-generation model (like `flux2-klein:4b` run via Ollama) to draw a refined mockup.
+5. **Unified Output**: The bot delivers the final response text along with the generated image directly in your Telegram chat.
+6. **Cross-Channel Sync**: Since conversation history is session-centric, you can open the Web UI at any time to monitor the exact reasoning steps, metrics, and generated files of that same Telegram chat in real time.
+
 ## Features
 
 - **Dual channels**: Web UI (SSE streaming, settings, session browser) and Telegram bot (polling, inline keyboards, media download)
