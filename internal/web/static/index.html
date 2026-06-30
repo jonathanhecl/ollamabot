@@ -657,12 +657,12 @@
       </form>
       <div style="padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 12px;">
         <p style="color: var(--muted); font-size: 13px; margin: 0;">Tell the agent what to improve or remember. Feedback is processed during the next learning cycle.</p>
-        <select id="feedbackCategory" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 14px; font-family: inherit;">
-          <option value="correction">Correction — something the agent did wrong</option>
-          <option value="preference">Preference — a user preference to remember</option>
-          <option value="praise">Praise — something the agent did well</option>
+        <select id="feedbackCategory" style="padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line); background: #11140f; color: var(--text); font-size: 14px; font-family: inherit; color-scheme: dark;">
+          <option value="correction" style="background: #11140f; color: var(--text);">Correction — something the agent did wrong</option>
+          <option value="preference" style="background: #11140f; color: var(--text);">Preference — a user preference to remember</option>
+          <option value="praise" style="background: #11140f; color: var(--text);">Praise — something the agent did well</option>
         </select>
-        <textarea id="feedbackText" rows="4" placeholder="e.g. Always respond in Spanish, don't use bullet points for short answers..." style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--text); font-size: 14px; font-family: inherit; resize: vertical;"></textarea>
+        <textarea id="feedbackText" rows="4" placeholder="e.g. Always respond in Spanish, don't use bullet points for short answers..." style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--line); background: #11140f; color: var(--text); font-size: 14px; font-family: inherit; resize: vertical;"></textarea>
         <div style="display: flex; justify-content: flex-end; gap: 8px;">
           <button id="feedbackSubmitBtn" class="primary-button" type="button">Submit Feedback</button>
         </div>
