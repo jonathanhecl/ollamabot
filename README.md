@@ -1,8 +1,6 @@
 # ollamabot
 
-Local-first autonomous agent powered by [Ollama](https://ollama.com). One Go process runs the
-agent core; **Web** and **Telegram** are transport channels that talk to the same engine. Chat
-behavior, model choice, tools, sessions, and background jobs do not depend on which channel you use.
+Local-first autonomous agent powered explicitly by local models via [Ollama](https://ollama.com). It implements dynamic capability routing to dispatch specialized tasks (such as text chat, vision, audio transcription, embeddings/memory, and summarization) to different role-specific local models. A single Go process runs the agent core, and **Web** and **Telegram** act purely as transport channels talking to this unified engine.
 
 ![ollamabot screenshot](image.png)
 
@@ -20,7 +18,7 @@ behavior, model choice, tools, sessions, and background jobs do not depend on wh
 - **Thinking support**: reasoning blocks displayed in real-time when the model supports it
 - **Session management**: persisted history, auto-naming, context window indicator, cross-channel sync
 - **Security**: per-tool approval system, risk classification, workspace sandboxing, optional web password
-- **Zero external dependencies**: pure Go, only requires a local Ollama instance
+- **Zero external dependencies**: pure Go, only requires a local Ollama instance (and `ffmpeg` for converting voice messages when using Telegram, which is downloaded automatically if missing)
 
 ## Architecture
 
@@ -83,6 +81,7 @@ and capabilities without starting the agent. Example: `go run ./cmd/ollamabot pr
 
 - [Go](https://go.dev/dl/) 1.25+
 - [Ollama](https://ollama.com) running locally with at least one model installed
+- `ffmpeg` (required only for voice message transcription on Telegram; the bot downloads it automatically if it is not present on your system)
 
 ### Setup
 
