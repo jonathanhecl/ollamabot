@@ -120,7 +120,7 @@ go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
 
 - Some models report capabilities that may fail on real prompts; that's why end-to-end probes are necessary.
 - The chat probe with `qwen3:8b` responded `ok /think`; transport works, but control tokens need to be cleaned if they appear in final responses.
-- Access to `192.168.0.121:11434` was not validated from the sandbox in the first exploration; it's covered by `OLLAMA_BASE_URL`, but requires testing in a normal environment.
+- Access to the configured Ollama base URL was not validated from the sandbox in the first exploration; it's covered by `OLLAMA_BASE_URL`, but requires testing in a normal environment.
 - The web uses live data when Ollama responds and can fall back to the cached snapshot if the live inventory fails.
 
 ## Fix: repetitive plan mode (2026-06-19)

@@ -7,22 +7,22 @@ We have successfully completed and integrated both required features: proactive 
 ## Changes Made
 
 ### 1. Proactive Telegram Notifications
-- **Callback Definition**: Declared the `TaskNotificationFunc` callback type and the global `OnTaskCompletion` variable in [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
-- **Event Injection**: Fired the callback on successful completion (state `completed`) or failure (state `failed`) of each individual task within the `ExecuteTask` method in [autonomous.go](file:///f:/Clouds/Github/ollamabot/internal/agent/autonomous.go).
-- **Telegram Delivery**: In [bot.go](file:///f:/Clouds/Github/ollamabot/internal/telegram/bot.go), registered the `notifyTaskCompletion` callback on bot `Start`. This formats the message in English (detailing the project ID, task name, and result/error) and transmits it asynchronously to all authorized chat IDs.
+- **Callback Definition**: Declared the `TaskNotificationFunc` callback type and the global `OnTaskCompletion` variable in [autonomous.go](../internal/agent/autonomous.go).
+- **Event Injection**: Fired the callback on successful completion (state `completed`) or failure (state `failed`) of each individual task within the `ExecuteTask` method in [autonomous.go](../internal/agent/autonomous.go).
+- **Telegram Delivery**: In [bot.go](../internal/telegram/bot.go), registered the `notifyTaskCompletion` callback on bot `Start`. This formats the message in English (detailing the project ID, task name, and result/error) and transmits it asynchronously to all authorized chat IDs.
 
 ### 2. Browser Integration Tests (Playwright)
-- **Test Suite**: Created the suite [web_ui.spec.js](file:///f:/Clouds/Github/ollamabot/tests/browser/web_ui.spec.js) with three integration tests:
+- **Test Suite**: Created the suite [web_ui.spec.js](../tests/browser/web_ui.spec.js) with three integration tests:
   1. **Login & Overlay**: Validation of incorrect credentials and successful login with login modal hiding.
   2. **Drag & Drop**: Simulation of dragging media files onto the SPA body, validating that the attachment appears in preview.
   3. **Copy Message & Code**: Validation of copying code blocks and markdown responses via clipboard interaction simulation.
-- **Test Orchestrator**: Created [run-tests.js](file:///f:/Clouds/Github/ollamabot/tests/browser/run-tests.js), which automates the full test cycle:
+- **Test Orchestrator**: Created [run-tests.js](../tests/browser/run-tests.js), which automates the full test cycle:
   - Generation of temporary static assets.
   - Starting a mock Ollama server on port `11435`.
   - Compiling and starting the Go OllamaBot server in test mode on port `8081`.
   - Running Playwright on the Chromium browser.
   - Final cleanup of ports, files, and temporary executables.
-- **Git Ignore**: Added temporary Playwright folders, `node_modules`, and executables to [.gitignore](file:///f:/Clouds/Github/ollamabot/.gitignore) to keep the repository clean.
+- **Git Ignore**: Added temporary Playwright folders, `node_modules`, and executables to [.gitignore](../.gitignore) to keep the repository clean.
 
 ---
 
@@ -46,7 +46,7 @@ node tests/browser/run-tests.js
 
 ```text
 Generating assets...
-Generated mock image asset at: F:\Clouds\Github\ollamabot\tests\browser\assets\test_image.png
+Generated mock image asset at: tests\browser\assets\test_image.png
 Install Playwright Chromium browser...
 Starting Mock Ollama Server on port 11435
 Created temporary .env.test configuration

@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	client := ollama.NewClient("http://192.168.0.121:11434")
+	client := ollama.NewClient("http://localhost:11434")
 	payload, err := os.ReadFile("test.wav")
 	if err != nil {
 		log.Fatalf("failed to read test.wav: %v", err)

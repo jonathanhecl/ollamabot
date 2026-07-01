@@ -2,7 +2,7 @@
 
 Generated: 2026-06-22T20:26:42-03:00
 
-Base URL: `http://192.168.0.121:11434`
+Base URL: `http://localhost:11434`
 
 Ollama version: `0.30.10`
 

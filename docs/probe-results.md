@@ -383,7 +383,7 @@ Estado: comprobado.
 
 ## Pruebas Pendientes
 
-- Ejecutar probes contra `192.168.0.121:11434` con `--base-url` o `OLLAMA_BASE_URL`.
+- Ejecutar probes contra la instancia de Ollama configurada con `--base-url` o `OLLAMA_BASE_URL`.
 - Probar mas modelos con tools para detectar diferencias de formato.
 - Probar modelos vision con imagenes reales de distintos formatos: JPG, PNG valido, WebP si Ollama lo acepta.
 - Confirmar audio cuando exista flujo REST documentado o verificable.
