@@ -25,7 +25,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/web"
 )
 
-const version = "0.1.0"
+var version = "1.0.0"
 
 var buildTime = ""
 

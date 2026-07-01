@@ -29,6 +29,9 @@ New-Item -ItemType Directory -Path $distDir | Out-Null
 
 $buildTime = (Get-Date -Format "yyyy-MM-dd HH:mm:ss")
 $ldflags = "-s -w -X 'main.buildTime=$buildTime'"
+if (-not [string]::IsNullOrEmpty($Version)) {
+    $ldflags += " -X 'main.version=$Version'"
+}
 
 # Target matrix: OS, Arch, Packaging Format
 $targets = @(
