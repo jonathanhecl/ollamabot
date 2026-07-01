@@ -99,21 +99,28 @@ foreach ($target in $targets) {
     }
 
     # Packaging
-    Write-Host "Empaquetando en $packName (binario interno: $binaryName)..." -ForegroundColor DarkGray
+    Write-Host "Empaquetando en $packName (binario interno: $binaryName, .env.example)..." -ForegroundColor DarkGray
+    
+    # Copy .env.example to the temporary packaging folder
+    $envExampleSource = Join-Path $PSScriptRoot ".env.example"
+    if (Test-Path $envExampleSource) {
+        Copy-Item $envExampleSource -Destination $tempDir
+    }
+
     if ($format -eq "zip") {
-        # Use Compress-Archive directly on the binary file
-        Compress-Archive -Path $binaryPath -DestinationPath $packPath -Force
+        # Compress all files inside the temporary directory to place them at the root of the archive
+        Compress-Archive -Path (Join-Path $tempDir "*") -DestinationPath $packPath -Force
     } else {
         # Linux/macOS packages: use tar.exe if available, otherwise Compress-Archive as .zip as fallback
         if (Get-Command tar -ErrorAction SilentlyContinue) {
             Push-Location $tempDir
-            & tar.exe -czf $packPath $binaryName
+            & tar.exe -czf $packPath $binaryName .env.example
             Pop-Location
         } else {
             Write-Host "Advertencia: tar.exe no encontrado. Empaquetando como ZIP en su lugar." -ForegroundColor Yellow
             $fallbackPackName = $packName -replace '\.tar\.gz$', '.zip'
             $fallbackPackPath = Join-Path $distDir $fallbackPackName
-            Compress-Archive -Path $binaryPath -DestinationPath $fallbackPackPath -Force
+            Compress-Archive -Path (Join-Path $tempDir "*") -DestinationPath $fallbackPackPath -Force
         }
     }
 
