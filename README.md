@@ -119,7 +119,72 @@ SERVER_ENABLED=false
 TELEGRAM_BOT_TOKEN=your_token
 ```
 
+
 **Both channels** (default when both are enabled): web on `SERVER_PORT`, Telegram bot in background.
+
+### Environment Variables Reference
+
+Below is a detailed guide to all configuration parameters available in your `.env` file:
+
+#### Server Configuration
+- `SERVER_ENABLED` (default `true`): Boolean. Enables or disables the local Web UI server.
+- `SERVER_PORT` (default `8080`): The port on which the Web UI server will run.
+- `SERVER_PASSWORD`: Optional string. If set, requires this password to access the Web UI.
+- `SERVER_EXPOSE_NETWORK` (default `false`): Boolean. If `true`, binds the web server to `0.0.0.0` making it accessible over the local network. Otherwise, binds to `127.0.0.1`.
+
+#### Sessions
+- `SESSION_AUTO_NAME` (default `true`): Boolean. If enabled, automatically titles new chat sessions based on the context of the first few turns.
+- `SESSION_EXPIRY_MIN` (default `30`): Integer. Inactivity time in minutes before a Telegram session context is expired.
+- `PLAN_CONFIRMATION` (default `smart`): Behavior for tool/plan approval. Options:
+  - `smart`: Automatically prompts for approval on risky tools (e.g., shell command execution, file modifications).
+  - `always`: Prompts for confirmation before executing any tool or step.
+  - `never`: Runs all tools and plans autonomously without asking.
+
+#### Ollama Connection & Coordinator
+- `OLLAMA_BASE_URL` (default `http://localhost:11434`): The API URL of your local Ollama instance.
+- `OLLAMA_DEFAULT_MODEL` (**Required**): The main model used for orchestrating the agent, chat conversation, tools reasoning, and final replies.
+- `OLLAMA_PROBE_MODELS`: Comma-separated list of models to pre-probe for capabilities at startup.
+
+#### Role-Specific Models
+*These will fall back to the main coordinator model (`OLLAMA_DEFAULT_MODEL`) if they are not set and the main model has corresponding capability, or the feature will be disabled.*
+- `OLLAMA_MODEL_VISION`: Dedicated model used for analyzing image attachments.
+- `OLLAMA_MODEL_AUDIO`: Dedicated model used for transcribing audio voice message attachments.
+- `OLLAMA_MODEL_EMBED`: Dedicated model used for generating vector embeddings for semantic RAG memory.
+- `OLLAMA_MODEL_IMAGE`: Dedicated model used for the `generate_image` tool (e.g. Flux).
+- `OLLAMA_MODEL_LEARNING`: Dedicated model used for reflection and consolidation in Sleep Mode.
+- `OLLAMA_MODEL_SUBAGENT`: Dedicated model used for subagent tasks (such as planning, auto-naming, and summarizing).
+
+#### Model Inference Controls
+- `OLLAMA_IMAGE_STEPS` (default `4`): Inference step count when generating images.
+- `OLLAMA_THINK_ENABLED` (default `true`): Enables or disables reasoning/thinking extraction (like `<think>` tags in models like DeepSeek R1).
+- `OLLAMA_MAX_TOKENS` (default `16384`): Max output token limit for completions.
+- `OLLAMA_MAX_CONTEXT` (default `0`): Max context window limit for Ollama prompts. Set to `0` to let Ollama use the model's defaults.
+
+#### Resource Limits
+- `SUBAGENT_TIMEOUT_MINUTES` (default `10`): Max runtime in minutes for a background subagent execution before it is terminated.
+
+#### Telegram Settings
+- `TELEGRAM_BOT_TOKEN`: The bot API token obtained from Telegram's `@BotFather`.
+- `TELEGRAM_AUTHORIZED_IDS`: Comma-separated list of Telegram user ID integers allowed to interact with this bot. Leave empty for public access.
+- `TELEGRAM_STARTUP_NOTIFICATION` (default `false`): Send a startup message to authorized users when the bot starts up.
+
+#### Paths
+- `WORKSPACE_PATH` (default `workspace`): Directory where tools read/write/edit files and run commands.
+- `SESSIONS_PATH` (default `sessions`): Location for storing session histories and attachments.
+- `MEMORY_PATH` (default `memory`): Location for local RAG database/embeddings.
+- `SKILLS_PATH` (default `skills`): Location for storing custom reusable skills markdown files.
+
+#### Sleep Mode
+- `SLEEP_MODE_ENABLED` (default `false`): Enables the background learning/consolidation loop.
+- `SLEEP_MODE_INACTIVITY_THRESHOLD` (default `30m`): Inactivity duration (e.g., `30m`, `1h`) before starting background reflection.
+- `SLEEP_MODE_RESUME_DELAY` (default `10m`): Wait duration before resuming sleep cycles after new activity.
+- `SLEEP_MODE_SUBAGENTS_ENABLED` (default `false`): Whether subagents are allowed to run background tasks during sleep.
+
+#### Web Search
+- `WEB_SEARCH_ENABLED` (default `false`): Enable/disable the `web_search` tool.
+- `WEB_SEARCH_PRIORITY` (default `ddg`): Comma-separated order of search providers to try (e.g., `brave,tavily,ddg`).
+- `WEB_SEARCH_BRAVE_API_KEY`: API key for Brave Search.
+- `WEB_SEARCH_TAVILY_API_KEY`: API key for Tavily Search.
 
 ## Model roles
 
