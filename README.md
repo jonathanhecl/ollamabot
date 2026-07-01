@@ -291,9 +291,7 @@ go run ./cmd/ollamabot serve --port 8080 --cache docs/probe-cache.json
 go run ./cmd/ollamabot version
 ```
 
-Generated references: [`docs/ollama-reference.md`](docs/ollama-reference.md),
-[`docs/local-model-inventory.md`](docs/local-model-inventory.md). See [`docs/README.md`](docs/README.md)
-for progress notes and probe results.
+Generated references: [`docs/ollama-reference.md`](docs/ollama-reference.md) and [`docs/ollama-usage.md`](docs/ollama-usage.md). See [`docs/README.md`](docs/README.md) for more details.
 
 ## Web UI
 

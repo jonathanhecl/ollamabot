@@ -1,6 +1,6 @@
-# Uso de Ollama en OllamaBot
+# Ollama Usage in OllamaBot
 
-Esta guia resume como se usa Ollama desde este proyecto. La URL base sale de `.env`:
+This guide outlines how Ollama is utilized within this project. The base URL is loaded from `.env`:
 
 ```env
 OLLAMA_BASE_URL=http://localhost:11434
@@ -8,25 +8,24 @@ WEB_ENABLED=true
 WEB_ADDR=:8080
 ```
 
-Uso normal:
+Standard execution:
 
 ```powershell
 go run ./cmd/ollamabot
 ```
 
-Si no existe `.env`, el programa pregunta por terminal:
+If the `.env` file does not exist, the program prompts via terminal for:
+- Ollama base URL.
+- Whether to start the web server.
+- Web port.
 
-- URL de Ollama.
-- Si se debe levantar servidor web.
-- Puerto web.
-
-La CLI tambien permite override:
+The CLI also supports overrides:
 
 ```powershell
 go run ./cmd/ollamabot --base-url http://localhost:11434 probe models
 ```
 
-## Endpoints Usados
+## Used Endpoints
 
 ### Version
 
@@ -34,17 +33,17 @@ go run ./cmd/ollamabot --base-url http://localhost:11434 probe models
 GET /api/version
 ```
 
-Devuelve la version de Ollama. Se usa para documentar contra que runtime se generaron los resultados.
+Returns the Ollama version. Used to document which runtime generated the results.
 
-### Modelos Instalados
+### Installed Models
 
 ```http
 GET /api/tags
 ```
 
-Devuelve la lista de modelos locales, con nombre, tamanio, digest y detalles basicos.
+Returns the list of local models, including name, size, digest, and basic details.
 
-### Metadata de Modelo
+### Model Metadata
 
 ```http
 POST /api/show
@@ -58,28 +57,26 @@ Payload:
 }
 ```
 
-Campos importantes:
+Key fields:
+- `capabilities`: Primary source for `completion`, `tools`, `thinking`, `vision`, and `embedding`.
+- `model_info`: Retrieves active context length, architecture, and other technical metadata.
+- `projector_info`: Can indicate multimodal encoders such as `clip.has_audio_encoder` or `clip.has_vision_encoder`.
 
-- `capabilities`: fuente primaria para `completion`, `tools`, `thinking`, `vision`, `embedding`.
-- `model_info`: permite obtener contexto, arquitectura y metadata tecnica.
-- `projector_info`: puede indicar encoders multimodales como `clip.has_audio_encoder` o `clip.has_vision_encoder`.
-
-### Modelos Cargados y Memoria
+### Loaded Models and Memory
 
 ```http
 GET /api/ps
 ```
 
-Devuelve modelos actualmente cargados en memoria. Campos usados por la web:
+Returns models currently loaded in memory. Fields used by the Web UI:
+- `size`: Total size of the model.
+- `size_vram`: VRAM/RAM memory used by the loaded model.
+- `expires_at`: Timestamp when Ollama will unload the model if it remains inactive.
+- `context_length`: Active context length for the loaded model instance.
 
-- `size`: tamanio del modelo.
-- `size_vram`: memoria VRAM/RAM usada por el modelo cargado.
-- `expires_at`: momento en que Ollama podria descargarlo si no se usa.
-- `context_length`: contexto activo para esa carga.
+If a model appears in `/api/tags` but not in `/api/ps`, the web dashboard displays it as available but not loaded.
 
-Si un modelo aparece en `/api/tags` pero no en `/api/ps`, la web lo muestra como disponible pero no cargado.
-
-## Chat de Texto
+## Text Chat
 
 ```json
 {
@@ -97,11 +94,11 @@ Endpoint:
 POST /api/chat
 ```
 
-Respuesta esperada: `message.content`.
+Expected response: `message.content`.
 
-## Imagenes
+## Images
 
-Ollama recibe imagenes como base64 crudo en `messages[].images`. No usar prefijo `data:image/...`.
+Ollama receives images as raw base64 strings in `messages[].images`. Do not prepend the `data:image/...` URI scheme.
 
 ```json
 {
@@ -125,9 +122,9 @@ go run ./cmd/ollamabot probe vision --model qwen3-vl:4b --image C:\path\image.jp
 
 ## Tools
 
-Se envia una lista `tools` con definiciones tipo function. Si el modelo decide llamar una tool, responde `message.tool_calls`.
+A list of functions is sent under the `tools` array. If the model decides to invoke a tool, it returns `message.tool_calls`.
 
-Primer request:
+First request:
 
 ```json
 {
@@ -155,7 +152,7 @@ Primer request:
 }
 ```
 
-Luego el programa ejecuta la tool localmente y agrega un mensaje:
+Then, the program executes the tool locally and appends the tool message:
 
 ```json
 {
@@ -165,11 +162,11 @@ Luego el programa ejecuta la tool localmente y agrega un mensaje:
 }
 ```
 
-Despues se hace un segundo `POST /api/chat` para que el modelo redacte la respuesta final.
+Subsequently, a second `POST /api/chat` is performed for the model to synthesize the final response.
 
-## JSON Estructurado
+## Structured JSON
 
-Ollama acepta `format` como JSON Schema.
+Ollama accepts `format` as a JSON Schema object.
 
 ```json
 {
@@ -189,11 +186,11 @@ Ollama acepta `format` como JSON Schema.
 }
 ```
 
-El proyecto valida que `message.content` sea JSON parseable.
+The project validates that `message.content` is parseable JSON.
 
 ## Thinking
 
-Se activa con `think:true`.
+Activated via `think:true`.
 
 ```json
 {
@@ -206,7 +203,7 @@ Se activa con `think:true`.
 }
 ```
 
-Si Ollama devuelve `message.thinking`, se marca como comprobado. Si no aparece pero `/api/show` reporta `thinking`, se marca como comprobado por metadata del modelo.
+If Ollama returns `message.thinking`, it is marked as confirmed. If it does not appear but `/api/show` reports `thinking`, it is marked as confirmed via model metadata.
 
 ## Embeddings
 
@@ -223,50 +220,48 @@ Payload:
 }
 ```
 
-Se considera valido si `embeddings[0]` existe y tiene longitud mayor a cero.
+Considered valid if `embeddings[0]` exists and has a length greater than zero.
 
 ## Audio
 
-Algunos modelos exponen audio directamente en `/api/show.capabilities`, por ejemplo `gemma4:e2b` reporta `audio`. Otros modelos pueden exponer solo metadata de encoder:
+Some models expose audio capability directly under `/api/show.capabilities` (e.g., `gemma4:e2b` reports `audio`). Other models might only expose encoder metadata:
 
 ```text
 projector_info.clip.has_audio_encoder = true
 ```
 
-Si `audio` aparece en `capabilities`, el inventario lo marca como `comprobado` a nivel metadata. Para validar end-to-end:
+If `audio` appears in `capabilities`, the model inventory marks it as confirmed at the metadata level. To validate end-to-end:
 
 ```powershell
 go run ./cmd/ollamabot probe audio --model gemma4:e2b --audio C:\path\audio.wav
 ```
 
-La prueba local realizada con un WAV corto envio el audio como base64 crudo en `messages[].images`, siguiendo ejemplos observados en issues de Ollama/Gemma 4. En esta maquina el runner de Ollama devolvio error 500 y se detuvo, por lo que el uso real de audio queda pendiente aunque la capacidad este reportada por metadata.
+Local tests performed with a short WAV file sent the audio as raw base64 under `messages[].images`, matching patterns observed in issues for Ollama/Gemma 4. On this machine, the Ollama runner returned a 500 error and stopped, so real audio usage is marked as pending verification, even if the capability is reported via metadata.
 
-## Web Local
+## Local Web server
 
-Comando:
+Command:
 
 ```powershell
 go run ./cmd/ollamabot serve --addr :8080 --cache docs/probe-cache.json
 ```
 
-La web expone:
+The server exposes:
+- `GET /api/health`: Verifies connectivity with Ollama.
+- `GET /api/settings`: Reads runtime configuration.
+- `POST /api/settings`: Updates Ollama URL and persists `.env`.
+- `GET /api/models`: Lists available models, capabilities, loaded memory, and cache status.
+- `POST /api/chat/stream`: Sends messages to the selected model and streams Server-Sent Events.
 
-- `GET /api/health`: verifica conexion con Ollama.
-- `GET /api/settings`: lee configuracion runtime.
-- `POST /api/settings`: actualiza URL de Ollama y persiste `.env`.
-- `GET /api/models`: lista modelos disponibles, capacidades, memoria cargada y estado de cache.
-- `POST /api/chat/stream`: envia mensajes al modelo seleccionado y devuelve Server-Sent Events.
+The interface allows selecting a model as `Main` from a modal and conversing with it. Based on capabilities:
+- `thinking`: Enables the `think` toggle and renders the thinking block.
+- `vision`: Enables attaching/pasting images.
+- `audio`: Enables attaching/pasting audio.
+- If a capability is not available in the active model, the UI hides the control and discards that attachment type.
+- Attachments show a preview before sending and remain visible in the chat timeline (images expand on click, and audios play via native browser controls).
+- `tools`: If Ollama returns `tool_calls`, name and parameters are rendered; the actual execution of tools is deferred to the agent layer.
 
-La interfaz permite seleccionar un modelo como `Main` desde un modal y conversar con el. Segun capacidades:
-
-- `thinking`: muestra toggle `think` y renderiza el bloque de thinking.
-- `vision`: habilita adjuntar/pegar imagenes.
-- `audio`: habilita adjuntar/pegar audio.
-- Si una capacidad no esta disponible en el modelo activo, la UI oculta el control y descarta ese tipo de adjunto.
-- Los adjuntos se muestran como preview antes de enviar y quedan visibles en el chat; imagenes se abren en grande con click y audios se reproducen con controles nativos.
-- `tools`: si Ollama devuelve `tool_calls`, se muestran nombre y parametros; la ejecucion real de tools queda para la capa de agente.
-
-Eventos SSE actuales:
+Current SSE Events:
 
 ```text
 event: thinking
