@@ -114,7 +114,7 @@ behavior only at the edges (auth, SSE, keyboards, expiry checks, ffmpeg).
 ### Telegram (`internal/telegram`)
 
 - Long polling, message chunking, HTML formatting
-- Media download and conversion (e.g. voice → WAV)
+- Media download and conversion with ffmpeg (e.g. voice → WAV)
 - Session policies: inactivity expiry, `checkMessagesRelationship`
 - Inline keyboards for tool approval/clarification/plan
 - Must call `engine.ProcessTurn` after building `router.MediaMessage` list
