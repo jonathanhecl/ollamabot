@@ -305,7 +305,8 @@ var checkOllamaModelsHook func(string) ([]string, error)
 func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 
-	serverEnabled, err := askBool(reader, out, "Enable web server", true)
+	// Step 1: Web Server Options
+	serverEnabled, err := askBool(reader, out, "Enable web server", false)
 	if err != nil {
 		return err
 	}
@@ -313,6 +314,37 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	cfg := defaultInteractiveConfig("http://localhost:11434")
 	cfg.ServerEnabled = serverEnabled
 
+	if serverEnabled {
+		port, err := ask(reader, out, "Web server port", "8080")
+		if err != nil {
+			return err
+		}
+		webPort := strings.TrimPrefix(strings.TrimSpace(port), ":")
+		if webPort == "" {
+			webPort = "8080"
+		}
+		cfg.ServerPort = webPort
+
+		exposeNetwork, err := askBool(reader, out, "Expose web server on the network (0.0.0.0)", false)
+		if err != nil {
+			return err
+		}
+		cfg.ServerExposeNetwork = exposeNetwork
+
+		usePassword, err := askBool(reader, out, "Protect web server with a password", false)
+		if err != nil {
+			return err
+		}
+		if usePassword {
+			password, err := ask(reader, out, "Web server password", "")
+			if err != nil {
+				return err
+			}
+			cfg.ServerPassword = password
+		}
+	}
+
+	// Step 2: Ollama Settings
 	baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
 	if err != nil {
 		return err
@@ -401,46 +433,31 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 
 	cfg.OllamaDefaultModel = strings.TrimSpace(defaultModel)
 
-	if serverEnabled {
-		port, err := ask(reader, out, "Web server port", "8080")
-		if err != nil {
-			return err
-		}
-		webPort := strings.TrimPrefix(strings.TrimSpace(port), ":")
-		if webPort == "" {
-			webPort = "8080"
-		}
-		cfg.ServerPort = webPort
+	// Step 3: Telegram Settings
+	token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
+	if err != nil {
+		return err
+	}
+	token = strings.TrimSpace(token)
+	cfg.TelegramBotToken = token
 
-		exposeNetwork, err := askBool(reader, out, "Expose web server on the network (0.0.0.0)", false)
+	if token != "" {
+		telegramAuthID, err := ask(reader, out, "Telegram authorized account ID (leave empty to allow any user)", "")
 		if err != nil {
 			return err
 		}
-		cfg.ServerExposeNetwork = exposeNetwork
-
-		usePassword, err := askBool(reader, out, "Protect web server with a password", false)
-		if err != nil {
-			return err
-		}
-		if usePassword {
-			password, err := ask(reader, out, "Web server password", "")
-			if err != nil {
-				return err
+		telegramAuthID = strings.TrimSpace(telegramAuthID)
+		if telegramAuthID != "" {
+			parts := strings.Split(telegramAuthID, ",")
+			var ids []string
+			for _, p := range parts {
+				trimmed := strings.TrimSpace(p)
+				if trimmed != "" {
+					ids = append(ids, trimmed)
+				}
 			}
-			cfg.ServerPassword = password
+			cfg.TelegramAuthorizedIDs = ids
 		}
-
-		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
-		if err != nil {
-			return err
-		}
-		cfg.TelegramBotToken = strings.TrimSpace(token)
-	} else {
-		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
-		if err != nil {
-			return err
-		}
-		cfg.TelegramBotToken = strings.TrimSpace(token)
 	}
 
 	if !cfg.ServerEnabled && cfg.TelegramBotToken == "" {

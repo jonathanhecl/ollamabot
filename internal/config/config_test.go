@@ -58,7 +58,7 @@ func TestDefaultEnvPath(t *testing.T) {
 
 func TestCreateInteractiveWebOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://localhost:11434\n\n9090\nn\nn\n\n")
+	input := strings.NewReader("y\n9090\nn\nn\nhttp://localhost:11434\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestCreateInteractiveWebOnly(t *testing.T) {
 
 func TestCreateInteractiveWebCustomOllamaURL(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://192.168.1.10:11434\n\n8080\nn\nn\n\n")
+	input := strings.NewReader("y\n8080\nn\nn\nhttp://192.168.1.10:11434\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -105,7 +105,7 @@ func TestCreateInteractiveWebCustomOllamaURL(t *testing.T) {
 
 func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://localhost:11434\n\n8080\ny\ny\nsecret\nbot-token\n")
+	input := strings.NewReader("y\n8080\ny\ny\nsecret\nhttp://localhost:11434\n\nbot-token\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 
 func TestCreateInteractiveTelegramOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("n\nhttp://192.168.0.50:11434\n\nbot-token\n")
+	input := strings.NewReader("n\nhttp://192.168.0.50:11434\n\nbot-token\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -147,6 +147,23 @@ func TestCreateInteractiveTelegramOnly(t *testing.T) {
 	}
 	if cfg.TelegramBotToken != "bot-token" {
 		t.Fatalf("telegram token = %q", cfg.TelegramBotToken)
+	}
+}
+
+func TestCreateInteractiveTelegramWithAuthorizedIDs(t *testing.T) {
+	path := t.TempDir() + "/.env"
+	input := strings.NewReader("n\nhttp://localhost:11434\n\nbot-token\n123456789, 987654321\n")
+	var output strings.Builder
+	if err := CreateInteractive(path, input, &output); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"123456789", "987654321"}
+	if !reflect.DeepEqual(cfg.TelegramAuthorizedIDs, want) {
+		t.Fatalf("telegram authorized ids = %#v", cfg.TelegramAuthorizedIDs)
 	}
 }
 
