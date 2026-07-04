@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func init() {
+	checkOllamaModelsHook = func(string) ([]string, error) {
+		return []string{"gemma4:e4b"}, nil
+	}
+}
+
 func TestLoadDefaultsAndEnvFile(t *testing.T) {
 	file, err := os.CreateTemp(t.TempDir(), ".env")
 	if err != nil {
@@ -52,7 +58,7 @@ func TestDefaultEnvPath(t *testing.T) {
 
 func TestCreateInteractiveWebOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://localhost:11434\n9090\nn\nn\n\n")
+	input := strings.NewReader("y\nhttp://localhost:11434\n\n9090\nn\nn\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -83,7 +89,7 @@ func TestCreateInteractiveWebOnly(t *testing.T) {
 
 func TestCreateInteractiveWebCustomOllamaURL(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://192.168.1.10:11434\n8080\nn\nn\n\n")
+	input := strings.NewReader("y\nhttp://192.168.1.10:11434\n\n8080\nn\nn\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -99,7 +105,7 @@ func TestCreateInteractiveWebCustomOllamaURL(t *testing.T) {
 
 func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("y\nhttp://localhost:11434\n8080\ny\ny\nsecret\nbot-token\n")
+	input := strings.NewReader("y\nhttp://localhost:11434\n\n8080\ny\ny\nsecret\nbot-token\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -124,7 +130,7 @@ func TestCreateInteractiveWebWithPasswordAndTelegram(t *testing.T) {
 
 func TestCreateInteractiveTelegramOnly(t *testing.T) {
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("n\nhttp://192.168.0.50:11434\nbot-token\n")
+	input := strings.NewReader("n\nhttp://192.168.0.50:11434\n\nbot-token\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)
@@ -145,8 +151,14 @@ func TestCreateInteractiveTelegramOnly(t *testing.T) {
 }
 
 func TestCreateInteractiveAllDefaultsExplicitNoWebNoTelegram(t *testing.T) {
+	oldHook := checkOllamaModelsHook
+	checkOllamaModelsHook = func(string) ([]string, error) {
+		return nil, nil
+	}
+	defer func() { checkOllamaModelsHook = oldHook }()
+
 	path := t.TempDir() + "/.env"
-	input := strings.NewReader("n\n\n\n")
+	input := strings.NewReader("n\n\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
 		t.Fatal(err)

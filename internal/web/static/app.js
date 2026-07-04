@@ -2945,6 +2945,11 @@ function renderMessages() {
   els.messages.innerHTML = "";
   const grouped = groupMessagesAndTools(state.messages);
 
+  if (grouped.length === 0) {
+    renderEmptyState();
+    return;
+  }
+
   // Detect if the last message is an assistant still in progress (e.g. from Telegram)
   const lastMsg = state.messages[state.messages.length - 1];
   let lastAssistantInProgress = false;
@@ -3060,6 +3065,170 @@ function renderMessages() {
     msgIdx++;
   }
   els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+function renderEmptyState() {
+  const isOffline = els.baseUrl.textContent.includes("Offline");
+  const noModels = state.models.length === 0;
+  const noDefaultModel = !state.activeModel;
+
+  let html = "";
+
+  if (isOffline) {
+    html = `
+      <div class="onboarding-container">
+        <div class="onboarding-card offline">
+          <span class="onboarding-icon">🔴</span>
+          <h3>Ollama is Offline</h3>
+          <p>We couldn't connect to Ollama at <code>${escapeHtml(state.settings.ollama_base_url || "http://localhost:11434")}</code>. Make sure Ollama is running on your machine.</p>
+          <div class="onboarding-actions">
+            <button type="button" class="primary-button" id="retryOllamaBtn">🔄 Retry Connection</button>
+            <button type="button" class="ghost-button" id="openOllamaSettingsBtn">⚙️ Edit Settings</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (noModels) {
+    html = `
+      <div class="onboarding-container">
+        <div class="onboarding-card no-models">
+          <span class="onboarding-icon">🤖</span>
+          <h3>No Models Installed</h3>
+          <p>Ollama is connected, but you don't have any models downloaded yet. Run one of these commands in your terminal to pull a model:</p>
+          
+          <div class="model-suggestion-grid">
+            <div class="model-suggestion-item">
+              <div class="model-suggestion-name">
+                <span>Qwen 2.5 (7B)</span>
+                <span style="color: var(--accent); font-size: 0.8em;">Recommended Chat</span>
+              </div>
+              <div class="model-suggestion-desc">Excellent for general tasks, programming, and local tools execution.</div>
+              <div class="onboarding-code-wrapper" style="margin-top: 8px; margin-bottom: 0;">
+                <span class="onboarding-code">ollama pull qwen2.5:7b</span>
+                <button type="button" class="onboarding-copy-btn" id="copyQwenBtn">Copy</button>
+              </div>
+            </div>
+            
+            <div class="model-suggestion-item">
+              <div class="model-suggestion-name">
+                <span>Llama 3 (8B)</span>
+              </div>
+              <div class="model-suggestion-desc">Meta's popular general purpose model. Balanced and smart.</div>
+              <div class="onboarding-code-wrapper" style="margin-top: 8px; margin-bottom: 0;">
+                <span class="onboarding-code">ollama pull llama3</span>
+                <button type="button" class="onboarding-copy-btn" id="copyLlamaBtn">Copy</button>
+              </div>
+            </div>
+
+            <div class="model-suggestion-item">
+              <div class="model-suggestion-name">
+                <span>Nomic Embed Text</span>
+                <span style="color: var(--accent-2); font-size: 0.8em;">For Semantic Memory</span>
+              </div>
+              <div class="model-suggestion-desc">High quality embedding model required for semantic memory (RAG).</div>
+              <div class="onboarding-code-wrapper" style="margin-top: 8px; margin-bottom: 0;">
+                <span class="onboarding-code">ollama pull nomic-embed-text</span>
+                <button type="button" class="onboarding-copy-btn" id="copyNomicBtn">Copy</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="onboarding-actions">
+            <button type="button" class="primary-button" id="refreshModelsBtn">🔄 Refresh Models List</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } else if (noDefaultModel) {
+    html = `
+      <div class="onboarding-container">
+        <div class="onboarding-card no-default">
+          <span class="onboarding-icon">⚙️</span>
+          <h3>Default Model Required</h3>
+          <p>Ollama is connected and you have models installed, but no default model is assigned for chat operations yet.</p>
+          <div class="onboarding-actions">
+            <button type="button" class="primary-button" id="assignDefaultModelBtn">⚡ Assign Default Model</button>
+          </div>
+        </div>
+      </div>
+    `;
+  } else {
+    html = `
+      <div class="onboarding-container">
+        <div class="onboarding-card" style="border-color: rgba(255,255,255,0.05);">
+          <span class="onboarding-icon">💬</span>
+          <h3>Start a new conversation</h3>
+          <p>Send a message below to start chatting with <strong>${escapeHtml(state.activeModel)}</strong>. You can ask questions, write code, run workspace goals, or load skills.</p>
+        </div>
+      </div>
+    `;
+  }
+
+  els.messages.innerHTML = html;
+
+  // Bind event listeners for onboarding actions
+  const retryBtn = document.getElementById("retryOllamaBtn");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", async () => {
+      retryBtn.disabled = true;
+      retryBtn.textContent = "Connecting...";
+      await loadModels();
+      retryBtn.disabled = false;
+      retryBtn.textContent = "🔄 Retry Connection";
+    });
+  }
+
+  const openSettingsBtn = document.getElementById("openOllamaSettingsBtn");
+  if (openSettingsBtn) {
+    openSettingsBtn.addEventListener("click", () => {
+      els.openSettings.click();
+    });
+  }
+
+  const refreshBtn = document.getElementById("refreshModelsBtn");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "Refreshing...";
+      await loadModels();
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "🔄 Refresh Models List";
+    });
+  }
+
+  const assignBtn = document.getElementById("assignDefaultModelBtn");
+  if (assignBtn) {
+    assignBtn.addEventListener("click", () => {
+      els.openModels.click();
+      const tabRolesBtn = document.getElementById("modelsTabRolesBtn");
+      if (tabRolesBtn) {
+        tabRolesBtn.click();
+      }
+    });
+  }
+
+  // Copy buttons
+  const copyQwen = document.getElementById("copyQwenBtn");
+  if (copyQwen) {
+    copyQwen.addEventListener("click", () => {
+      navigator.clipboard.writeText("ollama pull qwen2.5:7b");
+      showToast("Copied to clipboard!", "success");
+    });
+  }
+  const copyLlama = document.getElementById("copyLlamaBtn");
+  if (copyLlama) {
+    copyLlama.addEventListener("click", () => {
+      navigator.clipboard.writeText("ollama pull llama3");
+      showToast("Copied to clipboard!", "success");
+    });
+  }
+  const copyNomic = document.getElementById("copyNomicBtn");
+  if (copyNomic) {
+    copyNomic.addEventListener("click", () => {
+      navigator.clipboard.writeText("ollama pull nomic-embed-text");
+      showToast("Copied to clipboard!", "success");
+    });
+  }
 }
 
 function getToolDisplayName(name, parsedArgs) {

@@ -2,15 +2,18 @@ package config
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type Config struct {
@@ -297,6 +300,8 @@ func defaultInteractiveConfig(baseURL string) Config {
 	}
 }
 
+var checkOllamaModelsHook func(string) ([]string, error)
+
 func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	reader := bufio.NewReader(in)
 
@@ -308,17 +313,95 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	cfg := defaultInteractiveConfig("http://localhost:11434")
 	cfg.ServerEnabled = serverEnabled
 
-	if serverEnabled {
-		baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
-		if err != nil {
-			return err
-		}
-		normalized, err := NormalizeBaseURL(baseURL)
-		if err != nil {
-			return err
-		}
-		cfg.OllamaBaseURL = normalized
+	baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
+	if err != nil {
+		return err
+	}
+	normalized, err := NormalizeBaseURL(baseURL)
+	if err != nil {
+		return err
+	}
+	cfg.OllamaBaseURL = normalized
 
+	fmt.Fprintln(out, "Connecting to Ollama...")
+	var defaultModel string
+	var models []string
+	var pingErr error
+	if checkOllamaModelsHook != nil {
+		models, pingErr = checkOllamaModelsHook(normalized)
+	} else {
+		models, pingErr = checkOllamaModels(normalized)
+	}
+	if pingErr != nil {
+		fmt.Fprintf(out, "⚠️ Warning: Could not connect to Ollama at %s: %v\n", normalized, pingErr)
+		fmt.Fprintln(out, "Make sure Ollama is running (run 'ollama serve' or open the Ollama desktop app).")
+		continueAnyway, err := askBool(reader, out, "Continue with this URL anyway", true)
+		if err != nil {
+			return err
+		}
+		if !continueAnyway {
+			return errors.New("setup aborted by user due to unreachable Ollama")
+		}
+		defaultModel, err = ask(reader, out, "Enter default chat model name to use", "")
+		if err != nil {
+			return err
+		}
+	} else if len(models) == 0 {
+		fmt.Fprintln(out, "⚠️ No local models found in Ollama.")
+		fmt.Fprintln(out, "To pull a model later, use 'ollama pull <model-name>' (e.g. 'ollama pull qwen2.5:7b').")
+		defaultModel, err = ask(reader, out, "Enter default chat model name to use (leave empty to skip)", "")
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Fprintln(out, "\nAvailable Ollama models:")
+		for i, m := range models {
+			fmt.Fprintf(out, "  %d) %s\n", i+1, m)
+		}
+		idxStr, err := ask(reader, out, "Select default chat model (enter number or name)", "1")
+		if err != nil {
+			return err
+		}
+		idxStr = strings.TrimSpace(idxStr)
+		if idx, err := strconv.Atoi(idxStr); err == nil && idx > 0 && idx <= len(models) {
+			defaultModel = models[idx-1]
+		} else if idxStr != "" {
+			matched := false
+			for _, m := range models {
+				if strings.EqualFold(m, idxStr) {
+					defaultModel = m
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				defaultModel = idxStr
+			}
+		} else {
+			defaultModel = models[0]
+		}
+
+		// Auto-detect embedding, vision, and image models from the list
+		for _, m := range models {
+			mLower := strings.ToLower(m)
+			if cfg.OllamaModelEmbed == "" && (strings.Contains(mLower, "embed") || strings.Contains(mLower, "nomic") || strings.Contains(mLower, "bge")) {
+				cfg.OllamaModelEmbed = m
+				fmt.Fprintf(out, "Auto-assigned EMBED role to: %s\n", m)
+			}
+			if cfg.OllamaModelVision == "" && (strings.Contains(mLower, "vision") || strings.Contains(mLower, "vl") || strings.Contains(mLower, "llava") || strings.Contains(mLower, "minicpm")) {
+				cfg.OllamaModelVision = m
+				fmt.Fprintf(out, "Auto-assigned VISION role to: %s\n", m)
+			}
+			if cfg.OllamaModelImage == "" && (strings.Contains(mLower, "flux") || strings.Contains(mLower, "diffusion") || strings.Contains(mLower, "sdxl")) {
+				cfg.OllamaModelImage = m
+				fmt.Fprintf(out, "Auto-assigned IMAGE role to: %s\n", m)
+			}
+		}
+	}
+
+	cfg.OllamaDefaultModel = strings.TrimSpace(defaultModel)
+
+	if serverEnabled {
 		port, err := ask(reader, out, "Web server port", "8080")
 		if err != nil {
 			return err
@@ -353,16 +436,6 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 		}
 		cfg.TelegramBotToken = strings.TrimSpace(token)
 	} else {
-		baseURL, err := ask(reader, out, "Ollama base URL", "http://localhost:11434")
-		if err != nil {
-			return err
-		}
-		normalized, err := NormalizeBaseURL(baseURL)
-		if err != nil {
-			return err
-		}
-		cfg.OllamaBaseURL = normalized
-
 		token, err := ask(reader, out, "Telegram bot token (leave empty to skip)", "")
 		if err != nil {
 			return err
@@ -375,6 +448,36 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 	}
 
 	return SaveBasic(path, cfg)
+}
+
+type ollamaTag struct {
+	Name string `json:"name"`
+}
+type ollamaTagsResponse struct {
+	Models []ollamaTag `json:"models"`
+}
+
+func checkOllamaModels(baseURL string) ([]string, error) {
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get(baseURL + "/api/tags")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	var res ollamaTagsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+		return nil, err
+	}
+	var models []string
+	for _, m := range res.Models {
+		if m.Name != "" {
+			models = append(models, m.Name)
+		}
+	}
+	return models, nil
 }
 
 func SaveBasic(path string, cfg Config) error {

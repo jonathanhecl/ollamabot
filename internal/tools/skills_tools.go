@@ -302,17 +302,23 @@ func findSimilarSkill(skillsPath, name, description string) (string, error) {
 
 // CreateSkill creates a new skill directory and SKILL.md.
 func CreateSkill(skillsPath, name, description, homepage, instructions string) error {
+	return createSkillInternal(skillsPath, name, description, homepage, instructions, false)
+}
+
+func createSkillInternal(skillsPath, name, description, homepage, instructions string, skipSimilarity bool) error {
 	safeName := cleanSkillName(name)
 	if safeName == "" {
 		return fmt.Errorf("invalid skill name")
 	}
 
-	similar, err := findSimilarSkill(skillsPath, name, description)
-	if err != nil {
-		return fmt.Errorf("failed to check for existing skills: %w", err)
-	}
-	if similar != "" {
-		return fmt.Errorf("a similar skill already exists: '%s'. Use skill_edit to modify it instead of creating a duplicate", similar)
+	if !skipSimilarity {
+		similar, err := findSimilarSkill(skillsPath, name, description)
+		if err != nil {
+			return fmt.Errorf("failed to check for existing skills: %w", err)
+		}
+		if similar != "" {
+			return fmt.Errorf("a similar skill already exists: '%s'. Use skill_edit to modify it instead of creating a duplicate", similar)
+		}
 	}
 
 	dir := filepath.Join(skillsPath, safeName)
@@ -407,7 +413,7 @@ func EditSkill(skillsPath, name, description, homepage, instructions string) err
 		finalInst = currentInstructions
 	}
 
-	return CreateSkill(skillsPath, safeName, finalDesc, finalHome, finalInst)
+	return createSkillInternal(skillsPath, safeName, finalDesc, finalHome, finalInst, true)
 }
 
 // DeleteSkill deletes a skill folder.
