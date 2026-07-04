@@ -656,6 +656,9 @@ func NormalizeBaseURL(raw string) (string, error) {
 	if raw == "" {
 		return "", errors.New("OLLAMA_BASE_URL is empty")
 	}
+	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
+		raw = "http://" + raw
+	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "", err

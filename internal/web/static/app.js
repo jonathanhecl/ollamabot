@@ -1719,6 +1719,11 @@ function updateOllamaStatus(connected, version, fromCache) {
       els.cacheState.style.color = "var(--bad)";
     }
   }
+
+  // Update onboarding empty state reactively on status change
+  if (state.messages && state.messages.length === 0) {
+    renderMessages();
+  }
 }
 
 async function loadModels() {

@@ -40,9 +40,13 @@ func TestLoadDefaultsAndEnvFile(t *testing.T) {
 	}
 }
 
-func TestNormalizeBaseURLRejectsHostlessValue(t *testing.T) {
-	if _, err := NormalizeBaseURL("localhost:11434"); err == nil {
-		t.Fatal("expected error")
+func TestNormalizeBaseURLForgivesHostlessValue(t *testing.T) {
+	got, err := NormalizeBaseURL("localhost:11434")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "http://localhost:11434" {
+		t.Fatalf("expected http://localhost:11434, got %q", got)
 	}
 }
 
