@@ -31,13 +31,19 @@
           <p class="eyebrow">OllamaBot</p>
         </div>
         <div class="actions">
-          <button id="openMemory" class="ghost-button" type="button">Memory</button>
+          <button id="openMcp" class="ghost-button" type="button">MCP</button>
           <button id="openSkills" class="ghost-button" type="button">Skills</button>
-          <button id="openProjects" class="ghost-button" type="button">Projects</button>
-          <button id="openFeedback" class="ghost-button" type="button">Feedback</button>
           <button id="openSettings" class="ghost-button" type="button">Settings</button>
           <button id="openModels" class="primary-button" type="button">Models</button>
-          <button id="logoutBtn" class="ghost-button" type="button" style="display: none;">Log Out</button>
+          <div class="dropdown">
+            <button class="ghost-button dropdown-toggle" type="button">More ▾</button>
+            <div class="dropdown-menu">
+              <button id="openMemory" type="button">Memory</button>
+              <button id="openProjects" type="button">Projects</button>
+              <button id="openFeedback" type="button">Feedback</button>
+              <button id="logoutBtn" type="button" style="display: none;">Log Out</button>
+            </div>
+          </div>
         </div>
       </header>
 
@@ -178,6 +184,90 @@
             <tbody id="skillsListBody"></tbody>
           </table>
         </div>
+      </div>
+    </dialog>
+
+    <dialog id="mcpDialog" class="modal mcp-modal">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Agent Capabilities</p>
+          <h2>MCP Servers</h2>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button id="addMcpServerBtn" class="primary-button" type="button" style="min-height:34px; font-size:12.5px;">Add Server</button>
+          <button class="ghost-button" value="close">Close</button>
+        </div>
+      </form>
+      <div class="mcp-modal-body">
+        <div class="mcp-stats-bar">
+          <span id="mcpCount">Total Servers: 0</span>
+        </div>
+        <div class="mcp-list-container">
+          <table class="mcp-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Command</th>
+                <th>Status</th>
+                <th>Safety</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="mcpListBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="mcpEditDialog" class="modal" style="max-width: 640px; width: 90%;">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow" id="mcpEditEyebrow">Add/Edit Server</p>
+          <h2 id="mcpEditTitle">MCP Server</h2>
+        </div>
+        <button class="ghost-button" value="close">Cancel</button>
+      </form>
+      <form id="mcpEditForm" class="mcp-edit-form" style="display: flex; flex-direction: column; gap: 14px; padding: 20px;">
+        <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
+          Server Name
+          <input id="mcpEditName" type="text" placeholder="sqlite" required style="width: 100%; min-height: 38px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px;" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
+          Executable Command
+          <input id="mcpEditCommand" type="text" placeholder="uvx or node" required style="width: 100%; min-height: 38px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px;" />
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
+          Arguments (one per line)
+          <textarea id="mcpEditArgs" rows="3" placeholder="mcp-server-sqlite&#10;--db-path&#10;test.db" style="width: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px; resize: vertical;"></textarea>
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
+          Environment Variables JSON (optional)
+          <textarea id="mcpEditEnv" rows="3" placeholder='{"API_KEY": "some-value"}' style="width: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px; resize: vertical;"></textarea>
+        </label>
+        <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-weight: bold; margin-top: 6px; margin-bottom: 6px; cursor: pointer; font-size: 13.5px;">
+          <input id="mcpEditSafe" type="checkbox" style="width:16px; height:16px; cursor:pointer;" />
+          Mark all tools from this server as safe (bypass approvals)
+        </label>
+        <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
+          Safe Tools List (comma-separated, if not all safe)
+          <input id="mcpEditSafeTools" type="text" placeholder="read_only_query, list_tables" style="width: 100%; min-height: 38px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px;" />
+        </label>
+        <div class="mcp-edit-actions" style="margin-top: 10px; display: flex; justify-content: flex-end;">
+          <button id="mcpEditSaveBtn" class="primary-button" type="submit" style="min-height:38px; padding: 0 20px;">Save Server</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="mcpToolsDialog" class="modal" style="max-width: 720px; width: 90%;">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow" id="mcpToolsEyebrow">Discovered Tools</p>
+          <h2 id="mcpToolsTitle">Server Tools</h2>
+        </div>
+        <button class="ghost-button" value="close">Close</button>
+      </form>
+      <div class="mcp-tools-body" style="padding: 20px; max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+        <div id="mcpToolsList" style="display: flex; flex-direction: column; gap: 14px;"></div>
       </div>
     </dialog>
 

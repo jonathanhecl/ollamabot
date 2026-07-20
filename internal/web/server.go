@@ -235,6 +235,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/skills/{name}", s.handleGetSkill)
 	mux.HandleFunc("PUT /api/skills/{name}", s.handleUpdateSkill)
 	mux.HandleFunc("DELETE /api/skills/{name}", s.handleDeleteSkill)
+	mux.HandleFunc("GET /api/mcp", s.handleListMCPServers)
+	mux.HandleFunc("GET /api/mcp/{name}", s.handleGetMCPServer)
+	mux.HandleFunc("POST /api/mcp/{name}", s.handleUpdateMCPServer)
+	mux.HandleFunc("DELETE /api/mcp/{name}", s.handleDeleteMCPServer)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
@@ -1804,6 +1808,132 @@ func (s *Server) skillsPath() string {
 		path = "skills"
 	}
 	return path
+}
+
+type updateMCPServerRequest struct {
+	Command   string            `json:"command"`
+	Args      []string          `json:"args"`
+	Env       map[string]string `json:"env,omitempty"`
+	Safe      bool              `json:"safe"`
+	SafeTools []string          `json:"safeTools,omitempty"`
+}
+
+func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	mcpMgr := s.mcpManager
+	s.mu.RUnlock()
+
+	if mcpMgr == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"servers": map[string]any{}, "enabled": false})
+		return
+	}
+
+	status, err := mcpMgr.GetServersStatus()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"servers": status, "enabled": true})
+}
+
+func (s *Server) handleGetMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("server name is required"))
+		return
+	}
+
+	s.mu.RLock()
+	mcpMgr := s.mcpManager
+	s.mu.RUnlock()
+
+	if mcpMgr == nil {
+		writeError(w, http.StatusBadRequest, errors.New("mcp is disabled"))
+		return
+	}
+
+	status, err := mcpMgr.GetServersStatus()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	srv, ok := status[name]
+	if !ok {
+		writeError(w, http.StatusNotFound, fmt.Errorf("server %q not found", name))
+		return
+	}
+
+	writeJSON(w, http.StatusOK, srv)
+}
+
+func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("server name is required"))
+		return
+	}
+
+	s.mu.RLock()
+	mcpMgr := s.mcpManager
+	s.mu.RUnlock()
+
+	if mcpMgr == nil {
+		writeError(w, http.StatusBadRequest, errors.New("mcp is disabled"))
+		return
+	}
+
+	var req updateMCPServerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	srvCfg := mcp.ServerConfig{
+		Command:   req.Command,
+		Args:      req.Args,
+		Env:       req.Env,
+		Safe:      req.Safe,
+		SafeTools: req.SafeTools,
+	}
+
+	if err := mcpMgr.AddOrUpdateServer(r.Context(), name, srvCfg); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	status, err := mcpMgr.GetServersStatus()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, status[name])
+}
+
+func (s *Server) handleDeleteMCPServer(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimSpace(r.PathValue("name"))
+	if name == "" {
+		writeError(w, http.StatusBadRequest, errors.New("server name is required"))
+		return
+	}
+
+	s.mu.RLock()
+	mcpMgr := s.mcpManager
+	s.mu.RUnlock()
+
+	if mcpMgr == nil {
+		writeError(w, http.StatusBadRequest, errors.New("mcp is disabled"))
+		return
+	}
+
+	if err := mcpMgr.DeleteServer(r.Context(), name); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "name": name})
 }
 
 func (s *Server) handleListSkills(w http.ResponseWriter, r *http.Request) {
