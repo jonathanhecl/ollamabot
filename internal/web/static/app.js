@@ -272,6 +272,26 @@ const els = {
   skillEditHomepage: document.querySelector("#skillEditHomepage"),
   skillEditInstructions: document.querySelector("#skillEditInstructions"),
 
+  // MCP DOM Elements
+  openMcp: document.querySelector("#openMcp"),
+  mcpDialog: document.querySelector("#mcpDialog"),
+  mcpCount: document.querySelector("#mcpCount"),
+  mcpListBody: document.querySelector("#mcpListBody"),
+  addMcpServerBtn: document.querySelector("#addMcpServerBtn"),
+  mcpEditDialog: document.querySelector("#mcpEditDialog"),
+  mcpEditForm: document.querySelector("#mcpEditForm"),
+  mcpEditName: document.querySelector("#mcpEditName"),
+  mcpEditCommand: document.querySelector("#mcpEditCommand"),
+  mcpEditArgs: document.querySelector("#mcpEditArgs"),
+  mcpEditEnv: document.querySelector("#mcpEditEnv"),
+  mcpEditSafe: document.querySelector("#mcpEditSafe"),
+  mcpEditSafeTools: document.querySelector("#mcpEditSafeTools"),
+  mcpEditEyebrow: document.querySelector("#mcpEditEyebrow"),
+  mcpEditTitle: document.querySelector("#mcpEditTitle"),
+  mcpToolsDialog: document.querySelector("#mcpToolsDialog"),
+  mcpToolsTitle: document.querySelector("#mcpToolsTitle"),
+  mcpToolsList: document.querySelector("#mcpToolsList"),
+
   // Projects DOM Elements
   openProjects: document.querySelector("#openProjects"),
   projectsDialog: document.querySelector("#projectsDialog"),
@@ -314,6 +334,10 @@ els.openMemory.addEventListener("click", () => {
 
 els.openSkills.addEventListener("click", () => {
   openSkillsExplorer();
+});
+
+els.openMcp.addEventListener("click", () => {
+  openMcpExplorer();
 });
 
 // Bind Projects click handler
@@ -735,6 +759,9 @@ setupBackdropClose(els.memoryTextDialog);
 setupBackdropClose(els.skillsDialog);
 setupBackdropClose(els.skillViewDialog);
 setupBackdropClose(els.skillEditDialog);
+setupBackdropClose(els.mcpDialog);
+setupBackdropClose(els.mcpEditDialog);
+setupBackdropClose(els.mcpToolsDialog);
 setupBackdropClose(els.projectsDialog);
 
 
@@ -5616,6 +5643,236 @@ document.addEventListener("click", (e) => {
   } else {
     input.type = "password";
     toggleBtn.textContent = "👁️";
+  }
+});
+
+// --- MCP MANAGER PANEL ---
+
+let editingMcpName = null;
+
+async function openMcpExplorer() {
+  els.mcpDialog.showModal();
+  await loadAndRenderMcp();
+}
+
+async function loadAndRenderMcp() {
+  try {
+    const res = await fetch("/api/mcp");
+    if (!res.ok) throw new Error("Failed to fetch MCP servers");
+    const data = await res.json();
+    const servers = data.servers || {};
+    
+    const serverKeys = Object.keys(servers);
+    els.mcpCount.textContent = `Total Servers: ${serverKeys.length}`;
+    
+    els.mcpListBody.innerHTML = "";
+    if (serverKeys.length === 0) {
+      els.mcpListBody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align: center; padding: 20px; color: var(--muted);">
+            No MCP servers configured. Click "Add Server" to configure one.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+    
+    serverKeys.forEach((key) => {
+      const srv = servers[key];
+      const name = srv.name || key;
+      const cmdStr = `${srv.command} ${(srv.args || []).join(" ")}`;
+      
+      const badgeClass = srv.status === "running" ? "badge-running" : "badge-stopped";
+      const statusBadge = `<span class="${badgeClass}">${srv.status}</span>`;
+      
+      let safetyStr = "Default (Requires Approvals)";
+      if (srv.safe) {
+        safetyStr = "Safe (No Approvals)";
+      } else if (srv.safeTools && srv.safeTools.length > 0) {
+        safetyStr = `Safe tools: ${srv.safeTools.join(", ")}`;
+      }
+      
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td><strong>${escapeHtml(name)}</strong></td>
+        <td style="font-family: monospace; font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(cmdStr)}">${escapeHtml(cmdStr)}</td>
+        <td>${statusBadge}</td>
+        <td style="color: var(--muted); font-size: 12px;">${escapeHtml(safetyStr)}</td>
+        <td style="text-align: right; white-space: nowrap;">
+          <button class="ghost-button view-mcp-tools-btn" data-name="${escapeAttr(name)}" type="button" style="font-size: 11px; padding: 2px 8px;">Tools</button>
+          <button class="ghost-button edit-mcp-btn" data-name="${escapeAttr(name)}" type="button" style="font-size: 11px; padding: 2px 8px;">Edit</button>
+          <button class="ghost-button delete-mcp-btn" data-name="${escapeAttr(name)}" type="button" style="color: #ff6b6b; border-color: rgba(255,107,107,0.3); font-size: 11px; padding: 2px 8px;">Delete</button>
+        </td>
+      `;
+      els.mcpListBody.appendChild(tr);
+    });
+    
+    els.mcpListBody.querySelectorAll(".view-mcp-tools-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openMcpToolsView(btn.dataset.name, servers[btn.dataset.name]));
+    });
+    els.mcpListBody.querySelectorAll(".edit-mcp-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openMcpEdit(btn.dataset.name, servers[btn.dataset.name]));
+    });
+    els.mcpListBody.querySelectorAll(".delete-mcp-btn").forEach((btn) => {
+      btn.addEventListener("click", () => deleteMcpServer(btn.dataset.name));
+    });
+  } catch (err) {
+    console.error(err);
+    els.mcpListBody.innerHTML = `
+      <tr>
+        <td colspan="5" style="text-align: center; padding: 20px; color: #ff6b6b;">
+          Error loading MCP servers: ${escapeHtml(err.message)}
+        </td>
+      </tr>
+    `;
+  }
+}
+
+function openMcpToolsView(name, server) {
+  els.mcpToolsTitle.textContent = `${name} Discovered Tools`;
+  els.mcpToolsList.innerHTML = "";
+  
+  const tools = server.tools || [];
+  if (tools.length === 0) {
+    els.mcpToolsList.innerHTML = `<p style="text-align: center; padding: 20px; color: var(--muted); font-size: 13.5px;">No tools discovered. Verify that the server is running and command config is correct.</p>`;
+  } else {
+    tools.forEach((tool) => {
+      const card = document.createElement("div");
+      card.className = "mcp-tool-card";
+      
+      const properties = tool.inputSchema ? tool.inputSchema.properties : null;
+      const reqFields = tool.inputSchema ? tool.inputSchema.required : null;
+      
+      let schemaJson = "";
+      if (properties) {
+        schemaJson = JSON.stringify({
+          type: tool.inputSchema.type || "object",
+          properties: properties,
+          required: reqFields || []
+        }, null, 2);
+      }
+      
+      card.innerHTML = `
+        <div class="mcp-tool-name">${escapeHtml(tool.name)}</div>
+        <div class="mcp-tool-desc">${escapeHtml(tool.description || "No description provided.")}</div>
+        ${schemaJson ? `<pre class="mcp-tool-schema">${escapeHtml(schemaJson)}</pre>` : ""}
+      `;
+      els.mcpToolsList.appendChild(card);
+    });
+  }
+  
+  els.mcpToolsDialog.showModal();
+}
+
+function openMcpEdit(name = "", server = null) {
+  if (server) {
+    editingMcpName = name;
+    els.mcpEditTitle.textContent = `Edit Server: ${name}`;
+    els.mcpEditEyebrow.textContent = "Edit MCP Configuration";
+    
+    els.mcpEditName.value = name;
+    els.mcpEditName.readOnly = true;
+    els.mcpEditCommand.value = server.command || "";
+    els.mcpEditArgs.value = (server.args || []).join("\n");
+    
+    if (server.env && Object.keys(server.env).length > 0) {
+      els.mcpEditEnv.value = JSON.stringify(server.env, null, 2);
+    } else {
+      els.mcpEditEnv.value = "";
+    }
+    
+    els.mcpEditSafe.checked = !!server.safe;
+    els.mcpEditSafeTools.value = (server.safeTools || []).join(", ");
+  } else {
+    editingMcpName = null;
+    els.mcpEditTitle.textContent = "Add MCP Server";
+    els.mcpEditEyebrow.textContent = "New MCP Server";
+    
+    els.mcpEditName.value = "";
+    els.mcpEditName.readOnly = false;
+    els.mcpEditCommand.value = "";
+    els.mcpEditArgs.value = "";
+    els.mcpEditEnv.value = "";
+    els.mcpEditSafe.checked = false;
+    els.mcpEditSafeTools.value = "";
+  }
+  
+  els.mcpEditDialog.showModal();
+}
+
+async function deleteMcpServer(name) {
+  if (!confirm(`Are you sure you want to delete MCP server "${name}"?`)) return;
+  try {
+    const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to delete server");
+    }
+    showToast(`MCP server "${name}" deleted.`, "success");
+    await loadAndRenderMcp();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+els.addMcpServerBtn.addEventListener("click", () => openMcpEdit());
+
+els.mcpEditForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  
+  const name = els.mcpEditName.value.trim();
+  const command = els.mcpEditCommand.value.trim();
+  const argsVal = els.mcpEditArgs.value.trim();
+  const envVal = els.mcpEditEnv.value.trim();
+  const safe = els.mcpEditSafe.checked;
+  const safeToolsVal = els.mcpEditSafeTools.value.trim();
+  
+  if (!name || !command) {
+    showToast("Name and command are required", "error");
+    return;
+  }
+  
+  let args = [];
+  if (argsVal) {
+    args = argsVal.split("\n").map(line => line.trim()).filter(line => line.length > 0);
+  }
+  
+  let env = {};
+  if (envVal) {
+    try {
+      env = JSON.parse(envVal);
+      if (typeof env !== "object" || env === null || Array.isArray(env)) {
+        throw new Error("JSON must be a key-value object");
+      }
+    } catch (err) {
+      showToast(`Invalid Environment JSON: ${err.message}`, "error");
+      return;
+    }
+  }
+  
+  let safeTools = [];
+  if (safeToolsVal) {
+    safeTools = safeToolsVal.split(",").map(t => t.trim()).filter(t => t.length > 0);
+  }
+  
+  try {
+    const payload = { command, args, env, safe, safeTools };
+    const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || "Failed to save server");
+    }
+    
+    showToast(`MCP Server "${name}" saved successfully.`, "success");
+    els.mcpEditDialog.close();
+    await loadAndRenderMcp();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
   }
 });
 

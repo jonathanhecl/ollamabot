@@ -203,4 +203,81 @@ func TestManager(t *testing.T) {
 	if res != "echo: world" {
 		t.Errorf("expected 'echo: world', got %q", res)
 	}
+
+	// Test GetServersStatus
+	status, err := manager.GetServersStatus()
+	if err != nil {
+		t.Fatalf("GetServersStatus failed: %v", err)
+	}
+	if len(status) != 1 {
+		t.Errorf("expected status for 1 server, got %d", len(status))
+	}
+	mockStatus, ok := status["mock"]
+	if !ok {
+		t.Error("expected 'mock' server status to exist")
+	} else {
+		if mockStatus.Status != "running" {
+			t.Errorf("expected 'mock' status running, got %q", mockStatus.Status)
+		}
+		if len(mockStatus.Tools) != 2 {
+			t.Errorf("expected 2 tools on server status, got %d", len(mockStatus.Tools))
+		}
+	}
+
+	// Test AddOrUpdateServer (updating existing mock to be safe)
+	newSrv := ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		Safe:    true,
+	}
+	if err := manager.AddOrUpdateServer(ctx, "mock", newSrv); err != nil {
+		t.Fatalf("AddOrUpdateServer failed: %v", err)
+	}
+
+	status, err = manager.GetServersStatus()
+	if err != nil {
+		t.Fatalf("GetServersStatus failed: %v", err)
+	}
+	if len(status) != 1 {
+		t.Errorf("expected status for 1 server, got %d", len(status))
+	}
+	if !manager.IsSafe("risky_cmd") {
+		t.Error("expected 'risky_cmd' to be safe after updating mock to be safe")
+	}
+
+	// Test AddOrUpdateServer (adding a new server to delete)
+	tempSrv := ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		Safe:    true,
+	}
+	if err := manager.AddOrUpdateServer(ctx, "temp_mock", tempSrv); err != nil {
+		t.Fatalf("AddOrUpdateServer failed: %v", err)
+	}
+
+	status, err = manager.GetServersStatus()
+	if err != nil {
+		t.Fatalf("GetServersStatus failed: %v", err)
+	}
+	if len(status) != 2 {
+		t.Errorf("expected status for 2 servers after adding, got %d", len(status))
+	}
+
+	// Test DeleteServer
+	if err := manager.DeleteServer(ctx, "temp_mock"); err != nil {
+		t.Fatalf("DeleteServer failed: %v", err)
+	}
+
+	status, err = manager.GetServersStatus()
+	if err != nil {
+		t.Fatalf("GetServersStatus failed: %v", err)
+	}
+	if len(status) != 1 {
+		t.Errorf("expected status for 1 server after deletion, got %d", len(status))
+	}
+	if _, ok := status["temp_mock"]; ok {
+		t.Error("expected 'temp_mock' to be deleted from status")
+	}
 }
