@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "workspace/test.db"],
+      "env": {
+        "SOME_API_KEY": "value"
+      },
+      "safe": false,
+      "safeTools": ["query_read_only"]
+    }
+  }
+}
