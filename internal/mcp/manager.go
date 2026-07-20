@@ -51,7 +51,10 @@ func NewManager(configPath string) *Manager {
 func (m *Manager) Start(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.startNoLock(ctx)
+}
 
+func (m *Manager) startNoLock(ctx context.Context) error {
 	path := m.configPath
 	if !filepath.IsAbs(path) {
 		if exe, err := os.Executable(); err == nil {
@@ -116,7 +119,10 @@ func (m *Manager) Start(ctx context.Context) error {
 func (m *Manager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.stopNoLock()
+}
 
+func (m *Manager) stopNoLock() {
 	for name, client := range m.clients {
 		log.Printf("[MCP] Stopping server %q...", name)
 		_ = client.Close()
@@ -200,4 +206,151 @@ func (m *Manager) HasTool(toolName string) bool {
 	defer m.mu.RUnlock()
 	_, ok := m.tools[toolName]
 	return ok
+}
+
+type MCPServerStatus struct {
+	Name      string    `json:"name"`
+	Command   string    `json:"command"`
+	Args      []string  `json:"args"`
+	Env       map[string]string `json:"env,omitempty"`
+	Safe      bool      `json:"safe"`
+	SafeTools []string  `json:"safeTools,omitempty"`
+	Status    string    `json:"status"` // "running", "stopped"
+	Tools     []MCPTool `json:"tools,omitempty"`
+}
+
+func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	path := m.configPath
+	if !filepath.IsAbs(path) {
+		if exe, err := os.Executable(); err == nil {
+			path = filepath.Join(filepath.Dir(exe), m.configPath)
+		}
+	}
+
+	var cfg ConfigFile
+	file, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return make(map[string]MCPServerStatus), nil
+		}
+		return nil, fmt.Errorf("failed to open config: %w", err)
+	}
+	defer file.Close()
+
+	if err := json.NewDecoder(file).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("failed to parse config: %w", err)
+	}
+
+	result := make(map[string]MCPServerStatus)
+	for name, srvCfg := range cfg.McpServers {
+		status := "stopped"
+		if _, active := m.clients[name]; active {
+			status = "running"
+		}
+
+		var tools []MCPTool
+		for toolName, t := range m.tools {
+			if m.toolServer[toolName] == name {
+				tools = append(tools, t)
+			}
+		}
+
+		result[name] = MCPServerStatus{
+			Name:      name,
+			Command:   srvCfg.Command,
+			Args:      srvCfg.Args,
+			Env:       srvCfg.Env,
+			Safe:      srvCfg.Safe,
+			SafeTools: srvCfg.SafeTools,
+			Status:    status,
+			Tools:     tools,
+		}
+	}
+
+	return result, nil
+}
+
+func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg ServerConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	path := m.configPath
+	if !filepath.IsAbs(path) {
+		if exe, err := os.Executable(); err == nil {
+			path = filepath.Join(filepath.Dir(exe), m.configPath)
+		}
+	}
+
+	var cfg ConfigFile
+	file, err := os.Open(path)
+	if err == nil {
+		_ = json.NewDecoder(file).Decode(&cfg)
+		file.Close()
+	}
+
+	if cfg.McpServers == nil {
+		cfg.McpServers = make(map[string]ServerConfig)
+	}
+
+	cfg.McpServers[name] = srvCfg
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write mcp config: %w", err)
+	}
+
+	m.stopNoLock()
+	return m.startNoLock(ctx)
+}
+
+func (m *Manager) DeleteServer(ctx context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	path := m.configPath
+	if !filepath.IsAbs(path) {
+		if exe, err := os.Executable(); err == nil {
+			path = filepath.Join(filepath.Dir(exe), m.configPath)
+		}
+	}
+
+	var cfg ConfigFile
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("failed to open config: %w", err)
+	}
+	err = json.NewDecoder(file).Decode(&cfg)
+	file.Close()
+	if err != nil {
+		return fmt.Errorf("failed to decode config: %w", err)
+	}
+
+	if cfg.McpServers == nil {
+		return fmt.Errorf("server %q not found", name)
+	}
+
+	if _, exists := cfg.McpServers[name]; !exists {
+		return fmt.Errorf("server %q not found", name)
+	}
+
+	delete(cfg.McpServers, name)
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write mcp config: %w", err)
+	}
+
+	m.stopNoLock()
+	return m.startNoLock(ctx)
 }
