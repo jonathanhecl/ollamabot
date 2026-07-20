@@ -17,6 +17,7 @@ In a single Telegram chat session, you can orchestrate multiple local models for
 ## Features
 
 - **Dual channels**: Web UI (SSE streaming, settings, session browser) and Telegram bot (polling, inline keyboards, media download)
+- **Model Context Protocol (MCP)**: full support for third-party MCP tool servers (stdio JSON-RPC) with active process management and dynamic schema registration
 - **28 agent tools**: web search, file read/write/edit, regex search, code navigation, unified diff, shell commands, memory, skills, plans, image generation, and more
 - **Multimodal**: image and audio attachments with dedicated model routing and structured transcription
 - **Long-term memory**: RAG with local embeddings — the agent stores, searches, and consolidates knowledge autonomously
@@ -268,6 +269,8 @@ The agent has access to the following tools. Risky operations (file writes, shel
 
 - **RAG memory**: long-term semantic memory using local embeddings. The agent autonomously manages what to store, search, and delete. Pre-fetched on each turn with a 0.70 similarity threshold. Consolidation prevents duplicates above 0.85 cosine similarity.
 
+- **Model Context Protocol (MCP)**: integrates external third-party servers as background subprocesses over stdio. Custom safety configurations let you define `"safe": true` for entire servers or list specific safe tools under `"safeTools"`; all other tools automatically trigger the interactive approval loop. Allows hot-reloading configurations in real-time.
+
 - **Plan system**: structured multi-step plans with user approval, per-step completion tracking, deferred continuation, and background resumption via `PlanMonitor`.
 
 - **User feedback loop**: text feedback (corrections, preferences, praise) saved via Web UI or Telegram `/feedback`, processed during sleep mode learning cycles.
@@ -301,6 +304,7 @@ Generated references: [`docs/ollama-reference.md`](docs/ollama-reference.md) and
 - Settings for Ollama URL, model roles, sleep mode, web search, Telegram, paths
 - Memory explorer: search, add, delete, and re-index RAG entries
 - Skills explorer: list, view, edit, and delete custom skills
+- MCP explorer: list, inspect subprocess status badges, reload servers, browse active tool schemas, add, edit, and delete configurations
 - Project dashboard for autonomous tasks
 - Real-time sync via SSE between Web and Telegram activity
 - Optional password (`SERVER_PASSWORD`) and LAN exposure (`SERVER_EXPOSE_NETWORK`)
