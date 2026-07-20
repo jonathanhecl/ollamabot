@@ -12,6 +12,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/mcp"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
@@ -32,6 +33,7 @@ type Deps struct {
 	SessionStore *sessions.Store
 	MemoryStore  *memory.Store
 	CachePath    string
+	MCPManager   *mcp.Manager
 
 	ApprovalHandler         tools.ApprovalHandler
 	ApprovalService         *sessions.ApprovalService
@@ -181,6 +183,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	if deps.OnPlanProgress != nil {
 		registry.SetPlanProgressHandler(deps.OnPlanProgress)
 	}
+	registry.SetMCPManager(deps.MCPManager)
 	return registry
 }
 

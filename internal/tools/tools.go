@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/memory"
+	"github.com/jonathanhecl/ollamabot/internal/mcp"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
@@ -65,6 +66,7 @@ type Registry struct {
 	sessionStore            *sessions.Store
 	planProgressHandler     PlanProgressHandler
 	approvalProgressHandler ApprovalProgressHandler
+	mcpManager              *mcp.Manager
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -157,6 +159,32 @@ func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
 
 func (r *Registry) SetApprovalProgressHandler(h ApprovalProgressHandler) {
 	r.approvalProgressHandler = h
+}
+
+func (r *Registry) SetMCPManager(m *mcp.Manager) {
+	r.mcpManager = m
+	if m == nil {
+		return
+	}
+	for _, tool := range m.GetTools() {
+		r.enabled[tool.Name] = true
+		properties := map[string]any{}
+		for k, v := range tool.InputSchema.Properties {
+			properties[k] = v
+		}
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters: map[string]any{
+					"type":       tool.InputSchema.Type,
+					"properties": properties,
+					"required":   tool.InputSchema.Required,
+				},
+			},
+		})
+	}
 }
 
 // ActiveSessionPlan returns the current session plan, if any.
@@ -967,8 +995,25 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 
 	// Risk check: interactive chat asks for shell commands; autonomous runs safe commands
 	// without interruption and asks only for potentially harmful actions.
-	if (r.approvalService != nil || r.approvalHandler != nil) && (name == "Write" || name == "Edit" || name == "execute_command") {
-		assessment := ClassifyToolRisk(name, args, r.workspace)
+	isMCP := r.mcpManager != nil && r.mcpManager.HasTool(name)
+	needsApprovalCheck := false
+	var assessment RiskAssessment
+
+	if isMCP {
+		if !r.mcpManager.IsSafe(name) {
+			needsApprovalCheck = true
+			assessment = RiskAssessment{
+				Level:   RiskNeedsApproval,
+				Label:   fmt.Sprintf("Execute MCP tool %q", name),
+				Summary: fmt.Sprintf("Executing MCP tool %q from third-party server.", name),
+			}
+		}
+	} else if name == "Write" || name == "Edit" || name == "execute_command" {
+		needsApprovalCheck = true
+		assessment = ClassifyToolRisk(name, args, r.workspace)
+	}
+
+	if (r.approvalService != nil || r.approvalHandler != nil) && needsApprovalCheck {
 		if assessment.Level == RiskBlocked {
 			return "", fmt.Errorf("tool %q blocked: %s", name, assessment.Summary)
 		}
@@ -1035,7 +1080,13 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	defer cancel()
 
 	start := time.Now()
-	result, err := r.execute(ctx, name, args)
+	var result string
+	var err error
+	if isMCP {
+		result, err = r.mcpManager.Execute(ctx, name, args)
+	} else {
+		result, err = r.execute(ctx, name, args)
+	}
 	duration := time.Since(start)
 	if err != nil {
 		log.Printf("[tool] %s error (%v): %v", name, duration, err)

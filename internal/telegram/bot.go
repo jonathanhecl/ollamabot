@@ -27,6 +27,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
+	"github.com/jonathanhecl/ollamabot/internal/mcp"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
@@ -252,6 +253,7 @@ type Bot struct {
 	envPath              string
 	msgIDMu              sync.RWMutex
 	msgIDMap             map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
+	mcpManager           *mcp.Manager
 }
 
 func (b *Bot) config() config.Config {
@@ -290,6 +292,10 @@ func NewBotWithEnv(cfg *config.Manager, client *ollama.Client, envPath string) *
 
 func (b *Bot) SetSleepManager(sm *learning.SleepManager) {
 	b.sleepMgr = sm
+}
+
+func (b *Bot) SetMCPManager(m *mcp.Manager) {
+	b.mcpManager = m
 }
 
 func (b *Bot) SetAutonomousManager(am *agent.AutonomousManager) {
@@ -1145,6 +1151,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		MemoryStore:     b.memoryStore,
 		CachePath:       snapshotPath(),
 		ApprovalService: b.approvalService,
+		MCPManager:      b.mcpManager,
 		ApprovalHandler: &telegramApprovalHandler{
 			bot:    b,
 			chatID: chatID,

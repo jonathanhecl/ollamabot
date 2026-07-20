@@ -23,6 +23,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
+	"github.com/jonathanhecl/ollamabot/internal/mcp"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
@@ -57,6 +58,7 @@ type Server struct {
 	sleepMgr            *learning.SleepManager
 	activeSessionsMu    sync.Mutex
 	activeSessions      map[string]context.CancelFunc
+	mcpManager          *mcp.Manager
 }
 
 type pendingWebPlanConfirmation struct {
@@ -193,6 +195,12 @@ func (s *Server) SetPlanMonitor(pm *agent.PlanMonitor) {
 func (s *Server) SetApprovalService(service *sessions.ApprovalService) {
 	s.mu.Lock()
 	s.approvalService = service
+	s.mu.Unlock()
+}
+
+func (s *Server) SetMCPManager(m *mcp.Manager) {
+	s.mu.Lock()
+	s.mcpManager = m
 	s.mu.Unlock()
 }
 
@@ -683,6 +691,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RLock()
 	sm := s.sleepMgr
+	mcpMgr := s.mcpManager
 	s.mu.RUnlock()
 
 	var unregisterApproval func()
@@ -704,6 +713,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		MemoryStore:     s.memoryStore,
 		CachePath:       s.cachePath,
 		ApprovalService: s.approvalService,
+		MCPManager:      mcpMgr,
 		ApprovalHandler: &webApprovalHandler{
 			server:  s,
 			w:       w,
