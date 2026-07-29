@@ -148,6 +148,7 @@ const state = {
   currentApprovalId: null,
   pendingApproval: null,
   bootstrapReady: false,
+  ollamaConnected: false,
 };
 
 let bootstrapPromise = null;
@@ -1028,33 +1029,30 @@ els.sessionList.addEventListener("dblclick", (e) => {
   }
 });
 
-let isCurrentlyConnected = true;
-
 function startHealthCheck() {
   setInterval(async () => {
     try {
       const response = await fetch("/api/health");
       if (response.ok) {
         const data = await response.json();
+        const wasConnected = state.ollamaConnected;
         updateOllamaStatus(true, data.ollama_version);
-        if (!isCurrentlyConnected) {
-          isCurrentlyConnected = true;
+        if (!wasConnected) {
           loadModels();
+          processNextQueueItem();
         }
       } else {
         updateOllamaStatus(false);
-        isCurrentlyConnected = false;
       }
     } catch (err) {
       updateOllamaStatus(false);
-      isCurrentlyConnected = false;
     }
   }, 5000);
 }
 
 function startSessionPolling() {
   setInterval(async () => {
-    if (!isCurrentlyConnected) return;
+    if (!state.ollamaConnected) return;
 
     try {
       // 1. Poll sessions list
@@ -1758,6 +1756,7 @@ async function saveRoleModels() {
 }
 
 function updateOllamaStatus(connected, version, fromCache) {
+  state.ollamaConnected = !!connected;
   if (connected) {
     els.baseUrl.textContent = `Ollama v${version || "unknown"}`;
     els.baseUrl.style.borderColor = "var(--accent)";
@@ -1788,6 +1787,7 @@ function updateOllamaStatus(connected, version, fromCache) {
   if (state.messages && state.messages.length === 0) {
     renderMessages();
   }
+  updateComposerUI();
 }
 
 async function loadModels() {
@@ -2468,6 +2468,11 @@ async function processNextQueueItem() {
 
   await waitForBootstrap();
 
+  if (!state.ollamaConnected) {
+    updateComposerUI();
+    return;
+  }
+
   state.isProcessing = true;
   updateComposerUI();
 
@@ -2834,7 +2839,13 @@ async function processNextQueueItem() {
     if (err.name === "AbortError") {
       assistant.content += "\n\n*(Skipped/Paused by user)*";
     } else {
-      assistant.content += `\nError: ${err.message}`;
+      // Connection/Ollama outage: put the user message back at the front of the queue
+      // and remove the failed assistant bubble so it can be retried on reconnect.
+      updateOllamaStatus(false);
+      const assistantIdx = state.messages.indexOf(assistant);
+      if (assistantIdx !== -1) state.messages.splice(assistantIdx, 1);
+      nextItem.processed = false;
+      state.messageQueue.unshift(nextItem);
     }
   } finally {
     // Stream is fully closed by the server. All rounds are complete!
@@ -2848,15 +2859,21 @@ async function processNextQueueItem() {
     // hack is needed here. Audio base64 is filtered out of outbound history
     // per-attachment; attachments keep their data for playback/persistence.
 
-    await loadSession(state.activeSessionId);
-    await loadModels();
+    try {
+      await loadSession(state.activeSessionId);
+      await loadModels();
+    } catch (_) {
+      // Ignore refresh failures during outages.
+    }
 
     state.isProcessing = false;
     state.currentAbortController = null;
     updateComposerUI();
 
-    // Process next item in the queue!
-    processNextQueueItem();
+    // Process next item in the queue only if Ollama is online.
+    if (state.ollamaConnected) {
+      processNextQueueItem();
+    }
   }
 }
 
@@ -2881,15 +2898,26 @@ function updateComposerUI() {
   const processing = state.isProcessing || remoteBusy;
   const awaitingApproval = !!state.pendingApproval && !processing;
   const bootstrapping = !state.bootstrapReady;
+  const offline = !state.ollamaConnected;
   if (els.sendBtn) {
-    els.sendBtn.disabled = bootstrapping;
-    els.sendBtn.title = bootstrapping ? "Loading settings..." : "";
+    els.sendBtn.disabled = bootstrapping || offline;
+    els.sendBtn.title = bootstrapping ? "Loading settings..." : (offline ? "Ollama offline" : "");
   }
   if (bootstrapping) {
     if (els.cacheState) {
       els.cacheState.textContent = "loading...";
       els.cacheState.style.borderColor = "var(--muted)";
       els.cacheState.style.color = "var(--muted)";
+    }
+    return;
+  }
+  if (offline) {
+    if (els.skipBtn) els.skipBtn.style.display = "none";
+    if (els.sendBtn) els.sendBtn.textContent = "Send";
+    if (els.cacheState) {
+      els.cacheState.textContent = "offline";
+      els.cacheState.style.borderColor = "var(--bad)";
+      els.cacheState.style.color = "var(--bad)";
     }
     return;
   }
@@ -2913,15 +2941,9 @@ function updateComposerUI() {
     if (els.skipBtn) els.skipBtn.style.display = "none";
     if (els.sendBtn) els.sendBtn.textContent = "Send";
     if (els.cacheState) {
-      if (els.baseUrl.textContent === "Ollama: Offline") {
-        els.cacheState.textContent = "offline";
-        els.cacheState.style.borderColor = "var(--bad)";
-        els.cacheState.style.color = "var(--bad)";
-      } else {
-        els.cacheState.textContent = "ready";
-        els.cacheState.style.borderColor = "var(--accent)";
-        els.cacheState.style.color = "var(--accent)";
-      }
+      els.cacheState.textContent = "ready";
+      els.cacheState.style.borderColor = "var(--accent)";
+      els.cacheState.style.color = "var(--accent)";
     }
   }
 }
@@ -3055,7 +3077,7 @@ function renderMessages() {
 
     // For remote (Telegram/background) in-progress messages, synthesize waiting/streaming states
     const isLastMsg = message === grouped[grouped.length - 1];
-    const isRemoteProcessing = (lastAssistantInProgress || state.agentBusy) && isLastMsg && message.role === "assistant";
+    const isRemoteProcessing = state.ollamaConnected && (lastAssistantInProgress || state.agentBusy) && isLastMsg && message.role === "assistant";
     const effectiveWaiting = message.waiting || isRemoteProcessing;
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 
