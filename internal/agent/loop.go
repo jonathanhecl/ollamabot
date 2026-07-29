@@ -593,11 +593,27 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// Path parameter rescue
 				a.rescuePathParam(toolName, params)
 
-				// Re-serialize params
-				rescuedArgsJSON, _ := json.Marshal(params)
-				call.Function.Arguments = rescuedArgsJSON
+			// Re-serialize params
+			rescuedArgsJSON, _ := json.Marshal(params)
+			call.Function.Arguments = rescuedArgsJSON
 
-				toolSource := a.registry.GetToolSource(toolName)
+			// Guardrail: if the model tries to web_search for a URL the user
+			// already provided, redirect the call to fetch_webpage directly.
+			redirectedToFetch := false
+			if toolName == "web_search" {
+				if q, _ := params["query"].(string); q != "" {
+					if u, ok := redirectSearchToFetch(goal, q); ok {
+						log.Printf("[guardrail] web_search -> fetch_webpage (user already provided URL): %s", u)
+						toolName = "fetch_webpage"
+						params = map[string]any{"url": u}
+						call.Function.Name = toolName
+						call.Function.Arguments, _ = json.Marshal(params)
+						redirectedToFetch = true
+					}
+				}
+			}
+
+			toolSource := a.registry.GetToolSource(toolName)
 				if handler != nil {
 					handler.OnToolStart(toolName, params, toolSource)
 				}
@@ -611,9 +627,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				} else {
 					result, terr = a.registry.Execute(ctx, call)
 				}
-				if terr != nil {
-					result = fmt.Sprintf("Error: %v", terr)
-				}
+			if terr != nil {
+				result = fmt.Sprintf("Error: %v", terr)
+			}
+			if redirectedToFetch && terr == nil {
+				result = "[SYSTEM NOTE: The user already provided this URL; it was fetched directly instead of searching.]\n\n" + result
+			}
 
 				// Proactive error recovery/assistance
 				lowerResult := strings.ToLower(result)

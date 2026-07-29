@@ -2,9 +2,62 @@ package tools
 
 import (
 	"context"
+	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestNormalizeGitHubRawURL(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "blob URL rewritten",
+			input: "https://github.com/owner/repo/blob/main/SKILL.md",
+			want:  "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+		},
+		{
+			name:  "raw URL rewritten",
+			input: "https://github.com/owner/repo/raw/main/docs/file.txt",
+			want:  "https://raw.githubusercontent.com/owner/repo/main/docs/file.txt",
+		},
+		{
+			name:  "blob URL drops query and fragment",
+			input: "https://github.com/owner/repo/blob/main/a.go?plain=1#L10",
+			want:  "https://raw.githubusercontent.com/owner/repo/main/a.go",
+		},
+		{
+			name:  "repo root unchanged",
+			input: "https://github.com/owner/repo",
+			want:  "https://github.com/owner/repo",
+		},
+		{
+			name:  "non-github URL unchanged",
+			input: "https://example.com/owner/repo/blob/main/x",
+			want:  "https://example.com/owner/repo/blob/main/x",
+		},
+		{
+			name:  "already raw unchanged",
+			input: "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+			want:  "https://raw.githubusercontent.com/owner/repo/main/SKILL.md",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			u, err := url.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			got := normalizeGitHubRawURL(u)
+			if got.String() != tt.want {
+				t.Fatalf("got %q, want %q", got.String(), tt.want)
+			}
+		})
+	}
+}
 
 func TestSearchLive(t *testing.T) {
 	res, err := Search(context.Background(), "golang news", 3)

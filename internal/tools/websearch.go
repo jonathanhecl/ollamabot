@@ -236,6 +236,26 @@ func truncateRunes(s string, n int) string {
 	return s
 }
 
+// normalizeGitHubRawURL rewrites github.com blob/raw file URLs to their
+// raw.githubusercontent.com equivalent so Fetch returns clean file content
+// instead of the full GitHub HTML UI.
+func normalizeGitHubRawURL(u *url.URL) *url.URL {
+	if !strings.EqualFold(u.Hostname(), "github.com") {
+		return u
+	}
+	parts := strings.Split(strings.TrimPrefix(u.Path, "/"), "/")
+	// /owner/repo/blob/branch/path... or /owner/repo/raw/branch/path...
+	if len(parts) < 5 || (parts[2] != "blob" && parts[2] != "raw") {
+		return u
+	}
+	rewritten := *u
+	rewritten.Host = "raw.githubusercontent.com"
+	rewritten.Path = "/" + strings.Join(append(parts[:2:2], parts[3:]...), "/")
+	rewritten.RawQuery = ""
+	rewritten.Fragment = ""
+	return &rewritten
+}
+
 // Fetch downloads a page over HTTP(s) and returns title + main text + some links.
 func Fetch(ctx context.Context, pageURL string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(pageURL))
@@ -245,6 +265,7 @@ func Fetch(ctx context.Context, pageURL string) (string, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", fmt.Errorf("only http/https URLs are allowed")
 	}
+	u = normalizeGitHubRawURL(u)
 	if err := assertPublicURL(ctx, u); err != nil {
 		return "", err
 	}
