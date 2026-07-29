@@ -1,5 +1,27 @@
 # Progress
 
+## 2026-07-29 — MCP tool cache: tools stay visible when a server is down
+
+If an MCP server was unreachable at startup, `tools/list` failed and its
+tools were never registered, so the model could not see them and fell back to
+workspace file writes instead of using the MCP. Now the last successful tool
+list is cached and re-registered on failure, with a lazy reconnect on use.
+
+### Changes
+
+- `internal/mcp/manager.go`: `startServerNoLock` persists each successful
+  `tools/list` to `mcp_tools_cache.json` (next to `mcp_config.json`). When a
+  server fails to start, its cached tools are registered and the server is
+  marked `degraded` (visible in `GetServersStatus` as `degraded: true` with
+  the original error). `Execute` attempts a lazy reconnect
+  (`reconnectServer`) using the last known config before failing with a clear
+  "server unreachable" error that instructs the model to inform the user.
+  `DeleteServer` also removes the server's cache entry.
+- `internal/mcp/mcp_test.go`: new tests `TestManagerDegradedCache` (cached
+  tools registered for a down server, degraded status, unreachable error on
+  Execute) and `TestManagerToolsCacheWritten` (cache persisted after a
+  successful tools/list).
+
 ## 2026-07-29 — MCP hardening: SSE lifetime, targeted restarts, secret masking
 
 Follow-up fixes after reviewing the multi-transport MCP work.

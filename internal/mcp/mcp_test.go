@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -286,5 +287,118 @@ func TestManager(t *testing.T) {
 	}
 	if _, ok := status["temp_mock"]; ok {
 		t.Error("expected 'temp_mock' to be deleted from status")
+	}
+}
+
+// TestManagerDegradedCache verifies that when a server is unreachable at
+// startup, its cached tools are still registered (so the model keeps seeing
+// them) and Execute fails with a clear unreachable error after a reconnect
+// attempt.
+func TestManagerDegradedCache(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "mcp-test-degraded")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configContent := `{
+		"mcpServers": {
+			"down": {
+				"command": "definitely-not-a-real-mcp-server-binary-xyz",
+				"safe": true
+			}
+		}
+	}`
+	configPath := filepath.Join(tmpDir, "mcp_config.json")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cache := toolsCacheFile{Servers: map[string][]MCPTool{
+		"down": {
+			{
+				Name:        "cached_tool",
+				Description: "Tool from a previous successful session",
+				InputSchema: MCPInputSchema{Type: "object"},
+			},
+		},
+	}}
+	cacheData, _ := json.Marshal(cache)
+	if err := os.WriteFile(filepath.Join(tmpDir, "mcp_tools_cache.json"), cacheData, 0644); err != nil {
+		t.Fatalf("failed to write tools cache: %v", err)
+	}
+
+	manager := NewManager(configPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := manager.Start(ctx); err != nil {
+		t.Fatalf("failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	if !manager.HasTool("cached_tool") {
+		t.Fatal("expected cached tool to be registered for unreachable server")
+	}
+	if !manager.degraded["down"] {
+		t.Error("expected server 'down' to be marked degraded")
+	}
+
+	status, err := manager.GetServersStatus()
+	if err != nil {
+		t.Fatalf("GetServersStatus failed: %v", err)
+	}
+	if st := status["down"]; !st.Degraded || st.Status != "stopped" {
+		t.Errorf("expected degraded+stopped status, got %+v", st)
+	} else if st.Error == "" {
+		t.Error("expected an error message for the unreachable server")
+	}
+
+	_, err = manager.Execute(ctx, "cached_tool", map[string]any{})
+	if err == nil {
+		t.Fatal("expected Execute to fail for unreachable server")
+	}
+	if got := err.Error(); !strings.Contains(got, "unreachable") {
+		t.Errorf("expected 'unreachable' error, got %q", got)
+	}
+}
+
+// TestManagerToolsCacheWritten verifies that a successful tools/list persists
+// the cache file used for degraded startups.
+func TestManagerToolsCacheWritten(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "mcp-test-cachewrite")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	configContent := fmt.Sprintf(`{
+		"mcpServers": {
+			"mock": {
+				"command": %q,
+				"args": ["-test.run=TestHelperProcess"],
+				"env": {"GO_WANT_HELPER_PROCESS": "1"}
+			}
+		}
+	}`, os.Args[0])
+	configPath := filepath.Join(tmpDir, "mcp_config.json")
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	manager := NewManager(configPath)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := manager.Start(ctx); err != nil {
+		t.Fatalf("failed to start manager: %v", err)
+	}
+	defer manager.Stop()
+
+	cache := manager.readToolsCache()
+	if len(cache.Servers["mock"]) != 2 {
+		t.Fatalf("expected 2 cached tools for 'mock', got %+v", cache.Servers["mock"])
+	}
+	if cache.Servers["mock"][0].Name != "echo" {
+		t.Errorf("unexpected cached tool: %+v", cache.Servers["mock"][0])
 	}
 }

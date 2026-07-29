@@ -45,6 +45,8 @@ type Manager struct {
 	toolServer   map[string]string       // toolName -> serverName
 	safety       map[string]ServerSafety // serverName -> safety settings
 	statusErrors map[string]string       // serverName -> last start error
+	configs      map[string]ServerConfig // serverName -> last known config (for lazy reconnect)
+	degraded     map[string]bool         // serverName -> tools registered from cache, no live connection
 	mu           sync.RWMutex
 }
 
@@ -56,7 +58,73 @@ func NewManager(configPath string) *Manager {
 		toolServer:   make(map[string]string),
 		safety:       make(map[string]ServerSafety),
 		statusErrors: make(map[string]string),
+		configs:      make(map[string]ServerConfig),
+		degraded:     make(map[string]bool),
 	}
+}
+
+// resolveConfigPath returns the absolute path to the MCP config file.
+func (m *Manager) resolveConfigPath() string {
+	path := m.configPath
+	if !filepath.IsAbs(path) {
+		if exe, err := os.Executable(); err == nil {
+			path = filepath.Join(filepath.Dir(exe), m.configPath)
+		}
+	}
+	return path
+}
+
+// toolsCachePath returns the path of the file caching the last successful
+// tools/list response per server, stored next to the config file.
+func (m *Manager) toolsCachePath() string {
+	p := m.resolveConfigPath()
+	return filepath.Join(filepath.Dir(p), "mcp_tools_cache.json")
+}
+
+type toolsCacheFile struct {
+	Servers map[string][]MCPTool `json:"servers"`
+}
+
+// updateToolsCache records the tools of a server that responded successfully,
+// so they can be re-registered when the server is unreachable at startup.
+func (m *Manager) updateToolsCache(name string, tools []MCPTool) {
+	cache := m.readToolsCache()
+	if cache.Servers == nil {
+		cache.Servers = make(map[string][]MCPTool)
+	}
+	cache.Servers[name] = tools
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(m.toolsCachePath(), data, 0644); err != nil {
+		log.Printf("[MCP] Failed to write tools cache: %v", err)
+	}
+}
+
+// removeToolsCache drops a server from the cache (used when it is deleted).
+func (m *Manager) removeToolsCache(name string) {
+	cache := m.readToolsCache()
+	if _, ok := cache.Servers[name]; !ok {
+		return
+	}
+	delete(cache.Servers, name)
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(m.toolsCachePath(), data, 0644)
+}
+
+func (m *Manager) readToolsCache() toolsCacheFile {
+	var cache toolsCacheFile
+	file, err := os.Open(m.toolsCachePath())
+	if err != nil {
+		return cache
+	}
+	defer file.Close()
+	_ = json.NewDecoder(file).Decode(&cache)
+	return cache
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -98,33 +166,46 @@ func (m *Manager) startNoLock(ctx context.Context) error {
 }
 
 // startServerNoLock starts a single server and registers its tools. Failures
-// are recorded in statusErrors without affecting other servers.
+// are recorded in statusErrors without affecting other servers. If the server
+// cannot be reached but a cached tool list exists, the cached tools are
+// registered anyway so the model keeps them visible; the connection is
+// retried lazily on the next tool call.
 func (m *Manager) startServerNoLock(ctx context.Context, name string, srvCfg ServerConfig) {
+	m.configs[name] = srvCfg
 	log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
 	client, err := NewClient(name, srvCfg)
-	if err != nil {
-		m.statusErrors[name] = err.Error()
-		log.Printf("[MCP] Error building client for server %q: %v. Continuing with other servers.", name, err)
-		return
+	if err == nil {
+		err = client.Start(ctx)
 	}
-	if err := client.Start(ctx); err != nil {
-		m.statusErrors[name] = err.Error()
-		log.Printf("[MCP] Error starting server %q: %v. Continuing with other servers.", name, err)
-		return
-	}
-
-	// Query tools before registering, to avoid a half-working server.
 	var listResult ListToolsResult
-	if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
-		_ = client.Close()
+	if err == nil {
+		// Query tools before registering, to avoid a half-working server.
+		err = client.Call(ctx, "tools/list", nil, &listResult)
+	}
+	if err != nil {
+		if client != nil {
+			_ = client.Close()
+		}
 		m.statusErrors[name] = err.Error()
-		log.Printf("[MCP] Error listing tools for server %q: %v", name, err)
+		log.Printf("[MCP] Error starting server %q: %v", name, err)
+		cached := m.readToolsCache().Servers[name]
+		if len(cached) > 0 {
+			m.registerServerToolsNoLock(name, srvCfg, cached)
+			m.degraded[name] = true
+			log.Printf("[MCP] Server %q unreachable: registered %d cached tool(s); will retry on use", name, len(cached))
+		}
 		return
 	}
 
 	m.clients[name] = client
+	delete(m.degraded, name)
+	delete(m.statusErrors, name)
+	m.registerServerToolsNoLock(name, srvCfg, listResult.Tools)
+	m.updateToolsCache(name, listResult.Tools)
+}
 
-	// Setup safety configuration
+// registerServerToolsNoLock registers a server's tools and safety settings.
+func (m *Manager) registerServerToolsNoLock(name string, srvCfg ServerConfig, tools []MCPTool) {
 	safety := ServerSafety{
 		Safe:      srvCfg.Safe,
 		SafeTools: make(map[string]bool),
@@ -134,10 +215,7 @@ func (m *Manager) startServerNoLock(ctx context.Context, name string, srvCfg Ser
 	}
 	m.safety[name] = safety
 
-	// Clear any prior error once the server is healthy.
-	delete(m.statusErrors, name)
-
-	for _, tool := range listResult.Tools {
+	for _, tool := range tools {
 		m.tools[tool.Name] = tool
 		m.toolServer[tool.Name] = name
 		log.Printf("[MCP] Registered tool %q from server %q (safe: %v)", tool.Name, name, m.isSafeNoLock(name, tool.Name))
@@ -160,6 +238,7 @@ func (m *Manager) stopServerNoLock(name string) {
 	}
 	delete(m.safety, name)
 	delete(m.statusErrors, name)
+	delete(m.degraded, name)
 }
 
 func (m *Manager) Stop() {
@@ -178,6 +257,7 @@ func (m *Manager) stopNoLock() {
 	m.toolServer = make(map[string]string)
 	m.safety = make(map[string]ServerSafety)
 	m.statusErrors = make(map[string]string)
+	m.degraded = make(map[string]bool)
 }
 
 func (m *Manager) GetTools() []MCPTool {
@@ -219,8 +299,22 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 	client, okClient := m.clients[serverName]
 	m.mu.RUnlock()
 
-	if !ok || !okClient {
+	if !ok {
 		return "", fmt.Errorf("mcp server or tool %q not found", toolName)
+	}
+	if !okClient {
+		// The server is down (its tools may come from the cache). Try to
+		// reconnect on demand before giving up.
+		client = m.reconnectServer(ctx, serverName)
+		if client == nil {
+			m.mu.RLock()
+			errMsg := m.statusErrors[serverName]
+			m.mu.RUnlock()
+			if errMsg == "" {
+				errMsg = "server is not running"
+			}
+			return "", fmt.Errorf("mcp server %q for tool %q is unreachable: %s. The tool list shown may be from a cached snapshot; inform the user that the server needs to be started", serverName, toolName, errMsg)
+		}
 	}
 
 	var callResult CallToolResult
@@ -246,6 +340,23 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 	}
 
 	return output, nil
+}
+
+// reconnectServer attempts to start a server that has no live client, using
+// its last known configuration. Returns the new client on success.
+func (m *Manager) reconnectServer(ctx context.Context, serverName string) *Client {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if client, ok := m.clients[serverName]; ok {
+		return client
+	}
+	srvCfg, ok := m.configs[serverName]
+	if !ok {
+		return nil
+	}
+	log.Printf("[MCP] Attempting lazy reconnect of server %q...", serverName)
+	m.startServerNoLock(ctx, serverName, srvCfg)
+	return m.clients[serverName]
 }
 
 func (m *Manager) HasTool(toolName string) bool {
@@ -276,6 +387,7 @@ type MCPServerStatus struct {
 	Safe        bool              `json:"safe"`
 	SafeTools   []string          `json:"safeTools,omitempty"`
 	Status      string            `json:"status"` // "running", "stopped"
+	Degraded    bool              `json:"degraded,omitempty"` // tools come from cache; server unreachable
 	Tools       []MCPTool         `json:"tools,omitempty"`
 }
 
@@ -320,6 +432,7 @@ func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
 
 		errMsg := m.statusErrors[name]
 		result[name] = MCPServerStatus{
+			Degraded: m.degraded[name],
 			Name:        name,
 			Type:        srvCfg.Type,
 			Command:     srvCfg.Command,
@@ -471,5 +584,7 @@ func (m *Manager) DeleteServer(ctx context.Context, name string) error {
 	}
 
 	m.stopServerNoLock(name)
+	delete(m.configs, name)
+	m.removeToolsCache(name)
 	return nil
 }
