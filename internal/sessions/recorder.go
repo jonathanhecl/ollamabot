@@ -414,16 +414,15 @@ func (r *Recorder) UpdatePlanProgress(plan SessionPlan) {
 func (r *Recorder) OnMediaPreProcessing(content string) {}
 
 func (r *Recorder) OnDone(resp ollama.ChatResponse) {
-	if resp.TotalDuration <= 0 {
-		return
-	}
 	r.mu.Lock()
-	r.currentTurn.Metrics.TotalDuration += resp.TotalDuration
-	r.currentTurn.Metrics.LoadDuration += resp.LoadDuration
-	r.currentTurn.Metrics.PromptEvalCount += resp.PromptEvalCount
-	r.currentTurn.Metrics.PromptEvalDuration += resp.PromptEvalDuration
-	r.currentTurn.Metrics.EvalCount += resp.EvalCount
-	r.currentTurn.Metrics.EvalDuration += resp.EvalDuration
+	if resp.TotalDuration > 0 {
+		r.currentTurn.Metrics.TotalDuration += resp.TotalDuration
+		r.currentTurn.Metrics.LoadDuration += resp.LoadDuration
+		r.currentTurn.Metrics.PromptEvalCount += resp.PromptEvalCount
+		r.currentTurn.Metrics.PromptEvalDuration += resp.PromptEvalDuration
+		r.currentTurn.Metrics.EvalCount += resp.EvalCount
+		r.currentTurn.Metrics.EvalDuration += resp.EvalDuration
+	}
 	r.turnEnded = true
 	r.mu.Unlock()
 	r.NotifyUpdate(true)

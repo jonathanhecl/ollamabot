@@ -456,6 +456,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		done := false
 		doneReason := ""
 		var contentFilter StreamThinkingFilter
+		var lastChunk ollama.ChatResponse
 
 		err := a.client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
 			if chunk.Message.Thinking != "" {
@@ -488,12 +489,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			if chunk.Done {
 				done = true
 				doneReason = chunk.DoneReason
+				lastChunk = chunk
 				log.Printf("[Agent] Stream done: reason=%s eval_count=%d total_duration=%dms", chunk.DoneReason, chunk.EvalCount, chunk.TotalDuration/1e6)
 				if chunk.DoneReason == "length" {
 					log.Printf("[Agent] WARNING: Response truncated due to token limit (num_predict=%d). Consider increasing OLLAMA_MAX_TOKENS.", numPredict)
-				}
-				if handler != nil {
-					handler.OnDone(chunk)
 				}
 			}
 			return nil
@@ -505,7 +504,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			return messages, fmt.Errorf("Ollama connection closed unexpectedly")
 		}
 
-		// Emit any content held back by the thinking-token filter.
+		// Emit any content held back by the thinking-token filter before closing the turn.
+		// This content belongs to the current turn, not the next one.
 		if handler != nil {
 			if emit := contentFilter.Flush(); emit != "" {
 				handler.OnContent(emit)
@@ -532,6 +532,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				})
 				if handler != nil {
 					handler.OnContent("\n\n" + errMsg)
+					handler.OnDone(lastChunk)
 				}
 				continue
 			}
@@ -549,6 +550,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			ToolCalls: toolCalls,
 		}
 		messages = append(messages, assistantMsg)
+		if handler != nil {
+			handler.OnDone(lastChunk)
+		}
 
 		// 6b. Handle length-truncated responses: the model hit num_predict mid-generation.
 		// If there are no tool calls to process, nudge the model to continue rather than

@@ -3068,29 +3068,41 @@ function renderMessages() {
     const media = visibleAttachments.length ? `<div class="message-media">${visibleAttachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
 
-    // Build steps HTML (interleaved thinking / tool blocks).
+    // Build steps HTML split into pre-content (thinking) and post-content (tools, plan,
+    // approval, image) so the content text renders chronologically between them:
+    //   thinking → content → tool execution → metrics
     const steps = message.steps || [];
     const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && isPlanPinned(state.activePlan);
-    const stepsHtml = steps
-      .filter((s) => !(hideInlinePlanSteps && s.type === "plan"))
+    const visibleSteps = steps.filter((s) => !(hideInlinePlanSteps && s.type === "plan"));
+    const preContentSteps = visibleSteps.filter((s) => s.type === "thinking");
+    const postContentSteps = visibleSteps.filter((s) => s.type !== "thinking");
+    const hasPostContent = postContentSteps.length > 0;
+    const preContentHtml = preContentSteps
       .map((s, idx) => {
-      const isLastStep = idx === steps.length - 1;
-      return renderStep(s, effectiveStreaming, isLastStep);
-    }).join("");
+        const isLastStep = !hasPostContent && idx === preContentSteps.length - 1;
+        return renderStep(s, effectiveStreaming, isLastStep);
+      }).join("");
+    const postContentHtml = postContentSteps
+      .map((s, idx) => {
+        const isLastStep = idx === postContentSteps.length - 1;
+        return renderStep(s, effectiveStreaming, isLastStep);
+      }).join("");
     const activePlanHtml = message.role === "assistant" && isLastMsg && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
       ? renderPlanChecklist(state.activePlan, "progress")
       : "";
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
-    let legacyHtml = "";
+    // Thinking goes before content; tool calls/results go after content (chronological order).
+    let legacyPreContent = "";
+    let legacyPostContent = "";
     if (!message.steps?.length) {
       if (message.thinking) {
-        legacyHtml += `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
+        legacyPreContent += `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
       }
       if (message.toolCalls?.length) {
-        legacyHtml += message.toolCalls.map(renderLegacyToolCall).join("");
+        legacyPostContent += message.toolCalls.map(renderLegacyToolCall).join("");
       }
       if (message.toolResults?.length) {
-        legacyHtml += message.toolResults.map(renderLegacyToolResult).join("");
+        legacyPostContent += message.toolResults.map(renderLegacyToolResult).join("");
       }
     }
     
@@ -3132,7 +3144,7 @@ function renderMessages() {
         ${timeHtml}
       </div>
     `;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${pending}${activePlanHtml}${stepsHtml || legacyHtml}${contentHtml}${metricsHtml}${metaHtml}`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${preContentHtml || legacyPreContent}${contentHtml}${postContentHtml || legacyPostContent}${metricsHtml}${pending}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
   }
