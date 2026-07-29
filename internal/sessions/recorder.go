@@ -64,6 +64,17 @@ func AppendThinkingStep(steps []Step, delta string) []Step {
 	return append(steps, Step{Type: "thinking", Content: delta})
 }
 
+func AppendContentStep(steps []Step, delta string) []Step {
+	if delta == "" {
+		return steps
+	}
+	if n := len(steps); n > 0 && steps[n-1].Type == "content" {
+		steps[n-1].Content += delta
+		return steps
+	}
+	return append(steps, Step{Type: "content", Content: delta})
+}
+
 func FinalizeSteps(steps []Step) []Step {
 	if len(steps) == 0 {
 		return nil
@@ -243,6 +254,7 @@ func (r *Recorder) OnContent(delta string) {
 	r.mu.Lock()
 	msg := r.getOrCreateAssistantMsg()
 	msg.Content += delta
+	r.currentTurn.Steps = AppendContentStep(r.currentTurn.Steps, delta)
 	r.mu.Unlock()
 	r.NotifyUpdate(false)
 }

@@ -1,5 +1,34 @@
 # Progress
 
+## 2026-07-29 — Chronological action steps in session and web UI
+
+The recorder and web UI treated the assistant's final `content` as a separate
+block, with all `thinking` steps forced before it and all tool/plan steps forced
+after it. For an agent that runs multiple action blocks per turn, this lost
+the real order. Now `content` is stored as a proper step and the UI renders
+`Steps` in exact chronological order.
+
+### Changes
+
+- `internal/sessions/recorder.go`: added `AppendContentStep` and made `OnContent`
+  append/merge a `content` step into `currentTurn.Steps` while still keeping
+  `msg.Content` as the canonical final text.
+- `internal/web/static/app.js`: the `content` SSE handler now mirrors the
+  `content` step; `renderStep` gained a `content` case; `buildAssistantMessageHTML`
+  renders `steps` in array order and only falls back to legacy
+  `content`/`thinking`/`toolCalls` for older messages without `steps`.
+- `internal/sessions/recorder_test.go`: updated
+  `TestRecorderSnapshotsMultipleAssistantTurns` and
+  `TestMergeFinalHistoryPreservesBaseAssistantSteps` to expect the new `content`
+  step; added `TestAppendContentStep`.
+
+### Notes
+
+- `msg.Content` is kept unchanged so Ollama chat history and Telegram continue
+  to work.
+- The streaming cursor now appears at the last live step, whether it is
+  `content` or `thinking`.
+
 ## 2026-07-29 — MCP remote transports (http + sse)
 
 The MCP client previously supported only the `stdio` transport (launching a

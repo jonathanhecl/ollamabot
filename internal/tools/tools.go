@@ -162,6 +162,10 @@ func (r *Registry) SetApprovalProgressHandler(h ApprovalProgressHandler) {
 	r.approvalProgressHandler = h
 }
 
+func (r *Registry) MCPManager() *mcp.Manager {
+	return r.mcpManager
+}
+
 func (r *Registry) SetMCPManager(m *mcp.Manager) {
 	r.mcpManager = m
 	if m == nil {
@@ -197,7 +201,7 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "mcp_list_servers",
-			Description: "List all configured MCP servers with their status (running/stopped), command, arguments, safety settings, and available tools. Use this to inspect the current MCP configuration.",
+			Description: "List all configured MCP servers with their status (running/stopped), command, arguments, safety settings, and available tools. Use this only to inspect the current MCP configuration. To interact with an MCP server, call its exposed tool functions directly by name with the required arguments. Do NOT use execute_command, curl, wget, or fetch_webpage to manually probe the server's transport endpoint or URL.",
 			Parameters: map[string]any{
 				"type":       "object",
 				"properties": map[string]any{},

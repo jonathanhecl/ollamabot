@@ -26,6 +26,24 @@ func TestAppendThinkingStep(t *testing.T) {
 	}
 }
 
+func TestAppendContentStep(t *testing.T) {
+	steps := AppendContentStep(nil, "first ")
+	steps = AppendContentStep(steps, "second")
+
+	if len(steps) != 1 {
+		t.Fatalf("expected one content step, got %d", len(steps))
+	}
+	if steps[0].Type != "content" || steps[0].Content != "first second" {
+		t.Fatalf("unexpected content step: %#v", steps[0])
+	}
+
+	steps = append(steps, Step{Type: "tool_exec", Name: "search"})
+	steps = AppendContentStep(steps, "after tool")
+	if len(steps) != 3 {
+		t.Fatalf("expected new content step after tool, got %d", len(steps))
+	}
+}
+
 func TestRecorderStoresPresentPlanAsPlanStep(t *testing.T) {
 	rec := &Recorder{}
 	rec.OnToolStart("present_plan", map[string]any{
@@ -206,8 +224,8 @@ func TestRecorderSnapshotsMultipleAssistantTurns(t *testing.T) {
 	if first.Content != "first" || first.Model != "model" || first.Channel != "web" {
 		t.Fatalf("unexpected first assistant: %#v", first)
 	}
-	if len(first.Steps) != 1 || first.Steps[0].Type != "thinking" {
-		t.Fatalf("expected thinking step on first assistant: %#v", first.Steps)
+	if len(first.Steps) != 2 || first.Steps[0].Type != "thinking" || first.Steps[1].Type != "content" {
+		t.Fatalf("expected thinking and content steps on first assistant: %#v", first.Steps)
 	}
 	if first.Metrics == nil || first.Metrics.TotalDuration != 10 {
 		t.Fatalf("expected metrics on first assistant: %#v", first.Metrics)
@@ -339,8 +357,8 @@ func TestMergeFinalHistoryPreservesBaseAssistantSteps(t *testing.T) {
 	if secondAssistant.Content != "response 2" {
 		t.Errorf("second assistant content mismatch: %q", secondAssistant.Content)
 	}
-	if len(secondAssistant.Steps) != 1 || secondAssistant.Steps[0].Content != "think 2" {
-		t.Errorf("expected second assistant steps, got %+v", secondAssistant.Steps)
+	if len(secondAssistant.Steps) != 2 || secondAssistant.Steps[0].Type != "thinking" || secondAssistant.Steps[1].Type != "content" {
+		t.Errorf("expected thinking and content steps, got %+v", secondAssistant.Steps)
 	}
 	if secondAssistant.Metrics == nil || secondAssistant.Metrics.TotalDuration != 100 {
 		t.Errorf("expected second assistant metrics, got %+v", secondAssistant.Metrics)

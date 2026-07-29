@@ -2676,6 +2676,12 @@ async function processNextQueueItem() {
       },
       content: (value) => {
         assistant.content += value;
+        const lastStep = assistant.steps[assistant.steps.length - 1];
+        if (lastStep && lastStep.type === "content") {
+          lastStep.content += value;
+        } else {
+          assistant.steps.push({ type: "content", content: value });
+        }
         renderMessages();
       },
       tool_call: (value) => {
@@ -3090,33 +3096,25 @@ function renderMessages() {
     const media = visibleAttachments.length ? `<div class="message-media">${visibleAttachments.map(attachmentPreview).join("")}</div>` : "";
     const cursor = effectiveStreaming ? `<span class="stream-cursor"></span>` : "";
 
-    // Build steps HTML split into pre-content (thinking) and post-content (tools, plan,
-    // approval, image) so the content text renders chronologically between them:
-    //   thinking → content → tool execution → metrics
+    // Build steps HTML in the exact chronological order stored in the session.
     const steps = message.steps || [];
+    const hasSteps = steps.length > 0;
     const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && isPlanPinned(state.activePlan);
     const visibleSteps = steps.filter((s) => !(hideInlinePlanSteps && s.type === "plan"));
-    const preContentSteps = visibleSteps.filter((s) => s.type === "thinking");
-    const postContentSteps = visibleSteps.filter((s) => s.type !== "thinking");
-    const hasPostContent = postContentSteps.length > 0;
-    const preContentHtml = preContentSteps
-      .map((s, idx) => {
-        const isLastStep = !hasPostContent && idx === preContentSteps.length - 1;
-        return renderStep(s, effectiveStreaming, isLastStep);
-      }).join("");
-    const postContentHtml = postContentSteps
-      .map((s, idx) => {
-        const isLastStep = idx === postContentSteps.length - 1;
-        return renderStep(s, effectiveStreaming, isLastStep);
-      }).join("");
     const activePlanHtml = message.role === "assistant" && isLastMsg && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
       ? renderPlanChecklist(state.activePlan, "progress")
       : "";
+    let stepsHtml = "";
+    if (hasSteps) {
+      const lastIdx = visibleSteps.length - 1;
+      stepsHtml = visibleSteps
+        .map((s, idx) => renderStep(s, effectiveStreaming, idx === lastIdx))
+        .join("");
+    }
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
-    // Thinking goes before content; tool calls/results go after content (chronological order).
     let legacyPreContent = "";
     let legacyPostContent = "";
-    if (!message.steps?.length) {
+    if (!hasSteps) {
       if (message.thinking) {
         legacyPreContent += `<details class="step step-thinking"><summary>💭 thinking</summary><pre>${escapeHtml(message.thinking)}</pre></details>`;
       }
@@ -3156,7 +3154,7 @@ function renderMessages() {
     if (isPreProcessing) {
       roleName = "media router";
       contentHtml = renderPreProcessingContent(message.content);
-    } else {
+    } else if (!hasSteps) {
       contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
     }
     const timeHtml = message.timestamp ? `<span class="message-time">${escapeHtml(formatMessageTime(message.timestamp))}</span>` : "";
@@ -3166,7 +3164,7 @@ function renderMessages() {
         ${timeHtml}
       </div>
     `;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${preContentHtml || legacyPreContent}${contentHtml}${postContentHtml || legacyPostContent}${metricsHtml}${pending}${metaHtml}`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${stepsHtml}${legacyPreContent}${contentHtml}${legacyPostContent}${metricsHtml}${pending}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
   }
@@ -3417,6 +3415,10 @@ function renderStep(step, isLive = false, isLastStep = false) {
     case "thinking": {
       const isOpen = isLive && isLastStep;
       return `<details class="step step-thinking" ${isOpen ? "open" : ""}><summary>💭 thinking</summary><pre>${escapeHtml(step.content || "")}</pre></details>`;
+    }
+    case "content": {
+      const cursor = isLive && isLastStep ? `<span class="stream-cursor"></span>` : "";
+      return `<div class="markdown">${renderMarkdown(step.content || "")}${cursor}</div>`;
     }
     case "tool_call": {
       const fn = step.call?.function || {};

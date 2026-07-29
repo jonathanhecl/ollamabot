@@ -217,6 +217,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			})
 		}
 
+		// Inject MCP capability instruction
+		if a.registry != nil && a.registry.MCPManager() != nil {
+			systemPrefix = append(systemPrefix, ollama.Message{
+				Role:    "system",
+				Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments. Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically. If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually.",
+			})
+		}
+
 		// Inject proactive recalled memories if any
 		if recalledMemoriesBlock != "" {
 			systemPrefix = append(systemPrefix, ollama.Message{
