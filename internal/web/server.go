@@ -1907,6 +1907,13 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := mcpMgr.AddOrUpdateServer(r.Context(), name, srvCfg); err != nil {
+		// Validation failures (cannot reach/list tools) are user-fixable config
+		// errors, not internal server errors. Surface them as 400 Bad Request.
+		var valErr *mcp.ValidationError
+		if errors.As(err, &valErr) {
+			writeError(w, http.StatusBadRequest, err)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

@@ -307,6 +307,22 @@ func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
 	return result, nil
 }
 
+// ValidationError indicates the server config is reachable but the MCP
+// handshake or tools/list call failed. It is surfaced as a 4xx to the user
+// rather than an internal server error.
+type ValidationError struct {
+	Server string
+	Err    error
+}
+
+func (v *ValidationError) Error() string {
+	return fmt.Sprintf("MCP server %q validation failed: %v", v.Server, v.Err)
+}
+
+func (v *ValidationError) Unwrap() error {
+	return v.Err
+}
+
 func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg ServerConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -314,7 +330,8 @@ func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg Ser
 	// First validate the server: can we start it and list tools? This avoids
 	// persisting a broken configuration that then appears as "stopped".
 	if err := m.validateServerNoLock(ctx, name, srvCfg); err != nil {
-		return fmt.Errorf("failed to connect to MCP server: %w", err)
+		log.Printf("[MCP] Validation failed for server %q: %v", name, err)
+		return &ValidationError{Server: name, Err: err}
 	}
 
 	path := m.configPath

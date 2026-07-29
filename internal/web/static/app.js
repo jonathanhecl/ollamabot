@@ -5966,8 +5966,14 @@ els.mcpEditForm.addEventListener("submit", async (e) => {
     });
 
     if (!res.ok) {
-      const data = await res.json();
-      throw new Error(data.error || "Failed to save server");
+      let msg = `HTTP ${res.status} ${res.statusText}`;
+      try {
+        const data = await res.json();
+        if (data && data.error) {
+          msg = data.error;
+        }
+      } catch {}
+      throw new Error(msg);
     }
 
     showToast(`MCP Server "${name}" saved successfully.`, "success");

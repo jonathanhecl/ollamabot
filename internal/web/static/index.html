@@ -263,14 +263,14 @@
             Headers JSON (optional)
             <textarea id="mcpEditHeaders" rows="3" placeholder='{"Authorization": "Bearer ..."}' style="width: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--text); padding: 8px 12px; font-family: inherit; font-size: 13.5px; resize: vertical;"></textarea>
           </label>
-          <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-weight: bold; cursor: pointer; font-size: 13.5px;">
-            <input id="mcpEditInsecureTLS" type="checkbox" style="width:16px; height:16px; cursor:pointer;" />
-            Skip TLS verification (for local HTTPS with self-signed certs)
+          <label style="display: flex; align-items: center; gap: 10px; padding: 6px 0; font-weight: bold; cursor: pointer; font-size: 13.5px;">
+            <input id="mcpEditInsecureTLS" type="checkbox" />
+            <span>Skip TLS verification (for local HTTPS with self-signed certs)</span>
           </label>
         </div>
-        <label class="checkbox-label" style="display: flex; align-items: center; gap: 8px; font-weight: bold; margin-top: 6px; margin-bottom: 6px; cursor: pointer; font-size: 13.5px;">
-          <input id="mcpEditSafe" type="checkbox" style="width:16px; height:16px; cursor:pointer;" />
-          Mark all tools from this server as safe (bypass approvals)
+        <label style="display: flex; align-items: center; gap: 10px; padding: 6px 0; font-weight: bold; cursor: pointer; font-size: 13.5px;">
+          <input id="mcpEditSafe" type="checkbox" />
+          <span>Mark all tools from this server as safe (bypass approvals)</span>
         </label>
         <label style="display: flex; flex-direction: column; gap: 6px; font-weight: 800; font-size: 13.5px;">
           Safe Tools List (comma-separated, if not all safe)
