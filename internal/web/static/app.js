@@ -3174,7 +3174,10 @@ function renderMessages() {
       roleName = "media router";
       contentHtml = renderPreProcessingContent(message.content);
     } else if (!hasSteps) {
-      contentHtml = `<div class="markdown">${renderMarkdown(message.content || "")}${cursor}</div>`;
+      // Skip the empty markdown block pre-data: the waiting indicator already
+      // covers the loading state and a lone stream cursor renders as a stray
+      // green bar above it.
+      contentHtml = message.content ? `<div class="markdown">${renderMarkdown(message.content)}${cursor}</div>` : "";
     }
     const timeHtml = message.timestamp ? `<span class="message-time">${escapeHtml(formatMessageTime(message.timestamp))}</span>` : "";
     const metaHtml = `
