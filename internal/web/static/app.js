@@ -2460,6 +2460,15 @@ function removeQueuedMessage(queueId) {
   updateComposerUI();
 }
 
+function appendContentStep(assistant, text) {
+  const lastStep = assistant.steps[assistant.steps.length - 1];
+  if (lastStep && lastStep.type === "content") {
+    lastStep.content += text;
+  } else {
+    assistant.steps.push({ type: "content", content: text });
+  }
+}
+
 async function processNextQueueItem() {
   if (state.isProcessing || state.messageQueue.length === 0) {
     updateComposerUI();
@@ -2676,12 +2685,7 @@ async function processNextQueueItem() {
       },
       content: (value) => {
         assistant.content += value;
-        const lastStep = assistant.steps[assistant.steps.length - 1];
-        if (lastStep && lastStep.type === "content") {
-          lastStep.content += value;
-        } else {
-          assistant.steps.push({ type: "content", content: value });
-        }
+        appendContentStep(assistant, value);
         renderMessages();
       },
       tool_call: (value) => {
@@ -2806,6 +2810,7 @@ async function processNextQueueItem() {
         assistant.waiting = false;
         assistant.streaming = false;
         assistant.content += `\nError: ${value}`;
+        appendContentStep(assistant, `\nError: ${value}`);
         renderMessages();
       },
       done: (value) => {
@@ -2844,6 +2849,7 @@ async function processNextQueueItem() {
   } catch (err) {
     if (err.name === "AbortError") {
       assistant.content += "\n\n*(Skipped/Paused by user)*";
+      appendContentStep(assistant, "\n\n*(Skipped/Paused by user)*");
     } else {
       // Connection/Ollama outage: put the user message back at the front of the queue
       // and remove the failed assistant bubble so it can be retried on reconnect.
@@ -3107,9 +3113,22 @@ function renderMessages() {
     let stepsHtml = "";
     if (hasSteps) {
       const lastIdx = visibleSteps.length - 1;
-      stepsHtml = visibleSteps
-        .map((s, idx) => renderStep(s, effectiveStreaming, idx === lastIdx))
-        .join("");
+      const hasContentStep = visibleSteps.some((s) => s.type === "content");
+      if (!hasContentStep && message.content) {
+        // Sessions saved before content steps existed keep the text only in
+        // message.content: render it after the leading thinking steps to
+        // approximate the original chronological order.
+        let splitIdx = 0;
+        while (splitIdx < visibleSteps.length && visibleSteps[splitIdx].type === "thinking") splitIdx++;
+        stepsHtml =
+          visibleSteps.slice(0, splitIdx).map((s) => renderStep(s, effectiveStreaming, false)).join("") +
+          `<div class="markdown">${renderMarkdown(message.content)}</div>` +
+          visibleSteps.slice(splitIdx).map((s, i) => renderStep(s, effectiveStreaming, splitIdx + i === lastIdx)).join("");
+      } else {
+        stepsHtml = visibleSteps
+          .map((s, idx) => renderStep(s, effectiveStreaming, idx === lastIdx))
+          .join("");
+      }
     }
     // Legacy fallback: if no steps but has old-style thinking/toolCalls/toolResults, render them.
     let legacyPreContent = "";
