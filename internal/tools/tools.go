@@ -406,7 +406,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        "web_search",
-				Description: "Search the web using DuckDuckGo to find current information. Returns a list of search result page titles, URLs, and snippet summaries. Always use this first to discover URLs for recent topics.",
+				Description: "Search the web using DuckDuckGo to find current information. Returns a list of search result page titles, URLs, and snippet summaries. Use this to discover URLs for recent topics. If the user already provided a specific URL, prefer fetch_webpage instead; do not search for a URL the user already gave.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -429,7 +429,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        "fetch_webpage",
-				Description: "Fetch and read the raw text content of a specific webpage URL. Use this to dive deeper into search result links, articles, or documentation to extract detailed answers.",
+				Description: "Fetch and read the raw text content of a specific webpage URL. Use this when the user provides a URL and wants to analyze, summarize, or save the page content. Also use it to dive deeper into search result links, articles, or documentation.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{

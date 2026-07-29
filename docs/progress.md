@@ -100,3 +100,14 @@ registry through the recorder to the web UI.
   user sees where each tool is running.
 - All tests updated for the new `OnToolStart`/`OnToolResult` signatures; full
   suite passes.
+
+## 2026-07-29 — Tool descriptions for direct URL fetching
+
+When the user provides a URL (e.g. an X post) and asks to save it, the model
+was defaulting to `web_search` instead of the existing `fetch_webpage` tool.
+Adjusted tool descriptions in `internal/tools/tools.go` to steer the model:
+
+- `web_search`: now explicitly says not to search for a URL the user already
+  provided and to prefer `fetch_webpage` for URLs.
+- `fetch_webpage`: now explicitly mentions it should be used when the user
+  supplies a URL to analyze, summarize, or save.
