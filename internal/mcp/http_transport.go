@@ -112,6 +112,8 @@ func (h *httpTransport) notify(ctx context.Context, method string, params any) e
 
 func (h *httpTransport) close() error { return nil }
 
+func (h *httpTransport) protocolVersion() string { return protocolVersionStreamable }
+
 // post sends a JSON-RPC request to the configured URL.
 func (h *httpTransport) post(ctx context.Context, req JSONRPCRequest, expectResponse bool) (*http.Response, error) {
 	body, err := json.Marshal(req)
@@ -383,6 +385,8 @@ func (s *sseTransport) postRequest(ctx context.Context, req JSONRPCRequest) erro
 	}
 	return nil
 }
+
+func (s *sseTransport) protocolVersion() string { return protocolVersionLegacy }
 
 func (s *sseTransport) close() error {
 	if s.cancel != nil {

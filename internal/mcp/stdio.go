@@ -191,6 +191,8 @@ func (s *stdioTransport) call(ctx context.Context, method string, params any, re
 	}
 }
 
+func (s *stdioTransport) protocolVersion() string { return protocolVersionLegacy }
+
 func (s *stdioTransport) notify(ctx context.Context, method string, params any) error {
 	var paramsRaw json.RawMessage
 	if params != nil {

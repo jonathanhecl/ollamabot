@@ -1,5 +1,32 @@
 # Progress
 
+## 2026-07-29 — MCP hardening: SSE lifetime, targeted restarts, secret masking
+
+Follow-up fixes after reviewing the multi-transport MCP work.
+
+### Changes
+
+- `internal/mcp/http_transport.go`: the legacy SSE transport now uses a
+  dedicated `streamClient` without `http.Client.Timeout` for the long-lived
+  SSE GET (the 60s client timeout was silently killing the stream; the
+  timeout remains for POSTs).
+- `internal/mcp/client.go`: new `failPending` helper drains in-flight
+  requests with a JSON-RPC error when the connection dies; both the SSE and
+  stdio `readLoop`s call it on exit so callers unblock immediately instead of
+  hanging until context timeout. The `transport` interface now declares
+  `protocolVersion()`: stdio/SSE announce `2024-11-05`, Streamable HTTP
+  announces `2025-03-26`.
+- `internal/mcp/manager.go`: `AddOrUpdateServer` and `DeleteServer` now
+  restart only the affected server (`startServerNoLock`/`stopServerNoLock`)
+  instead of restarting every configured server.
+- `internal/tools/tools.go`: `mcp_list_servers` masks `env` and `headers`
+  values before returning them, since the output goes into the model's
+  context; the authenticated web API still serves raw values.
+- `internal/web/static/app.js`: content-step fallbacks — legacy sessions
+  without `content` steps render their text after leading thinking steps, and
+  stream errors / user aborts are appended as `content` steps so they remain
+  visible in the chronological timeline.
+
 ## 2026-07-29 — Chronological action steps in session and web UI
 
 The recorder and web UI treated the assistant's final `content` as a separate

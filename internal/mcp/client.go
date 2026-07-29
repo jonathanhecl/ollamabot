@@ -33,7 +33,19 @@ type transport interface {
 	call(ctx context.Context, method string, params any, result interface{}) error
 	notify(ctx context.Context, method string, params any) error
 	close() error
+	// protocolVersion is the MCP protocol revision announced in the
+	// initialize handshake for this transport.
+	protocolVersion() string
 }
+
+const (
+	// protocolVersionLegacy is the revision used by stdio and the legacy
+	// HTTP+SSE transport.
+	protocolVersionLegacy = "2024-11-05"
+	// protocolVersionStreamable is the revision that introduced the
+	// Streamable HTTP transport.
+	protocolVersionStreamable = "2025-03-26"
+)
 
 // Client is a transport-agnostic MCP client. It performs the JSON-RPC
 // initialize handshake on top of whatever transport is configured.
@@ -68,7 +80,7 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	initParams := InitializeParams{
-		ProtocolVersion: "2024-11-05",
+		ProtocolVersion: c.transport.protocolVersion(),
 		Capabilities:    map[string]any{},
 		ClientInfo: ClientInfo{
 			Name:    "ollamabot",

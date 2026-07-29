@@ -91,51 +91,75 @@ func (m *Manager) startNoLock(ctx context.Context) error {
 	log.Printf("[MCP] Loaded %d server(s) from config", len(cfg.McpServers))
 
 	for name, srvCfg := range cfg.McpServers {
-		log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
-		client, err := NewClient(name, srvCfg)
-		if err != nil {
-			m.statusErrors[name] = err.Error()
-			log.Printf("[MCP] Error building client for server %q: %v. Continuing with other servers.", name, err)
-			continue
-		}
-		if err := client.Start(ctx); err != nil {
-			m.statusErrors[name] = err.Error()
-			log.Printf("[MCP] Error starting server %q: %v. Continuing with other servers.", name, err)
-			continue
-		}
-
-		// Query tools before registering, to avoid a half-working server.
-		var listResult ListToolsResult
-		if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
-			_ = client.Close()
-			m.statusErrors[name] = err.Error()
-			log.Printf("[MCP] Error listing tools for server %q: %v", name, err)
-			continue
-		}
-
-		m.clients[name] = client
-
-		// Setup safety configuration
-		safety := ServerSafety{
-			Safe:      srvCfg.Safe,
-			SafeTools: make(map[string]bool),
-		}
-		for _, t := range srvCfg.SafeTools {
-			safety.SafeTools[t] = true
-		}
-		m.safety[name] = safety
-
-		// Clear any prior error once the server is healthy.
-		delete(m.statusErrors, name)
-
-		for _, tool := range listResult.Tools {
-			m.tools[tool.Name] = tool
-			m.toolServer[tool.Name] = name
-			log.Printf("[MCP] Registered tool %q from server %q (safe: %v)", tool.Name, name, m.isSafeNoLock(name, tool.Name))
-		}
+		m.startServerNoLock(ctx, name, srvCfg)
 	}
 
 	return nil
+}
+
+// startServerNoLock starts a single server and registers its tools. Failures
+// are recorded in statusErrors without affecting other servers.
+func (m *Manager) startServerNoLock(ctx context.Context, name string, srvCfg ServerConfig) {
+	log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
+	client, err := NewClient(name, srvCfg)
+	if err != nil {
+		m.statusErrors[name] = err.Error()
+		log.Printf("[MCP] Error building client for server %q: %v. Continuing with other servers.", name, err)
+		return
+	}
+	if err := client.Start(ctx); err != nil {
+		m.statusErrors[name] = err.Error()
+		log.Printf("[MCP] Error starting server %q: %v. Continuing with other servers.", name, err)
+		return
+	}
+
+	// Query tools before registering, to avoid a half-working server.
+	var listResult ListToolsResult
+	if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
+		_ = client.Close()
+		m.statusErrors[name] = err.Error()
+		log.Printf("[MCP] Error listing tools for server %q: %v", name, err)
+		return
+	}
+
+	m.clients[name] = client
+
+	// Setup safety configuration
+	safety := ServerSafety{
+		Safe:      srvCfg.Safe,
+		SafeTools: make(map[string]bool),
+	}
+	for _, t := range srvCfg.SafeTools {
+		safety.SafeTools[t] = true
+	}
+	m.safety[name] = safety
+
+	// Clear any prior error once the server is healthy.
+	delete(m.statusErrors, name)
+
+	for _, tool := range listResult.Tools {
+		m.tools[tool.Name] = tool
+		m.toolServer[tool.Name] = name
+		log.Printf("[MCP] Registered tool %q from server %q (safe: %v)", tool.Name, name, m.isSafeNoLock(name, tool.Name))
+	}
+}
+
+// stopServerNoLock stops a single server and unregisters its tools, leaving
+// all other servers untouched.
+func (m *Manager) stopServerNoLock(name string) {
+	if client, ok := m.clients[name]; ok {
+		log.Printf("[MCP] Stopping server %q...", name)
+		_ = client.Close()
+		delete(m.clients, name)
+	}
+	for toolName, srv := range m.toolServer {
+		if srv == name {
+			delete(m.toolServer, toolName)
+			delete(m.tools, toolName)
+		}
+	}
+	delete(m.safety, name)
+	delete(m.statusErrors, name)
 }
 
 func (m *Manager) Stop() {
@@ -371,8 +395,10 @@ func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg Ser
 		return fmt.Errorf("failed to write mcp config: %w", err)
 	}
 
-	m.stopNoLock()
-	return m.startNoLock(ctx)
+	// Restart only the affected server; other servers keep their connections.
+	m.stopServerNoLock(name)
+	m.startServerNoLock(ctx, name, srvCfg)
+	return nil
 }
 
 // validateServerNoLock attempts to start the given configuration and read its
@@ -444,6 +470,6 @@ func (m *Manager) DeleteServer(ctx context.Context, name string) error {
 		return fmt.Errorf("failed to write mcp config: %w", err)
 	}
 
-	m.stopNoLock()
-	return m.startNoLock(ctx)
+	m.stopServerNoLock(name)
+	return nil
 }

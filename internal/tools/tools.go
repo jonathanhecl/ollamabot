@@ -1964,7 +1964,16 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if err != nil {
 			return "", fmt.Errorf("failed to list MCP servers: %w", err)
 		}
-		data, err := json.MarshalIndent(status, "", "  ")
+		// Mask env vars and headers: they may contain API keys or tokens and
+		// this output goes straight into the model's context. The web API
+		// still serves the raw values (it is behind auth).
+		masked := make(map[string]mcp.MCPServerStatus, len(status))
+		for name, srv := range status {
+			srv.Env = maskSensitiveMap(srv.Env)
+			srv.Headers = maskSensitiveMap(srv.Headers)
+			masked[name] = srv
+		}
+		data, err := json.MarshalIndent(masked, "", "  ")
 		if err != nil {
 			return "", fmt.Errorf("failed to marshal server status: %w", err)
 		}
@@ -2059,4 +2068,25 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
+}
+
+// maskSensitiveMap returns a copy of the map with every value masked, keeping
+// only a short prefix/suffix so the user can still identify which credential
+// is configured without exposing it to the model.
+func maskSensitiveMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return in
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		switch {
+		case v == "":
+			out[k] = v
+		case len(v) <= 6:
+			out[k] = "****"
+		default:
+			out[k] = v[:3] + "****" + v[len(v)-2:]
+		}
+	}
+	return out
 }
