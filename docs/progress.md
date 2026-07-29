@@ -70,3 +70,8 @@ saving an MCP server fail-fast and informative:
 - `internal/web/static/app.js`: fetch error handler now falls back to the raw
   `statusText` if the server response cannot be parsed as JSON, and surfaces the
   backend `error` field when present.
+- `internal/mcp/client.go` + `http_transport.go`: `notifications/initialized`
+  now sends an empty `params` object and the HTTP transport always advertises
+  `Accept: application/json, text/event-stream` on POSTs. Some servers
+  (Obsidian Local REST API) reject notifications sent with `Accept: application/json`
+  only and expect the params field to be present.

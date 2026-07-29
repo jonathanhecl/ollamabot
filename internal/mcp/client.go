@@ -63,7 +63,9 @@ func (c *Client) Start(ctx context.Context) error {
 		return fmt.Errorf("mcp initialize failed: %w", err)
 	}
 
-	if err := c.transport.notify(ctx, "notifications/initialized", nil); err != nil {
+	// Send initialized notification. We send an empty params object because some
+	// servers (e.g. Obsidian Local REST API) expect a params field to be present.
+	if err := c.transport.notify(ctx, "notifications/initialized", map[string]any{}); err != nil {
 		_ = c.transport.close()
 		return fmt.Errorf("mcp notifications/initialized failed: %w", err)
 	}

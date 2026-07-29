@@ -124,11 +124,10 @@ func (h *httpTransport) post(ctx context.Context, req JSONRPCRequest, expectResp
 		return nil, fmt.Errorf("failed to build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	accept := "application/json, text/event-stream"
-	if !expectResponse {
-		accept = "application/json"
-	}
-	httpReq.Header.Set("Accept", accept)
+	// Some servers (e.g. Obsidian Local REST API) reject a POST if the Accept
+	// header does not include text/event-stream, even for notifications that
+	// carry no response body. Accept both so the server can choose.
+	httpReq.Header.Set("Accept", "application/json, text/event-stream")
 	for k, v := range h.headers {
 		httpReq.Header.Set(k, v)
 	}
