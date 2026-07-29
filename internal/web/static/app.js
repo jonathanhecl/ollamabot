@@ -312,6 +312,7 @@ const els = {
   mcpEditEnv: document.querySelector("#mcpEditEnv"),
   mcpEditUrl: document.querySelector("#mcpEditUrl"),
   mcpEditHeaders: document.querySelector("#mcpEditHeaders"),
+  mcpEditInsecureTLS: document.querySelector("#mcpEditInsecureTLS"),
   mcpEditSafe: document.querySelector("#mcpEditSafe"),
   mcpEditSafeTools: document.querySelector("#mcpEditSafeTools"),
   mcpEditEyebrow: document.querySelector("#mcpEditEyebrow"),
@@ -5733,12 +5734,17 @@ async function loadAndRenderMcp() {
       } else if (srv.safeTools && srv.safeTools.length > 0) {
         safetyStr = `Safe tools: ${srv.safeTools.join(", ")}`;
       }
-      
+
+      const statusTitle = srv.error ? `Error: ${srv.error}` : (srv.status === "running" ? "Connected" : "Stopped");
+      const errorCell = srv.error
+        ? `<span style="color: #ff6b6b; font-size: 11px; display: inline-block; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(srv.error)}">${escapeHtml(srv.error)}</span>`
+        : statusBadge;
+
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${escapeHtml(name)}</strong></td>
         <td style="font-family: monospace; font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(endpointStr)}">${escapeHtml(endpointStr)}</td>
-        <td>${statusBadge}</td>
+        <td title="${escapeAttr(statusTitle)}">${errorCell}</td>
         <td style="color: var(--muted); font-size: 12px;">${escapeHtml(safetyStr)}</td>
         <td style="text-align: right; white-space: nowrap;">
           <button class="ghost-button view-mcp-tools-btn" data-name="${escapeAttr(name)}" type="button" style="font-size: 11px; padding: 2px 8px;">Tools</button>
@@ -5840,6 +5846,7 @@ function openMcpEdit(name = "", server = null) {
     } else {
       els.mcpEditHeaders.value = "";
     }
+    els.mcpEditInsecureTLS.checked = !!server.insecure_tls;
 
     els.mcpEditSafe.checked = !!server.safe;
     els.mcpEditSafeTools.value = (server.safeTools || []).join(", ");
@@ -5856,6 +5863,7 @@ function openMcpEdit(name = "", server = null) {
     els.mcpEditEnv.value = "";
     els.mcpEditUrl.value = "";
     els.mcpEditHeaders.value = "";
+    els.mcpEditInsecureTLS.checked = false;
     els.mcpEditSafe.checked = false;
     els.mcpEditSafeTools.value = "";
   }
@@ -5891,6 +5899,7 @@ els.mcpEditForm.addEventListener("submit", async (e) => {
   const envVal = els.mcpEditEnv.value.trim();
   const urlVal = els.mcpEditUrl.value.trim();
   const headersVal = els.mcpEditHeaders.value.trim();
+  const insecureTLS = els.mcpEditInsecureTLS.checked;
   const safe = els.mcpEditSafe.checked;
   const safeToolsVal = els.mcpEditSafeTools.value.trim();
 
@@ -5944,7 +5953,7 @@ els.mcpEditForm.addEventListener("submit", async (e) => {
   }
 
   try {
-    const payload = { type: transportType, args, env, headers, safe, safeTools };
+    const payload = { type: transportType, args, env, headers, insecure_tls: insecureTLS, safe, safeTools };
     if (transportType === "stdio") {
       payload.command = command;
     } else {

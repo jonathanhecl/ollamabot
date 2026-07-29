@@ -20,14 +20,17 @@ type ServerConfig struct {
 	// Type selects the transport. Valid values: "" / "stdio" (default),
 	// "http" (Streamable HTTP), "sse" (legacy HTTP+SSE). When empty, stdio
 	// is assumed and Command is required.
-	Type      string            `json:"type,omitempty"`
-	Command   string            `json:"command,omitempty"`
-	Args      []string          `json:"args,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Safe      bool              `json:"safe,omitempty"`
-	SafeTools []string          `json:"safeTools,omitempty"`
+	Type    string            `json:"type,omitempty"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+	// InsecureTLS skips TLS certificate verification for remote transports.
+	// Useful for local servers with self-signed certs (e.g. Obsidian on 127.0.0.1).
+	InsecureTLS bool     `json:"insecure_tls,omitempty"`
+	Safe        bool     `json:"safe,omitempty"`
+	SafeTools   []string `json:"safeTools,omitempty"`
 }
 
 type ServerSafety struct {
@@ -36,21 +39,23 @@ type ServerSafety struct {
 }
 
 type Manager struct {
-	configPath string
-	clients    map[string]*Client
-	tools      map[string]MCPTool      // toolName -> tool definition
-	toolServer map[string]string       // toolName -> serverName
-	safety     map[string]ServerSafety // serverName -> safety settings
-	mu         sync.RWMutex
+	configPath   string
+	clients      map[string]*Client
+	tools        map[string]MCPTool      // toolName -> tool definition
+	toolServer   map[string]string       // toolName -> serverName
+	safety       map[string]ServerSafety // serverName -> safety settings
+	statusErrors map[string]string       // serverName -> last start error
+	mu           sync.RWMutex
 }
 
 func NewManager(configPath string) *Manager {
 	return &Manager{
-		configPath: configPath,
-		clients:    make(map[string]*Client),
-		tools:      make(map[string]MCPTool),
-		toolServer: make(map[string]string),
-		safety:     make(map[string]ServerSafety),
+		configPath:   configPath,
+		clients:      make(map[string]*Client),
+		tools:        make(map[string]MCPTool),
+		toolServer:   make(map[string]string),
+		safety:       make(map[string]ServerSafety),
+		statusErrors: make(map[string]string),
 	}
 }
 
@@ -89,11 +94,22 @@ func (m *Manager) startNoLock(ctx context.Context) error {
 		log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
 		client, err := NewClient(name, srvCfg)
 		if err != nil {
+			m.statusErrors[name] = err.Error()
 			log.Printf("[MCP] Error building client for server %q: %v. Continuing with other servers.", name, err)
 			continue
 		}
 		if err := client.Start(ctx); err != nil {
+			m.statusErrors[name] = err.Error()
 			log.Printf("[MCP] Error starting server %q: %v. Continuing with other servers.", name, err)
+			continue
+		}
+
+		// Query tools before registering, to avoid a half-working server.
+		var listResult ListToolsResult
+		if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
+			_ = client.Close()
+			m.statusErrors[name] = err.Error()
+			log.Printf("[MCP] Error listing tools for server %q: %v", name, err)
 			continue
 		}
 
@@ -109,12 +125,8 @@ func (m *Manager) startNoLock(ctx context.Context) error {
 		}
 		m.safety[name] = safety
 
-		// Query tools
-		var listResult ListToolsResult
-		if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
-			log.Printf("[MCP] Error listing tools for server %q: %v", name, err)
-			continue
-		}
+		// Clear any prior error once the server is healthy.
+		delete(m.statusErrors, name)
 
 		for _, tool := range listResult.Tools {
 			m.tools[tool.Name] = tool
@@ -141,6 +153,7 @@ func (m *Manager) stopNoLock() {
 	m.tools = make(map[string]MCPTool)
 	m.toolServer = make(map[string]string)
 	m.safety = make(map[string]ServerSafety)
+	m.statusErrors = make(map[string]string)
 }
 
 func (m *Manager) GetTools() []MCPTool {
@@ -219,17 +232,19 @@ func (m *Manager) HasTool(toolName string) bool {
 }
 
 type MCPServerStatus struct {
-	Name      string            `json:"name"`
-	Type      string            `json:"type,omitempty"`
-	Command   string            `json:"command,omitempty"`
-	Args      []string          `json:"args,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Safe      bool              `json:"safe"`
-	SafeTools []string          `json:"safeTools,omitempty"`
-	Status    string            `json:"status"` // "running", "stopped"
-	Tools     []MCPTool         `json:"tools,omitempty"`
+	Name        string            `json:"name"`
+	Type        string            `json:"type,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	InsecureTLS bool              `json:"insecure_tls,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	Safe        bool              `json:"safe"`
+	SafeTools   []string          `json:"safeTools,omitempty"`
+	Status      string            `json:"status"` // "running", "stopped"
+	Tools       []MCPTool         `json:"tools,omitempty"`
 }
 
 func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
@@ -271,18 +286,21 @@ func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
 			}
 		}
 
+		errMsg := m.statusErrors[name]
 		result[name] = MCPServerStatus{
-			Name:      name,
-			Type:      srvCfg.Type,
-			Command:   srvCfg.Command,
-			Args:      srvCfg.Args,
-			Env:       srvCfg.Env,
-			URL:       srvCfg.URL,
-			Headers:   srvCfg.Headers,
-			Safe:      srvCfg.Safe,
-			SafeTools: srvCfg.SafeTools,
-			Status:    status,
-			Tools:     tools,
+			Name:        name,
+			Type:        srvCfg.Type,
+			Command:     srvCfg.Command,
+			Args:        srvCfg.Args,
+			Env:         srvCfg.Env,
+			URL:         srvCfg.URL,
+			Headers:     srvCfg.Headers,
+			InsecureTLS: srvCfg.InsecureTLS,
+			Error:       errMsg,
+			Safe:        srvCfg.Safe,
+			SafeTools:   srvCfg.SafeTools,
+			Status:      status,
+			Tools:       tools,
 		}
 	}
 
@@ -292,6 +310,12 @@ func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
 func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg ServerConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	// First validate the server: can we start it and list tools? This avoids
+	// persisting a broken configuration that then appears as "stopped".
+	if err := m.validateServerNoLock(ctx, name, srvCfg); err != nil {
+		return fmt.Errorf("failed to connect to MCP server: %w", err)
+	}
 
 	path := m.configPath
 	if !filepath.IsAbs(path) {
@@ -324,6 +348,26 @@ func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg Ser
 
 	m.stopNoLock()
 	return m.startNoLock(ctx)
+}
+
+// validateServerNoLock attempts to start the given configuration and read its
+// tool list without mutating the manager's active state. It returns an error if
+// the server cannot be reached or does not respond correctly.
+func (m *Manager) validateServerNoLock(ctx context.Context, name string, srvCfg ServerConfig) error {
+	client, err := NewClient(name, srvCfg)
+	if err != nil {
+		return err
+	}
+	if err := client.Start(ctx); err != nil {
+		return err
+	}
+	defer client.Close()
+
+	var listResult ListToolsResult
+	if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {
+		return err
+	}
+	return nil
 }
 
 // transportLabel returns a human-readable transport name for logs.

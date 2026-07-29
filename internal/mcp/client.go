@@ -93,9 +93,9 @@ func newTransport(name string, cfg ServerConfig) (transport, error) {
 		}
 		return newStdioTransport(name, cfg.Command, cfg.Args, cfg.Env), nil
 	case "http", "https":
-		return newHTTPTransport(name, cfg.URL, cfg.Headers), nil
+		return newHTTPTransport(name, cfg.URL, cfg.Headers, cfg.InsecureTLS), nil
 	case "sse":
-		return newSSETransport(name, cfg.URL, cfg.Headers), nil
+		return newSSETransport(name, cfg.URL, cfg.Headers, cfg.InsecureTLS), nil
 	default:
 		return nil, fmt.Errorf("mcp server %q: unsupported transport type %q (use stdio, http, or sse)", name, cfg.Type)
 	}

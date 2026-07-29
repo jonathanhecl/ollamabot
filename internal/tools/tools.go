@@ -247,6 +247,11 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 						"type":        "object",
 						"description": "HTTP headers to send with requests to the remote server (http/sse only), e.g. {\"Authorization\": \"Bearer <token>\"}.",
 					},
+					"insecure_tls": map[string]any{
+						"type":        "boolean",
+						"description": "Skip TLS certificate verification for remote servers. Useful for local HTTPS servers with self-signed certs (e.g. Obsidian Local REST API on 127.0.0.1). Use only with trusted local endpoints.",
+						"default":     false,
+					},
 					"safe": map[string]any{
 						"type":        "boolean",
 						"description": "If true, all tools from this server are considered safe and won't require per-call approval.",
@@ -1996,6 +2001,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				_ = json.Unmarshal(hBytes, &headersMap)
 			}
 		}
+		insecureTLS, _ := args["insecure_tls"].(bool)
 		safe, _ := args["safe"].(bool)
 		var safeTools []string
 		if v, ok := args["safe_tools"]; ok {
@@ -2005,14 +2011,15 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			}
 		}
 		srvCfg := mcp.ServerConfig{
-			Type:      transportType,
-			Command:   command,
-			Args:      srvArgs,
-			Env:       envMap,
-			URL:       urlStr,
-			Headers:   headersMap,
-			Safe:      safe,
-			SafeTools: safeTools,
+			Type:        transportType,
+			Command:     command,
+			Args:        srvArgs,
+			Env:         envMap,
+			URL:         urlStr,
+			Headers:     headersMap,
+			InsecureTLS: insecureTLS,
+			Safe:        safe,
+			SafeTools:   safeTools,
 		}
 		if err := r.mcpManager.AddOrUpdateServer(ctx, srvName, srvCfg); err != nil {
 			return "", fmt.Errorf("failed to add MCP server: %w", err)

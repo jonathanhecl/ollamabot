@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,33 +16,35 @@ import (
 	"time"
 )
 
-// sharedHTTPClient is reused across remote transports so keep-alive connections
-// are pooled. It tolerates self-signed certs (common for local servers such as
-// the Obsidian Local REST API on 127.0.0.1).
-var sharedHTTPClient = &http.Client{
-	Timeout: 60 * time.Second,
-	Transport: &http.Transport{
-		// Local-first MCP servers (Obsidian, etc.) frequently use self-signed
-		// certificates on localhost. We don't verify those.
-		TLSClientConfig: nil,
-		Proxy:           http.ProxyFromEnvironment,
-	},
-}
-
 // httpTransport implements the Streamable HTTP transport (MCP 2025-03-26).
 // Each request is POSTed to URL; the server replies with either a single
 // application/json document or a text/event-stream of responses.
 type httpTransport struct {
-	name     string
-	url      string
-	headers  map[string]string
-	sessionID string
-	reqID    uint64
-	mu       sync.Mutex
+	name        string
+	url         string
+	headers     map[string]string
+	insecureTLS bool
+	client      *http.Client
+	sessionID   string
+	reqID       uint64
+	mu          sync.Mutex
 }
 
-func newHTTPTransport(name, rawURL string, headers map[string]string) *httpTransport {
-	return &httpTransport{name: name, url: rawURL, headers: headers}
+func newHTTPTransport(name, rawURL string, headers map[string]string, insecureTLS bool) *httpTransport {
+	tlsConfig := defaultTLSConfig()
+	if insecureTLS {
+		tlsConfig.InsecureSkipVerify = true
+	}
+	return &httpTransport{
+		name:        name,
+		url:         rawURL,
+		headers:     headers,
+		insecureTLS: insecureTLS,
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig, Proxy: http.ProxyFromEnvironment},
+		},
+	}
 }
 
 func (h *httpTransport) start(ctx context.Context) error {
@@ -136,7 +139,7 @@ func (h *httpTransport) post(ctx context.Context, req JSONRPCRequest, expectResp
 		httpReq.Header.Set("Mcp-Session-Id", sid)
 	}
 
-	resp, err := sharedHTTPClient.Do(httpReq)
+	resp, err := h.client.Do(httpReq)
 	if err != nil {
 		return nil, fmt.Errorf("mcp http request to %s failed: %w", h.url, err)
 	}
@@ -155,6 +158,8 @@ type sseTransport struct {
 	name        string
 	url         string
 	headers     map[string]string
+	insecureTLS bool
+	client      *http.Client
 	endpoint    string
 	reqID       uint64
 	pending     map[uint64]chan *JSONRPCResponse
@@ -167,11 +172,20 @@ type sseTransport struct {
 	endpointCh  chan struct{}
 }
 
-func newSSETransport(name, rawURL string, headers map[string]string) *sseTransport {
+func newSSETransport(name, rawURL string, headers map[string]string, insecureTLS bool) *sseTransport {
+	tlsConfig := defaultTLSConfig()
+	if insecureTLS {
+		tlsConfig.InsecureSkipVerify = true
+	}
 	return &sseTransport{
-		name:       name,
-		url:        rawURL,
-		headers:    headers,
+		name:        name,
+		url:         rawURL,
+		headers:     headers,
+		insecureTLS: insecureTLS,
+		client: &http.Client{
+			Timeout:   60 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsConfig, Proxy: http.ProxyFromEnvironment},
+		},
 		pending:    make(map[uint64]chan *JSONRPCResponse),
 		done:       make(chan struct{}),
 		endpointCh: make(chan struct{}),
@@ -192,7 +206,7 @@ func (s *sseTransport) start(ctx context.Context) error {
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := sharedHTTPClient.Do(httpReq)
+	resp, err := s.client.Do(httpReq)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("mcp sse connect to %s failed: %w", s.url, err)
@@ -352,7 +366,7 @@ func (s *sseTransport) postRequest(ctx context.Context, req JSONRPCRequest) erro
 	for k, v := range s.headers {
 		httpReq.Header.Set(k, v)
 	}
-	resp, err := sharedHTTPClient.Do(httpReq)
+	resp, err := s.client.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("mcp sse post failed: %w", err)
 	}
@@ -465,4 +479,12 @@ func splitSSEField(line string) (field, value string, ok bool) {
 		value = value[1:]
 	}
 	return field, value, true
+}
+
+// defaultTLSConfig returns a fresh TLS config. If this is Windows, we use the
+// system certificate store via crypto/x509; otherwise Go's defaults apply.
+func defaultTLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
 }

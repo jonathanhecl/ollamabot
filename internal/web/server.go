@@ -1811,14 +1811,15 @@ func (s *Server) skillsPath() string {
 }
 
 type updateMCPServerRequest struct {
-	Type      string            `json:"type,omitempty"`
-	Command   string            `json:"command,omitempty"`
-	Args      []string          `json:"args,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	URL       string            `json:"url,omitempty"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Safe      bool              `json:"safe"`
-	SafeTools []string          `json:"safeTools,omitempty"`
+	Type        string            `json:"type,omitempty"`
+	Command     string            `json:"command,omitempty"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	URL         string            `json:"url,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	InsecureTLS bool              `json:"insecure_tls,omitempty"`
+	Safe        bool              `json:"safe"`
+	SafeTools   []string          `json:"safeTools,omitempty"`
 }
 
 func (s *Server) handleListMCPServers(w http.ResponseWriter, r *http.Request) {
@@ -1894,14 +1895,15 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	srvCfg := mcp.ServerConfig{
-		Type:      req.Type,
-		Command:   req.Command,
-		Args:      req.Args,
-		Env:       req.Env,
-		URL:       req.URL,
-		Headers:   req.Headers,
-		Safe:      req.Safe,
-		SafeTools: req.SafeTools,
+		Type:        req.Type,
+		Command:     req.Command,
+		Args:        req.Args,
+		Env:         req.Env,
+		URL:         req.URL,
+		Headers:     req.Headers,
+		InsecureTLS: req.InsecureTLS,
+		Safe:        req.Safe,
+		SafeTools:   req.SafeTools,
 	}
 
 	if err := mcpMgr.AddOrUpdateServer(r.Context(), name, srvCfg); err != nil {
