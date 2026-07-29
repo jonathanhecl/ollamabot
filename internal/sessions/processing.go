@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"strings"
 	"sync"
 )
@@ -11,7 +12,54 @@ var (
 
 	backgroundWorkMu   sync.Mutex
 	backgroundWorkBusy bool
+
+	sessionCancelsMu sync.Mutex
+	sessionCancels   = make(map[string]context.CancelFunc)
 )
+
+// RegisterCancel registers a cancel function for the in-flight work of a
+// session (user turn, plan monitor run, goal cycle). Any previously
+// registered cancel is invoked and replaced.
+func RegisterCancel(sessionID string, cancel context.CancelFunc) {
+	sessionID = normalizeSessionID(sessionID)
+	if sessionID == "" || cancel == nil {
+		return
+	}
+	sessionCancelsMu.Lock()
+	if old, ok := sessionCancels[sessionID]; ok {
+		old()
+	}
+	sessionCancels[sessionID] = cancel
+	sessionCancelsMu.Unlock()
+}
+
+// UnregisterCancel removes the registered cancel for a session, if any.
+func UnregisterCancel(sessionID string) {
+	sessionID = normalizeSessionID(sessionID)
+	if sessionID == "" {
+		return
+	}
+	sessionCancelsMu.Lock()
+	delete(sessionCancels, sessionID)
+	sessionCancelsMu.Unlock()
+}
+
+// AbortSession cancels the registered in-flight work for a session.
+// Returns true if there was something to cancel.
+func AbortSession(sessionID string) bool {
+	sessionID = normalizeSessionID(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	sessionCancelsMu.Lock()
+	cancel, ok := sessionCancels[sessionID]
+	delete(sessionCancels, sessionID)
+	sessionCancelsMu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
+}
 
 type sessionActivityTracker struct {
 	counts map[string]int

@@ -285,8 +285,10 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		model = pm.config().OllamaDefaultModel
 	}
 	runCtx, runCancel := SubagentContext(ctx, pm.config())
+	sessions.RegisterCancel(sessionID, runCancel)
 	finalHistory, err := a.Run(runCtx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
 	runCancel()
+	sessions.UnregisterCancel(sessionID)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			log.Printf("[PlanMonitor] agent run for session %s timed out after %d minutes", sessionID, pm.config().SubagentTimeoutMinutes)

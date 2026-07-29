@@ -1,6 +1,77 @@
 package sessions
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
+
+func TestSessionCancelRegistry(t *testing.T) {
+	const id = "sess-cancel"
+
+	if AbortSession(id) {
+		t.Fatal("expected false when nothing registered")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	RegisterCancel(id, cancel)
+	if !AbortSession(id) {
+		t.Fatal("expected true when a cancel is registered")
+	}
+	if ctx.Err() == nil {
+		t.Fatal("expected context to be cancelled")
+	}
+	if AbortSession(id) {
+		t.Fatal("expected registry to be cleared after abort")
+	}
+
+	// Registering a new cancel replaces and cancels the previous one.
+	prevCtx, prevCancel := context.WithCancel(context.Background())
+	RegisterCancel(id, prevCancel)
+	newCtx, newCancel := context.WithCancel(context.Background())
+	RegisterCancel(id, newCancel)
+	if prevCtx.Err() == nil {
+		t.Fatal("expected previous cancel to be invoked on replace")
+	}
+	UnregisterCancel(id)
+	if newCtx.Err() != nil {
+		t.Fatal("expected unregister to not cancel the context")
+	}
+	if AbortSession(id) {
+		t.Fatal("expected false after unregister")
+	}
+}
+
+func TestPauseActivePlan(t *testing.T) {
+	store := NewStore(t.TempDir())
+	sess := Session{ID: GenerateID(), Title: "Plan session", Model: "test"}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	if _, err := PauseActivePlan(store, sess.ID, "stop"); err == nil {
+		t.Fatal("expected error when no active plan")
+	}
+
+	if _, err := ActivatePlan(store, sess.ID, "summary", []string{"one", "two"}); err != nil {
+		t.Fatalf("activate plan: %v", err)
+	}
+
+	plan, err := PauseActivePlan(store, sess.ID, "Stopped by user")
+	if err != nil {
+		t.Fatalf("pause plan: %v", err)
+	}
+	if plan.Status != PlanStatusDeferred {
+		t.Fatalf("expected deferred status, got %q", plan.Status)
+	}
+	if plan.DeferredUntil != nil {
+		t.Fatalf("expected no scheduled resume, got %v", plan.DeferredUntil)
+	}
+
+	// Pausing again must fail (plan is no longer active).
+	if _, err := PauseActivePlan(store, sess.ID, "stop"); err == nil {
+		t.Fatal("expected error when pausing a non-active plan")
+	}
+}
 
 func TestProcessingTracker(t *testing.T) {
 	const id = "sess-1"

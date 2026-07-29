@@ -3186,7 +3186,7 @@ function renderMessages() {
         ${timeHtml}
       </div>
     `;
-    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${stepsHtml}${legacyPreContent}${contentHtml}${legacyPostContent}${metricsHtml}${pending}${metaHtml}`;
+    div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${stepsHtml}${legacyPreContent}${contentHtml}${legacyPostContent}${pending}${metricsHtml}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
   }

@@ -1193,6 +1193,31 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAbortSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	aborted := s.abortActiveSession(id)
+
+	// Also cancel background work (plan monitor runs, goal cycles) registered
+	// in the shared session registry.
+	if sessions.AbortSession(id) {
+		aborted = true
+	}
+
+	// Pause any background goal loop so it does not continue with new cycles.
+	s.mu.RLock()
+	goalMgr := s.goalMgr
+	s.mu.RUnlock()
+	if goalMgr != nil {
+		if err := goalMgr.PauseGoal(id); err == nil {
+			aborted = true
+		}
+	}
+
+	// Pause an active plan indefinitely so the plan monitor does not
+	// auto-resume it after the abort.
+	if s.sessionStore != nil {
+		if _, err := sessions.PauseActivePlan(s.sessionStore, id, "Stopped by user"); err == nil {
+			aborted = true
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{"aborted": aborted})
 }
 

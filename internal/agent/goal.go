@@ -419,9 +419,11 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		var runErr error
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
-			runCtx, runCancel := SubagentContext(ctx, g.config())
-			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
-			runCancel()
+		runCtx, runCancel := SubagentContext(ctx, g.config())
+		sessions.RegisterCancel(sessionID, runCancel)
+		finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
+		runCancel()
+		sessions.UnregisterCancel(sessionID)
 			if runErr == nil {
 				break
 			}
