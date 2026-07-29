@@ -210,7 +210,7 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "mcp_add_server",
-			Description: "Add or update an MCP server in the configuration. The server will be started immediately and its tools will become available. Requires user approval. Use 'safe=true' to mark all tools from this server as safe (no approval needed per call), or list specific tool names in 'safe_tools' for granular safety.",
+			Description: "Add or update an MCP server in the configuration. The server will be started immediately and its tools will become available. Requires user approval. Use 'safe=true' to mark all tools from this server as safe (no approval needed per call), or list specific tool names in 'safe_tools' for granular safety. Three transports are supported: 'stdio' (default; launches a local subprocess via 'command'/'args'/'env'), 'http' (Streamable HTTP; connect to a remote URL, e.g. the Obsidian Local REST API at https://127.0.0.1:27124/mcp/), and 'sse' (legacy HTTP+SSE). For 'http'/'sse' provide 'url' and optionally 'headers' (e.g. {\"Authorization\": \"Bearer ...\"}); 'command' is only used by 'stdio'.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -218,20 +218,34 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 						"type":        "string",
 						"description": "Unique name for the MCP server (alphanumeric, dashes, underscores).",
 					},
+					"type": map[string]any{
+						"type":        "string",
+						"description": "Transport type: 'stdio' (default), 'http' (Streamable HTTP), or 'sse' (legacy HTTP+SSE).",
+						"enum":        []string{"stdio", "http", "sse"},
+						"default":     "stdio",
+					},
 					"command": map[string]any{
 						"type":        "string",
-						"description": "The executable command to launch the MCP server (e.g. 'npx', 'python3', 'node').",
+						"description": "Executable command to launch the MCP server (stdio only, e.g. 'npx', 'python3', 'node').",
 					},
 					"args": map[string]any{
 						"type": "array",
 						"items": map[string]any{
 							"type": "string",
 						},
-						"description": "Arguments to pass to the command.",
+						"description": "Arguments to pass to the command (stdio only).",
 					},
 					"env": map[string]any{
 						"type":        "object",
-						"description": "Environment variables to pass to the server process (key-value pairs).",
+						"description": "Environment variables to pass to the server process (stdio only, key-value pairs).",
+					},
+					"url": map[string]any{
+						"type":        "string",
+						"description": "Remote MCP endpoint URL (http/sse only), e.g. 'https://127.0.0.1:27124/mcp/'.",
+					},
+					"headers": map[string]any{
+						"type":        "object",
+						"description": "HTTP headers to send with requests to the remote server (http/sse only), e.g. {\"Authorization\": \"Bearer <token>\"}.",
 					},
 					"safe": map[string]any{
 						"type":        "boolean",
@@ -246,7 +260,7 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 						"description": "Specific tool names from this server that are safe (won't require per-call approval).",
 					},
 				},
-				"required": []string{"name", "command"},
+				"required": []string{"name"},
 			},
 		},
 	})
@@ -1142,11 +1156,22 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	} else if name == "mcp_add_server" {
 		needsApprovalCheck = true
 		srvName, _ := args["name"].(string)
+		transportType, _ := args["type"].(string)
+		if transportType == "" {
+			transportType = "stdio"
+		}
 		command, _ := args["command"].(string)
+		urlStr, _ := args["url"].(string)
+		var summary string
+		if transportType == "stdio" {
+			summary = fmt.Sprintf("Adding MCP server %q will execute command %q as a subprocess. This could run arbitrary code.", srvName, command)
+		} else {
+			summary = fmt.Sprintf("Adding MCP server %q will connect to remote endpoint %q via %s transport.", srvName, urlStr, transportType)
+		}
 		assessment = RiskAssessment{
 			Level:   RiskNeedsApproval,
 			Label:   fmt.Sprintf("Add MCP server %q", srvName),
-			Summary: fmt.Sprintf("Adding MCP server %q will execute command %q as a subprocess. This could run arbitrary code.", srvName, command),
+			Summary: summary,
 		}
 	} else if name == "mcp_delete_server" {
 		needsApprovalCheck = true
@@ -1928,9 +1953,27 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("MCP is not enabled")
 		}
 		srvName, _ := args["name"].(string)
+		if srvName == "" {
+			return "", fmt.Errorf("missing required argument: name")
+		}
+		transportType, _ := args["type"].(string)
+		if transportType == "" {
+			transportType = "stdio"
+		}
 		command, _ := args["command"].(string)
-		if srvName == "" || command == "" {
-			return "", fmt.Errorf("missing required arguments: name and command")
+		urlStr, _ := args["url"].(string)
+		// Validate per-transport requirements.
+		switch transportType {
+		case "stdio", "":
+			if command == "" {
+				return "", fmt.Errorf("stdio transport requires a 'command'")
+			}
+		case "http", "sse":
+			if urlStr == "" {
+				return "", fmt.Errorf("%s transport requires a 'url'", transportType)
+			}
+		default:
+			return "", fmt.Errorf("unsupported transport type %q (use stdio, http, or sse)", transportType)
 		}
 		var srvArgs []string
 		if v, ok := args["args"]; ok {
@@ -1946,6 +1989,13 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				_ = json.Unmarshal(envBytes, &envMap)
 			}
 		}
+		headersMap := map[string]string{}
+		if v, ok := args["headers"]; ok {
+			hBytes, err := json.Marshal(v)
+			if err == nil {
+				_ = json.Unmarshal(hBytes, &headersMap)
+			}
+		}
 		safe, _ := args["safe"].(bool)
 		var safeTools []string
 		if v, ok := args["safe_tools"]; ok {
@@ -1955,9 +2005,12 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			}
 		}
 		srvCfg := mcp.ServerConfig{
+			Type:      transportType,
 			Command:   command,
 			Args:      srvArgs,
 			Env:       envMap,
+			URL:       urlStr,
+			Headers:   headersMap,
 			Safe:      safe,
 			SafeTools: safeTools,
 		}
@@ -1966,7 +2019,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		r.RefreshMCP()
 		toolCount := len(r.mcpManager.GetTools())
-		return fmt.Sprintf("MCP server %q added and started successfully. %d tools are now available.", srvName, toolCount), nil
+		return fmt.Sprintf("MCP server %q added and started successfully (transport=%s). %d tools are now available.", srvName, transportType, toolCount), nil
 	case "mcp_delete_server":
 		if r.mcpManager == nil {
 			return "", fmt.Errorf("MCP is not enabled")

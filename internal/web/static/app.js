@@ -304,9 +304,14 @@ const els = {
   mcpEditDialog: document.querySelector("#mcpEditDialog"),
   mcpEditForm: document.querySelector("#mcpEditForm"),
   mcpEditName: document.querySelector("#mcpEditName"),
+  mcpEditType: document.querySelector("#mcpEditType"),
+  mcpEditStdioFields: document.querySelector("#mcpEditStdioFields"),
+  mcpEditRemoteFields: document.querySelector("#mcpEditRemoteFields"),
   mcpEditCommand: document.querySelector("#mcpEditCommand"),
   mcpEditArgs: document.querySelector("#mcpEditArgs"),
   mcpEditEnv: document.querySelector("#mcpEditEnv"),
+  mcpEditUrl: document.querySelector("#mcpEditUrl"),
+  mcpEditHeaders: document.querySelector("#mcpEditHeaders"),
   mcpEditSafe: document.querySelector("#mcpEditSafe"),
   mcpEditSafeTools: document.querySelector("#mcpEditSafeTools"),
   mcpEditEyebrow: document.querySelector("#mcpEditEyebrow"),
@@ -5711,8 +5716,14 @@ async function loadAndRenderMcp() {
     serverKeys.forEach((key) => {
       const srv = servers[key];
       const name = srv.name || key;
-      const cmdStr = `${srv.command} ${(srv.args || []).join(" ")}`;
-      
+      const transportType = srv.type || "stdio";
+      let endpointStr;
+      if (transportType === "stdio") {
+        endpointStr = `${srv.command || ""} ${(srv.args || []).join(" ")}`.trim();
+      } else {
+        endpointStr = `[${transportType}] ${srv.url || ""}`;
+      }
+
       const badgeClass = srv.status === "running" ? "badge-running" : "badge-stopped";
       const statusBadge = `<span class="${badgeClass}">${srv.status}</span>`;
       
@@ -5726,7 +5737,7 @@ async function loadAndRenderMcp() {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td><strong>${escapeHtml(name)}</strong></td>
-        <td style="font-family: monospace; font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(cmdStr)}">${escapeHtml(cmdStr)}</td>
+        <td style="font-family: monospace; font-size: 12px; max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeAttr(endpointStr)}">${escapeHtml(endpointStr)}</td>
         <td>${statusBadge}</td>
         <td style="color: var(--muted); font-size: 12px;">${escapeHtml(safetyStr)}</td>
         <td style="text-align: right; white-space: nowrap;">
@@ -5795,39 +5806,61 @@ function openMcpToolsView(name, server) {
   els.mcpToolsDialog.showModal();
 }
 
+function updateMcpEditTransportVisibility() {
+  const type = els.mcpEditType.value;
+  const stdioVisible = type === "stdio";
+  els.mcpEditStdioFields.style.display = stdioVisible ? "flex" : "none";
+  els.mcpEditRemoteFields.style.display = stdioVisible ? "none" : "flex";
+}
+
+els.mcpEditType.addEventListener("change", updateMcpEditTransportVisibility);
+
 function openMcpEdit(name = "", server = null) {
   if (server) {
     editingMcpName = name;
     els.mcpEditTitle.textContent = `Edit Server: ${name}`;
     els.mcpEditEyebrow.textContent = "Edit MCP Configuration";
-    
+
     els.mcpEditName.value = name;
     els.mcpEditName.readOnly = true;
+    const transportType = server.type || "stdio";
+    els.mcpEditType.value = transportType;
     els.mcpEditCommand.value = server.command || "";
     els.mcpEditArgs.value = (server.args || []).join("\n");
-    
+
     if (server.env && Object.keys(server.env).length > 0) {
       els.mcpEditEnv.value = JSON.stringify(server.env, null, 2);
     } else {
       els.mcpEditEnv.value = "";
     }
-    
+
+    els.mcpEditUrl.value = server.url || "";
+    if (server.headers && Object.keys(server.headers).length > 0) {
+      els.mcpEditHeaders.value = JSON.stringify(server.headers, null, 2);
+    } else {
+      els.mcpEditHeaders.value = "";
+    }
+
     els.mcpEditSafe.checked = !!server.safe;
     els.mcpEditSafeTools.value = (server.safeTools || []).join(", ");
   } else {
     editingMcpName = null;
     els.mcpEditTitle.textContent = "Add MCP Server";
     els.mcpEditEyebrow.textContent = "New MCP Server";
-    
+
     els.mcpEditName.value = "";
     els.mcpEditName.readOnly = false;
+    els.mcpEditType.value = "stdio";
     els.mcpEditCommand.value = "";
     els.mcpEditArgs.value = "";
     els.mcpEditEnv.value = "";
+    els.mcpEditUrl.value = "";
+    els.mcpEditHeaders.value = "";
     els.mcpEditSafe.checked = false;
     els.mcpEditSafeTools.value = "";
   }
-  
+
+  updateMcpEditTransportVisibility();
   els.mcpEditDialog.showModal();
 }
 
@@ -5850,24 +5883,35 @@ els.addMcpServerBtn.addEventListener("click", () => openMcpEdit());
 
 els.mcpEditForm.addEventListener("submit", async (e) => {
   e.preventDefault();
-  
+
   const name = els.mcpEditName.value.trim();
+  const transportType = els.mcpEditType.value || "stdio";
   const command = els.mcpEditCommand.value.trim();
   const argsVal = els.mcpEditArgs.value.trim();
   const envVal = els.mcpEditEnv.value.trim();
+  const urlVal = els.mcpEditUrl.value.trim();
+  const headersVal = els.mcpEditHeaders.value.trim();
   const safe = els.mcpEditSafe.checked;
   const safeToolsVal = els.mcpEditSafeTools.value.trim();
-  
-  if (!name || !command) {
-    showToast("Name and command are required", "error");
+
+  if (!name) {
+    showToast("Name is required", "error");
     return;
   }
-  
+  if (transportType === "stdio" && !command) {
+    showToast("Command is required for stdio transport", "error");
+    return;
+  }
+  if ((transportType === "http" || transportType === "sse") && !urlVal) {
+    showToast("URL is required for http/sse transport", "error");
+    return;
+  }
+
   let args = [];
   if (argsVal) {
     args = argsVal.split("\n").map(line => line.trim()).filter(line => line.length > 0);
   }
-  
+
   let env = {};
   if (envVal) {
     try {
@@ -5880,25 +5924,43 @@ els.mcpEditForm.addEventListener("submit", async (e) => {
       return;
     }
   }
-  
+
+  let headers = {};
+  if (headersVal) {
+    try {
+      headers = JSON.parse(headersVal);
+      if (typeof headers !== "object" || headers === null || Array.isArray(headers)) {
+        throw new Error("JSON must be a key-value object");
+      }
+    } catch (err) {
+      showToast(`Invalid Headers JSON: ${err.message}`, "error");
+      return;
+    }
+  }
+
   let safeTools = [];
   if (safeToolsVal) {
     safeTools = safeToolsVal.split(",").map(t => t.trim()).filter(t => t.length > 0);
   }
-  
+
   try {
-    const payload = { command, args, env, safe, safeTools };
+    const payload = { type: transportType, args, env, headers, safe, safeTools };
+    if (transportType === "stdio") {
+      payload.command = command;
+    } else {
+      payload.url = urlVal;
+    }
     const res = await fetch(`/api/mcp/${encodeURIComponent(name)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    
+
     if (!res.ok) {
       const data = await res.json();
       throw new Error(data.error || "Failed to save server");
     }
-    
+
     showToast(`MCP Server "${name}" saved successfully.`, "success");
     els.mcpEditDialog.close();
     await loadAndRenderMcp();

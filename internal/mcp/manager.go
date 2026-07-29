@@ -17,9 +17,15 @@ type ConfigFile struct {
 }
 
 type ServerConfig struct {
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
+	// Type selects the transport. Valid values: "" / "stdio" (default),
+	// "http" (Streamable HTTP), "sse" (legacy HTTP+SSE). When empty, stdio
+	// is assumed and Command is required.
+	Type      string            `json:"type,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 	Safe      bool              `json:"safe,omitempty"`
 	SafeTools []string          `json:"safeTools,omitempty"`
 }
@@ -80,8 +86,12 @@ func (m *Manager) startNoLock(ctx context.Context) error {
 	log.Printf("[MCP] Loaded %d server(s) from config", len(cfg.McpServers))
 
 	for name, srvCfg := range cfg.McpServers {
-		log.Printf("[MCP] Initializing server %q: %s %v", name, srvCfg.Command, srvCfg.Args)
-		client := NewClient(name, srvCfg.Command, srvCfg.Args, srvCfg.Env)
+		log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
+		client, err := NewClient(name, srvCfg)
+		if err != nil {
+			log.Printf("[MCP] Error building client for server %q: %v. Continuing with other servers.", name, err)
+			continue
+		}
 		if err := client.Start(ctx); err != nil {
 			log.Printf("[MCP] Error starting server %q: %v. Continuing with other servers.", name, err)
 			continue
@@ -209,14 +219,17 @@ func (m *Manager) HasTool(toolName string) bool {
 }
 
 type MCPServerStatus struct {
-	Name      string    `json:"name"`
-	Command   string    `json:"command"`
-	Args      []string  `json:"args"`
+	Name      string            `json:"name"`
+	Type      string            `json:"type,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
-	Safe      bool      `json:"safe"`
-	SafeTools []string  `json:"safeTools,omitempty"`
-	Status    string    `json:"status"` // "running", "stopped"
-	Tools     []MCPTool `json:"tools,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
+	Safe      bool              `json:"safe"`
+	SafeTools []string          `json:"safeTools,omitempty"`
+	Status    string            `json:"status"` // "running", "stopped"
+	Tools     []MCPTool         `json:"tools,omitempty"`
 }
 
 func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
@@ -260,9 +273,12 @@ func (m *Manager) GetServersStatus() (map[string]MCPServerStatus, error) {
 
 		result[name] = MCPServerStatus{
 			Name:      name,
+			Type:      srvCfg.Type,
 			Command:   srvCfg.Command,
 			Args:      srvCfg.Args,
 			Env:       srvCfg.Env,
+			URL:       srvCfg.URL,
+			Headers:   srvCfg.Headers,
 			Safe:      srvCfg.Safe,
 			SafeTools: srvCfg.SafeTools,
 			Status:    status,
@@ -308,6 +324,14 @@ func (m *Manager) AddOrUpdateServer(ctx context.Context, name string, srvCfg Ser
 
 	m.stopNoLock()
 	return m.startNoLock(ctx)
+}
+
+// transportLabel returns a human-readable transport name for logs.
+func transportLabel(t string) string {
+	if t == "" {
+		return "stdio"
+	}
+	return t
 }
 
 func (m *Manager) DeleteServer(ctx context.Context, name string) error {

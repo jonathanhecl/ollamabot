@@ -1811,9 +1811,12 @@ func (s *Server) skillsPath() string {
 }
 
 type updateMCPServerRequest struct {
-	Command   string            `json:"command"`
-	Args      []string          `json:"args"`
+	Type      string            `json:"type,omitempty"`
+	Command   string            `json:"command,omitempty"`
+	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
+	URL       string            `json:"url,omitempty"`
+	Headers   map[string]string `json:"headers,omitempty"`
 	Safe      bool              `json:"safe"`
 	SafeTools []string          `json:"safeTools,omitempty"`
 }
@@ -1891,9 +1894,12 @@ func (s *Server) handleUpdateMCPServer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	srvCfg := mcp.ServerConfig{
+		Type:      req.Type,
 		Command:   req.Command,
 		Args:      req.Args,
 		Env:       req.Env,
+		URL:       req.URL,
+		Headers:   req.Headers,
 		Safe:      req.Safe,
 		SafeTools: req.SafeTools,
 	}

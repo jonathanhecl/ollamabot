@@ -112,9 +112,16 @@ func TestClient(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	client := NewClient("test", os.Args[0], []string{"-test.run=TestHelperProcess"}, map[string]string{
-		"GO_WANT_HELPER_PROCESS": "1",
+	client, err := NewClient("test", ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env: map[string]string{
+			"GO_WANT_HELPER_PROCESS": "1",
+		},
 	})
+	if err != nil {
+		t.Fatalf("failed to build client: %v", err)
+	}
 
 	if err := client.Start(ctx); err != nil {
 		t.Fatalf("failed to start client: %v", err)
