@@ -1,3 +1,26 @@
+// Copy text to clipboard with fallback for non-secure contexts (HTTP).
+// navigator.clipboard is undefined outside HTTPS/localhost.
+async function copyToClipboard(text) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "-9999px";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    const ok = document.execCommand("copy");
+    if (!ok) throw new Error("execCommand copy returned false");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
 // Global fetch wrapper for Web Password Authentication
 const originalFetch = window.fetch;
 window.fetch = async function(resource, options) {
@@ -803,7 +826,7 @@ if (els.messages) {
       const msg = displayedMessages[idx];
       if (msg && msg.content) {
         try {
-          await navigator.clipboard.writeText(msg.content);
+          await copyToClipboard(msg.content);
           const originalText = copyMsgBtn.textContent;
           copyMsgBtn.textContent = "✅";
           copyMsgBtn.title = "Copied!";
@@ -825,7 +848,7 @@ if (els.messages) {
       const codeEl = wrapper.querySelector("pre code");
       if (codeEl) {
         try {
-          await navigator.clipboard.writeText(codeEl.textContent);
+          await copyToClipboard(codeEl.textContent);
           const originalText = copyCodeBtn.textContent;
           copyCodeBtn.textContent = "Copied! ✅";
           setTimeout(() => {
@@ -1131,7 +1154,15 @@ function startRealtimeEvents() {
   eventSource = new EventSource(`/api/events${queryParam}`);
 
   eventSource.addEventListener("session_updated", async (event) => {
-    const sessionID = event.data;
+    // Server JSON-marshals the session ID string (writeSSE), so the data
+    // field arrives as a quoted JSON string like "abc_1". Parse it back.
+    let sessionID;
+    try {
+      sessionID = JSON.parse(event.data);
+    } catch {
+      sessionID = event.data;
+    }
+    if (typeof sessionID !== "string") sessionID = String(sessionID);
     console.log("[Events Hub] Session updated:", sessionID);
 
     if (sessionUpdateDebounce) {
@@ -2393,7 +2424,7 @@ async function sendMessage(event) {
     images,
     attachments: visibleAttachments,
     processed: false,
-    queueId: crypto.randomUUID(),
+    queueId: (crypto.randomUUID && crypto.randomUUID()) || (Date.now().toString(36) + Math.random().toString(36).slice(2)),
     timestamp: new Date().toISOString(),
   };
   state.messages.push(userMessage);
@@ -3243,21 +3274,21 @@ function renderEmptyState() {
   const copyQwen = document.getElementById("copyQwenBtn");
   if (copyQwen) {
     copyQwen.addEventListener("click", () => {
-      navigator.clipboard.writeText("ollama pull qwen2.5:7b");
+      copyToClipboard("ollama pull qwen2.5:7b");
       showToast("Copied to clipboard!", "success");
     });
   }
   const copyLlama = document.getElementById("copyLlamaBtn");
   if (copyLlama) {
     copyLlama.addEventListener("click", () => {
-      navigator.clipboard.writeText("ollama pull llama3");
+      copyToClipboard("ollama pull llama3");
       showToast("Copied to clipboard!", "success");
     });
   }
   const copyNomic = document.getElementById("copyNomicBtn");
   if (copyNomic) {
     copyNomic.addEventListener("click", () => {
-      navigator.clipboard.writeText("ollama pull nomic-embed-text");
+      copyToClipboard("ollama pull nomic-embed-text");
       showToast("Copied to clipboard!", "success");
     });
   }

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/mcp"
+	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
@@ -67,6 +67,7 @@ type Registry struct {
 	planProgressHandler     PlanProgressHandler
 	approvalProgressHandler ApprovalProgressHandler
 	mcpManager              *mcp.Manager
+	mcpToolNames            map[string]bool
 }
 
 // ImageProgressHandler is called during image generation with progress updates
@@ -166,8 +167,135 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 	if m == nil {
 		return
 	}
+	if r.mcpToolNames == nil {
+		r.mcpToolNames = make(map[string]bool)
+	}
 	for _, tool := range m.GetTools() {
 		r.enabled[tool.Name] = true
+		r.mcpToolNames[tool.Name] = true
+		properties := map[string]any{}
+		for k, v := range tool.InputSchema.Properties {
+			properties[k] = v
+		}
+		r.defs = append(r.defs, ollama.Tool{
+			Type: "function",
+			Function: ollama.ToolDefinition{
+				Name:        tool.Name,
+				Description: tool.Description,
+				Parameters: map[string]any{
+					"type":       tool.InputSchema.Type,
+					"properties": properties,
+					"required":   tool.InputSchema.Required,
+				},
+			},
+		})
+	}
+
+	// Register MCP self-configuration tools
+	r.enabled["mcp_list_servers"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "mcp_list_servers",
+			Description: "List all configured MCP servers with their status (running/stopped), command, arguments, safety settings, and available tools. Use this to inspect the current MCP configuration.",
+			Parameters: map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	})
+
+	r.enabled["mcp_add_server"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "mcp_add_server",
+			Description: "Add or update an MCP server in the configuration. The server will be started immediately and its tools will become available. Requires user approval. Use 'safe=true' to mark all tools from this server as safe (no approval needed per call), or list specific tool names in 'safe_tools' for granular safety.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Unique name for the MCP server (alphanumeric, dashes, underscores).",
+					},
+					"command": map[string]any{
+						"type":        "string",
+						"description": "The executable command to launch the MCP server (e.g. 'npx', 'python3', 'node').",
+					},
+					"args": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "Arguments to pass to the command.",
+					},
+					"env": map[string]any{
+						"type":        "object",
+						"description": "Environment variables to pass to the server process (key-value pairs).",
+					},
+					"safe": map[string]any{
+						"type":        "boolean",
+						"description": "If true, all tools from this server are considered safe and won't require per-call approval.",
+						"default":     false,
+					},
+					"safe_tools": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "Specific tool names from this server that are safe (won't require per-call approval).",
+					},
+				},
+				"required": []string{"name", "command"},
+			},
+		},
+	})
+
+	r.enabled["mcp_delete_server"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "mcp_delete_server",
+			Description: "Remove an MCP server from the configuration. The server will be stopped and its tools will no longer be available. Requires user approval.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{
+						"type":        "string",
+						"description": "Name of the MCP server to remove.",
+					},
+				},
+				"required": []string{"name"},
+			},
+		},
+	})
+}
+
+// RefreshMCP updates the registry's tool definitions to reflect the current
+// set of MCP tools after servers are added or removed.
+func (r *Registry) RefreshMCP() {
+	if r.mcpManager == nil {
+		return
+	}
+
+	// Remove old MCP tool definitions
+	if len(r.mcpToolNames) > 0 {
+		var filtered []ollama.Tool
+		for _, d := range r.defs {
+			if r.mcpToolNames[d.Function.Name] {
+				delete(r.enabled, d.Function.Name)
+				continue
+			}
+			filtered = append(filtered, d)
+		}
+		r.defs = filtered
+	}
+	r.mcpToolNames = make(map[string]bool)
+
+	// Re-add current MCP tools
+	for _, tool := range r.mcpManager.GetTools() {
+		r.enabled[tool.Name] = true
+		r.mcpToolNames[tool.Name] = true
 		properties := map[string]any{}
 		for k, v := range tool.InputSchema.Properties {
 			properties[k] = v
@@ -1011,6 +1139,23 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	} else if name == "Write" || name == "Edit" || name == "execute_command" {
 		needsApprovalCheck = true
 		assessment = ClassifyToolRisk(name, args, r.workspace)
+	} else if name == "mcp_add_server" {
+		needsApprovalCheck = true
+		srvName, _ := args["name"].(string)
+		command, _ := args["command"].(string)
+		assessment = RiskAssessment{
+			Level:   RiskNeedsApproval,
+			Label:   fmt.Sprintf("Add MCP server %q", srvName),
+			Summary: fmt.Sprintf("Adding MCP server %q will execute command %q as a subprocess. This could run arbitrary code.", srvName, command),
+		}
+	} else if name == "mcp_delete_server" {
+		needsApprovalCheck = true
+		srvName, _ := args["name"].(string)
+		assessment = RiskAssessment{
+			Level:   RiskNeedsApproval,
+			Label:   fmt.Sprintf("Remove MCP server %q", srvName),
+			Summary: fmt.Sprintf("Removing MCP server %q will stop it and remove its tools from the configuration.", srvName),
+		}
 	}
 
 	if (r.approvalService != nil || r.approvalHandler != nil) && needsApprovalCheck {
@@ -1765,6 +1910,76 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("missing file_path or diff")
 		}
 		return ApplyDiff(r.workspace, filePath, diffContent)
+	case "mcp_list_servers":
+		if r.mcpManager == nil {
+			return "MCP is not enabled.", nil
+		}
+		status, err := r.mcpManager.GetServersStatus()
+		if err != nil {
+			return "", fmt.Errorf("failed to list MCP servers: %w", err)
+		}
+		data, err := json.MarshalIndent(status, "", "  ")
+		if err != nil {
+			return "", fmt.Errorf("failed to marshal server status: %w", err)
+		}
+		return string(data), nil
+	case "mcp_add_server":
+		if r.mcpManager == nil {
+			return "", fmt.Errorf("MCP is not enabled")
+		}
+		srvName, _ := args["name"].(string)
+		command, _ := args["command"].(string)
+		if srvName == "" || command == "" {
+			return "", fmt.Errorf("missing required arguments: name and command")
+		}
+		var srvArgs []string
+		if v, ok := args["args"]; ok {
+			argBytes, err := json.Marshal(v)
+			if err == nil {
+				_ = json.Unmarshal(argBytes, &srvArgs)
+			}
+		}
+		envMap := map[string]string{}
+		if v, ok := args["env"]; ok {
+			envBytes, err := json.Marshal(v)
+			if err == nil {
+				_ = json.Unmarshal(envBytes, &envMap)
+			}
+		}
+		safe, _ := args["safe"].(bool)
+		var safeTools []string
+		if v, ok := args["safe_tools"]; ok {
+			stBytes, err := json.Marshal(v)
+			if err == nil {
+				_ = json.Unmarshal(stBytes, &safeTools)
+			}
+		}
+		srvCfg := mcp.ServerConfig{
+			Command:   command,
+			Args:      srvArgs,
+			Env:       envMap,
+			Safe:      safe,
+			SafeTools: safeTools,
+		}
+		if err := r.mcpManager.AddOrUpdateServer(ctx, srvName, srvCfg); err != nil {
+			return "", fmt.Errorf("failed to add MCP server: %w", err)
+		}
+		r.RefreshMCP()
+		toolCount := len(r.mcpManager.GetTools())
+		return fmt.Sprintf("MCP server %q added and started successfully. %d tools are now available.", srvName, toolCount), nil
+	case "mcp_delete_server":
+		if r.mcpManager == nil {
+			return "", fmt.Errorf("MCP is not enabled")
+		}
+		srvName, _ := args["name"].(string)
+		if srvName == "" {
+			return "", fmt.Errorf("missing required argument: name")
+		}
+		if err := r.mcpManager.DeleteServer(ctx, srvName); err != nil {
+			return "", fmt.Errorf("failed to delete MCP server: %w", err)
+		}
+		r.RefreshMCP()
+		return fmt.Sprintf("MCP server %q removed successfully.", srvName), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
