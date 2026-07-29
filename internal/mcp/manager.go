@@ -313,7 +313,7 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 			if errMsg == "" {
 				errMsg = "server is not running"
 			}
-			return "", fmt.Errorf("mcp server %q for tool %q is unreachable: %s. The tool list shown may be from a cached snapshot; inform the user that the server needs to be started", serverName, toolName, errMsg)
+			return "", fmt.Errorf("mcp server %q for tool %q is unreachable: %s. Tell the user the MCP server appears to be stopped and ask how to proceed. Do NOT fall back to writing files to the workspace or using other tools as a substitute unless the user explicitly approves that fallback", serverName, toolName, errMsg)
 		}
 	}
 
