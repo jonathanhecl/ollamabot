@@ -290,6 +290,18 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 	})
 }
 
+// GetToolSource returns a human-readable source label for a tool. Built-in
+// tools return "internal"; MCP tools return "mcp:<server-name>".
+func (r *Registry) GetToolSource(toolName string) string {
+	if r.mcpManager != nil && r.mcpManager.HasTool(toolName) {
+		if srv := r.mcpManager.GetToolServer(toolName); srv != "" {
+			return "mcp:" + srv
+		}
+		return "mcp"
+	}
+	return "internal"
+}
+
 // RefreshMCP updates the registry's tool definitions to reflect the current
 // set of MCP tools after servers are added or removed.
 func (r *Registry) RefreshMCP() {

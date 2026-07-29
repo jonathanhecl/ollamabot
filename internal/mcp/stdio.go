@@ -134,6 +134,9 @@ func (s *stdioTransport) stderrLoop(stderr io.ReadCloser) {
 	for scanner.Scan() {
 		log.Printf("[mcp-server:%s] %s", s.name, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		log.Printf("[mcp-server:%s] stderr scanner error: %v", s.name, err)
+	}
 }
 
 func (s *stdioTransport) call(ctx context.Context, method string, params any, result interface{}) error {

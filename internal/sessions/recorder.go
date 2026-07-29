@@ -269,7 +269,7 @@ func (r *Recorder) OnToolCall(call ollama.ToolCall) {
 	r.NotifyUpdate(false)
 }
 
-func (r *Recorder) OnToolStart(name string, args any) {
+func (r *Recorder) OnToolStart(name string, args any, source string) {
 	r.mu.Lock()
 	r.getOrCreateCurrentAssistantMsg()
 	if name == "present_plan" {
@@ -296,12 +296,12 @@ func (r *Recorder) OnToolStart(name string, args any) {
 		r.NotifyUpdate(false)
 		return
 	}
-	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{Type: "tool_exec", Name: name, Arguments: args, Status: "running"})
+	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{Type: "tool_exec", Name: name, Source: source, Arguments: args, Status: "running"})
 	r.mu.Unlock()
 	r.NotifyUpdate(false)
 }
 
-func (r *Recorder) OnToolResult(name string, result string) {
+func (r *Recorder) OnToolResult(name string, result string, source string) {
 	r.mu.Lock()
 	if name == "present_plan" {
 		for i := len(r.currentTurn.Steps) - 1; i >= 0; i-- {

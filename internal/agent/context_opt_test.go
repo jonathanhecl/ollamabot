@@ -23,13 +23,13 @@ type testOptStreamHandler struct {
 	optimizedHistory []ollama.Message
 }
 
-func (h *testOptStreamHandler) OnThinking(string)                 {}
-func (h *testOptStreamHandler) OnContent(string)                  {}
-func (h *testOptStreamHandler) OnToolCall(ollama.ToolCall)        {}
-func (h *testOptStreamHandler) OnToolStart(string, any)           {}
-func (h *testOptStreamHandler) OnToolResult(string, string)       {}
-func (h *testOptStreamHandler) OnMediaPreProcessing(string)       {}
-func (h *testOptStreamHandler) OnDone(ollama.ChatResponse)         {}
+func (h *testOptStreamHandler) OnThinking(string)                   {}
+func (h *testOptStreamHandler) OnContent(string)                    {}
+func (h *testOptStreamHandler) OnToolCall(ollama.ToolCall)          {}
+func (h *testOptStreamHandler) OnToolStart(string, any, string)     {}
+func (h *testOptStreamHandler) OnToolResult(string, string, string) {}
+func (h *testOptStreamHandler) OnMediaPreProcessing(string)         {}
+func (h *testOptStreamHandler) OnDone(ollama.ChatResponse)          {}
 
 func (h *testOptStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
 	h.optStarted = true

@@ -2689,12 +2689,14 @@ async function processNextQueueItem() {
       tool_start: (value) => {
         assistant.waiting = true; // Show loading spinner while tool runs
         const name = value.name || "unknown";
+        const source = value.source || "";
         let step = assistant.steps.find(s => s.type === "tool_exec" && s.name === name && s.status === "running");
         if (!step) {
-          step = { type: "tool_exec", name: name, arguments: value.arguments, result: null, status: "running" };
+          step = { type: "tool_exec", name: name, source: source, arguments: value.arguments, result: null, status: "running" };
           assistant.steps.push(step);
         } else {
           step.arguments = value.arguments;
+          step.source = source;
         }
         renderMessages();
       },
@@ -2776,6 +2778,7 @@ async function processNextQueueItem() {
           const step = assistant.steps[i];
           if (step.type === "tool_exec" && step.name === value.name && step.status === "running") {
             step.result = value.result;
+            if (value.source) step.source = value.source;
             step.status = "done";
             break;
           }
@@ -3418,6 +3421,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
         }, "inline");
       }
       const displayName = getToolDisplayName(step.name, parsedArgs);
+      const sourceLabel = step.source && step.source !== "internal" ? ` <span class="step-tool-source">(${escapeHtml(step.source)})</span>` : "";
       const resultText = step.result !== null && step.result !== undefined ? escapeHtml(String(step.result)) : "";
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
       const resultHtml = resultText ? `
@@ -3427,7 +3431,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
         </details>
       ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
-      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
+      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${sourceLabel}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "plan": {
       return renderPlanChecklist({
@@ -4412,7 +4416,7 @@ function normalizeRawMessages(rawMessages) {
         steps.push({ type: "tool_call", call });
       }
       for (const res of tr) {
-        steps.push({ type: "tool_exec", name: res.name, arguments: res.arguments, result: res.result });
+        steps.push({ type: "tool_exec", name: res.name, source: res.source || "", arguments: res.arguments, result: res.result });
       }
     }
     return {
@@ -4455,6 +4459,7 @@ function groupMessagesAndTools(messages) {
             step = {
               type: "tool_exec",
               name: msg.name,
+              source: msg.source || "",
               arguments: tc.call?.function?.arguments,
               result: msg.content,
               status: "done"
@@ -4464,6 +4469,7 @@ function groupMessagesAndTools(messages) {
             step = {
               type: "tool_exec",
               name: msg.name,
+              source: msg.source || "",
               arguments: null,
               result: msg.content,
               status: "done"
@@ -4472,6 +4478,7 @@ function groupMessagesAndTools(messages) {
           }
         } else {
           step.result = msg.content;
+          if (msg.source) step.source = msg.source;
           step.status = "done";
         }
       }

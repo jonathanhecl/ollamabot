@@ -473,10 +473,7 @@ func splitSSEField(line string) (field, value string, ok bool) {
 		return "", "", false
 	}
 	field = line[:idx]
-	value = line[idx+1:]
-	if strings.HasPrefix(value, " ") {
-		value = value[1:]
-	}
+	value = strings.TrimPrefix(line[idx+1:], " ")
 	return field, value, true
 }
 

@@ -35,8 +35,8 @@ type StreamHandler interface {
 	OnThinking(delta string)
 	OnContent(delta string)
 	OnToolCall(call ollama.ToolCall)
-	OnToolStart(name string, args any)
-	OnToolResult(name string, result string)
+	OnToolStart(name string, args any, source string)
+	OnToolResult(name string, result string, source string)
 	OnMediaPreProcessing(content string)
 	OnDone(resp ollama.ChatResponse)
 	OnContextOptimizationStart(tokensBefore int, percentBefore float64)
@@ -585,8 +585,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				rescuedArgsJSON, _ := json.Marshal(params)
 				call.Function.Arguments = rescuedArgsJSON
 
+				toolSource := a.registry.GetToolSource(toolName)
 				if handler != nil {
-					handler.OnToolStart(toolName, params)
+					handler.OnToolStart(toolName, params, toolSource)
 				}
 
 				// Execute tool
@@ -721,7 +722,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				if handler != nil {
-					handler.OnToolResult(toolName, result)
+					handler.OnToolResult(toolName, result, toolSource)
 				}
 
 				messages = append(messages, ollama.Message{

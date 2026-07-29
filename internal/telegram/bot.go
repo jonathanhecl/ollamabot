@@ -1934,14 +1934,17 @@ func getTelegramToolLabel(name string, args any) string {
 	return name
 }
 
-func (h *telegramStreamAdapter) OnToolStart(name string, args any) {
-	h.recorder.OnToolStart(name, args)
+func (h *telegramStreamAdapter) OnToolStart(name string, args any, source string) {
+	h.recorder.OnToolStart(name, args, source)
 	toolLabel := getTelegramToolLabel(name, args)
+	if source != "" && source != "internal" {
+		toolLabel = fmt.Sprintf("%s (MCP)", toolLabel)
+	}
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", toolLabel), 0, "Markdown")
 }
 
-func (h *telegramStreamAdapter) OnToolResult(name string, result string) {
-	h.recorder.OnToolResult(name, result)
+func (h *telegramStreamAdapter) OnToolResult(name string, result string, source string) {
+	h.recorder.OnToolResult(name, result, source)
 }
 
 func (h *telegramStreamAdapter) OnMediaPreProcessing(content string) {

@@ -891,23 +891,23 @@ func (h *sseStreamHandler) OnToolCall(call ollama.ToolCall) {
 	}
 }
 
-func (h *sseStreamHandler) OnToolStart(name string, args any) {
+func (h *sseStreamHandler) OnToolStart(name string, args any, source string) {
 	if h.recorder != nil {
-		h.recorder.OnToolStart(name, args)
+		h.recorder.OnToolStart(name, args, source)
 	}
-	log.Printf("[Web] Tool start: %s", name)
-	writeSSE(h.w, "tool_start", map[string]any{"name": name, "arguments": args})
+	log.Printf("[Web] Tool start: %s (source=%s)", name, source)
+	writeSSE(h.w, "tool_start", map[string]any{"name": name, "arguments": args, "source": source})
 	if h.flusher != nil {
 		h.flusher.Flush()
 	}
 }
 
-func (h *sseStreamHandler) OnToolResult(name string, result string) {
+func (h *sseStreamHandler) OnToolResult(name string, result string, source string) {
 	if h.recorder != nil {
-		h.recorder.OnToolResult(name, result)
+		h.recorder.OnToolResult(name, result, source)
 	}
-	log.Printf("[Web] Tool result: %s (len=%d)", name, len(result))
-	writeSSE(h.w, "tool_result", map[string]any{"name": name, "result": result})
+	log.Printf("[Web] Tool result: %s (source=%s, len=%d)", name, source, len(result))
+	writeSSE(h.w, "tool_result", map[string]any{"name": name, "result": result, "source": source})
 	if h.flusher != nil {
 		h.flusher.Flush()
 	}

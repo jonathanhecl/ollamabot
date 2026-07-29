@@ -423,8 +423,8 @@ type dummyStreamHandler struct{}
 func (d *dummyStreamHandler) OnThinking(delta string)                                            {}
 func (d *dummyStreamHandler) OnContent(delta string)                                             {}
 func (d *dummyStreamHandler) OnToolCall(call ollama.ToolCall)                                    {}
-func (d *dummyStreamHandler) OnToolStart(name string, args any)                                  {}
-func (d *dummyStreamHandler) OnToolResult(name string, result string)                            {}
+func (d *dummyStreamHandler) OnToolStart(name string, args any, source string)                   {}
+func (d *dummyStreamHandler) OnToolResult(name string, result string, source string)             {}
 func (d *dummyStreamHandler) OnMediaPreProcessing(content string)                                {}
 func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)                                    {}
 func (d *dummyStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}

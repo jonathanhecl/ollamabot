@@ -231,6 +231,14 @@ func (m *Manager) HasTool(toolName string) bool {
 	return ok
 }
 
+// GetToolServer returns the MCP server name that provides the given tool, or
+// an empty string if the tool is not registered from an MCP server.
+func (m *Manager) GetToolServer(toolName string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.toolServer[toolName]
+}
+
 type MCPServerStatus struct {
 	Name        string            `json:"name"`
 	Type        string            `json:"type,omitempty"`

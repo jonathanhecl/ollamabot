@@ -109,6 +109,7 @@ type Step struct {
 	PlanSteps []string `json:"plan_steps,omitempty"`
 	Completed int      `json:"completed,omitempty"`
 	ImageURL  string   `json:"imageURL,omitempty"`
+	Source    string   `json:"source,omitempty"` // tool source, e.g. "mcp:obsidian"
 	Arguments any      `json:"arguments,omitempty"`
 	Result    string   `json:"result,omitempty"`
 	Status    string   `json:"status,omitempty"`

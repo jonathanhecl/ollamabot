@@ -320,8 +320,8 @@ type sleepStreamHandler struct{}
 func (d *sleepStreamHandler) OnThinking(delta string)                                            {}
 func (d *sleepStreamHandler) OnContent(delta string)                                             {}
 func (d *sleepStreamHandler) OnToolCall(call ollama.ToolCall)                                    {}
-func (d *sleepStreamHandler) OnToolStart(name string, args any)                                  {}
-func (d *sleepStreamHandler) OnToolResult(name string, result string)                            {}
+func (d *sleepStreamHandler) OnToolStart(name string, args any, source string)                   {}
+func (d *sleepStreamHandler) OnToolResult(name string, result string, source string)             {}
 func (d *sleepStreamHandler) OnMediaPreProcessing(content string)                                {}
 func (d *sleepStreamHandler) OnDone(resp ollama.ChatResponse)                                    {}
 func (d *sleepStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}

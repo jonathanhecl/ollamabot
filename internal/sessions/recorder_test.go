@@ -31,8 +31,8 @@ func TestRecorderStoresPresentPlanAsPlanStep(t *testing.T) {
 	rec.OnToolStart("present_plan", map[string]any{
 		"summary": "Do work",
 		"steps":   []string{"One", "Two"},
-	})
-	rec.OnToolResult("present_plan", "Plan approved by the user. Proceed with the steps.")
+	}, "internal")
+	rec.OnToolResult("present_plan", "Plan approved by the user. Proceed with the steps.", "internal")
 
 	if len(rec.currentTurn.Steps) != 1 {
 		t.Fatalf("expected one step, got %d", len(rec.currentTurn.Steps))
@@ -51,11 +51,11 @@ func TestRecorderUpdatesExistingPlanStep(t *testing.T) {
 	rec.OnToolStart("present_plan", map[string]any{
 		"summary": "First proposal",
 		"steps":   []string{"One", "Two"},
-	})
+	}, "internal")
 	rec.OnToolStart("present_plan", map[string]any{
 		"summary": "Second proposal",
 		"steps":   []string{"1. Alpha 2. Beta"},
-	})
+	}, "internal")
 
 	if len(rec.currentTurn.Steps) != 1 {
 		t.Fatalf("expected one plan step after update, got %d", len(rec.currentTurn.Steps))

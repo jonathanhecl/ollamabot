@@ -75,3 +75,28 @@ saving an MCP server fail-fast and informative:
   `Accept: application/json, text/event-stream` on POSTs. Some servers
   (Obsidian Local REST API) reject notifications sent with `Accept: application/json`
   only and expect the params field to be present.
+  Confirmed working against the Obsidian Local REST API MCP server via HTTPS
+  with `insecure_tls` enabled.
+
+## 2026-07-29 — MCP tool source labels in UI
+
+To make it clear when an executing tool comes from an MCP server, the tool
+execution path now carries a `source` label (e.g. `mcp:obsidian`) from the
+registry through the recorder to the web UI.
+
+- `internal/mcp/manager.go`: added `GetToolServer` to look up the server name for
+  a registered MCP tool.
+- `internal/tools/tools.go`: added `GetToolSource` returning `mcp:<server>` for
+  MCP tools and `internal` for built-ins.
+- `internal/agent/loop.go`: `StreamHandler` `OnToolStart`/`OnToolResult` now
+  receive `source`; `agent.loop` resolves it via `registry.GetToolSource`.
+- `internal/web/server.go`, `internal/telegram/bot.go`, `internal/engine/engine.go`,
+  `internal/agent/goal.go`, `internal/agent/autonomous.go`,
+  `internal/learning/sleep_manager.go`: updated all `StreamHandler` implementors.
+- `internal/sessions/sessions.go` + `recorder.go`: `Step` now has a `Source`
+  field that is persisted and returned with session messages.
+- `internal/web/static/app.js`: `tool_start`/`tool_result` SSE events carry
+  `source`; `renderStep` appends ` (mcp:obsidian)` next to the tool name so the
+  user sees where each tool is running.
+- All tests updated for the new `OnToolStart`/`OnToolResult` signatures; full
+  suite passes.

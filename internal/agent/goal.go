@@ -707,7 +707,7 @@ func (h *goalStreamHandler) OnToolCall(call ollama.ToolCall) {
 	// Reconstructed tool starts handles this dynamically
 }
 
-func (h *goalStreamHandler) OnToolStart(name string, args any) {
+func (h *goalStreamHandler) OnToolStart(name string, args any, source string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if !h.inAssistant || len(h.currentTurn) == 0 {
@@ -729,7 +729,7 @@ func (h *goalStreamHandler) OnToolStart(name string, args any) {
 	h.syncSession()
 }
 
-func (h *goalStreamHandler) OnToolResult(name string, result string) {
+func (h *goalStreamHandler) OnToolResult(name string, result string, source string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.inAssistant = false

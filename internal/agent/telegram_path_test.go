@@ -13,15 +13,15 @@ import (
 
 type discardHandler struct{}
 
-func (d *discardHandler) OnThinking(string)                 {}
-func (d *discardHandler) OnContent(string)                  {}
-func (d *discardHandler) OnToolCall(ollama.ToolCall)        {}
-func (d *discardHandler) OnToolStart(string, any)             {}
-func (d *discardHandler) OnToolResult(string, string)       {}
-func (d *discardHandler) OnMediaPreProcessing(string)       {}
-func (d *discardHandler) OnDone(ollama.ChatResponse)        {}
-func (d *discardHandler) OnContextOptimizationStart(int, float64) {}
-func (d *discardHandler) OnContextOptimizationEnd(int, float64, float64) {}
+func (d *discardHandler) OnThinking(string)                                {}
+func (d *discardHandler) OnContent(string)                                 {}
+func (d *discardHandler) OnToolCall(ollama.ToolCall)                       {}
+func (d *discardHandler) OnToolStart(string, any, string)                  {}
+func (d *discardHandler) OnToolResult(string, string, string)              {}
+func (d *discardHandler) OnMediaPreProcessing(string)                      {}
+func (d *discardHandler) OnDone(ollama.ChatResponse)                       {}
+func (d *discardHandler) OnContextOptimizationStart(int, float64)          {}
+func (d *discardHandler) OnContextOptimizationEnd(int, float64, float64)   {}
 func (d *discardHandler) OnContextOptimized([]ollama.Message, string, int) {}
 
 func TestRun_textOnlyTelegramPath(t *testing.T) {

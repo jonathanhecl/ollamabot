@@ -342,8 +342,8 @@ type noopStreamHandler struct{}
 func (noopStreamHandler) OnThinking(string)                                {}
 func (noopStreamHandler) OnContent(string)                                 {}
 func (noopStreamHandler) OnToolCall(ollama.ToolCall)                       {}
-func (noopStreamHandler) OnToolStart(string, any)                          {}
-func (noopStreamHandler) OnToolResult(string, string)                      {}
+func (noopStreamHandler) OnToolStart(string, any, string)                  {}
+func (noopStreamHandler) OnToolResult(string, string, string)              {}
 func (noopStreamHandler) OnMediaPreProcessing(string)                      {}
 func (noopStreamHandler) OnDone(ollama.ChatResponse)                       {}
 func (noopStreamHandler) OnContextOptimizationStart(int, float64)          {}
