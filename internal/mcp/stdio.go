@@ -85,6 +85,7 @@ func (s *stdioTransport) start(ctx context.Context) error {
 }
 
 func (s *stdioTransport) readLoop() {
+	defer failPending(&s.pendingMu, s.pending, "mcp stdio: server process closed the connection")
 	reader := bufio.NewReader(s.stdout)
 	for {
 		select {

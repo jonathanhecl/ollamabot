@@ -4,7 +4,26 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 )
+
+// failPending fails every in-flight request with the given message. It is
+// called when the underlying connection dies so callers unblock with an error
+// instead of hanging until their context expires.
+func failPending(mu *sync.Mutex, pending map[uint64]chan *JSONRPCResponse, msg string) {
+	mu.Lock()
+	chans := make([]chan *JSONRPCResponse, 0, len(pending))
+	for id, ch := range pending {
+		chans = append(chans, ch)
+		delete(pending, id)
+	}
+	mu.Unlock()
+
+	resp := &JSONRPCResponse{Error: &JSONRPCError{Code: -32000, Message: msg}}
+	for _, ch := range chans {
+		ch <- resp
+	}
+}
 
 // transport abstracts the underlying MCP transport (stdio, http, sse).
 type transport interface {

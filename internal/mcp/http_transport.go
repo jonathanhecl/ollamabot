@@ -159,7 +159,11 @@ type sseTransport struct {
 	headers     map[string]string
 	insecureTLS bool
 	client      *http.Client
-	endpoint    string
+	// streamClient has no Timeout: the SSE GET is long-lived and is
+	// cancelled via context instead. http.Client.Timeout would kill the
+	// stream after 60s.
+	streamClient *http.Client
+	endpoint     string
 	reqID       uint64
 	pending     map[uint64]chan *JSONRPCResponse
 	pendingMu   sync.Mutex
@@ -185,6 +189,9 @@ func newSSETransport(name, rawURL string, headers map[string]string, insecureTLS
 			Timeout:   60 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig, Proxy: http.ProxyFromEnvironment},
 		},
+		streamClient: &http.Client{
+			Transport: &http.Transport{TLSClientConfig: tlsConfig, Proxy: http.ProxyFromEnvironment},
+		},
 		pending:    make(map[uint64]chan *JSONRPCResponse),
 		done:       make(chan struct{}),
 		endpointCh: make(chan struct{}),
@@ -205,7 +212,7 @@ func (s *sseTransport) start(ctx context.Context) error {
 		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := s.client.Do(httpReq)
+	resp, err := s.streamClient.Do(httpReq)
 	if err != nil {
 		cancel()
 		return fmt.Errorf("mcp sse connect to %s failed: %w", s.url, err)
@@ -231,6 +238,7 @@ func (s *sseTransport) start(ctx context.Context) error {
 }
 
 func (s *sseTransport) readLoop() {
+	defer failPending(&s.pendingMu, s.pending, "mcp sse: connection closed")
 	reader := bufio.NewReader(s.body)
 	var eventName string
 	for {
