@@ -104,12 +104,20 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 	// Find the current goal from the last user message
 	var goal string
+	var userTextSB strings.Builder
+	for _, m := range messages {
+		if m.Role == "user" {
+			userTextSB.WriteString(m.Content)
+			userTextSB.WriteString("\n")
+		}
+	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "user" {
 			goal = messages[i].Content
 			break
 		}
 	}
+	userText := userTextSB.String()
 	a.mu.Lock()
 	a.currentGoal = goal
 	a.mu.Unlock()
@@ -602,7 +610,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			redirectedToFetch := false
 			if toolName == "web_search" {
 				if q, _ := params["query"].(string); q != "" {
-					if u, ok := redirectSearchToFetch(goal, q); ok {
+					if u, ok := redirectSearchToFetch(userText, q); ok {
 						log.Printf("[guardrail] web_search -> fetch_webpage (user already provided URL): %s", u)
 						toolName = "fetch_webpage"
 						params = map[string]any{"url": u}

@@ -19,17 +19,17 @@ func normalizeForURLMatch(s string) string {
 }
 
 // redirectSearchToFetch detects when a web_search query merely repeats a URL
-// the user already provided in their goal. In that case the correct action is
-// to fetch that URL directly instead of searching for it.
-func redirectSearchToFetch(goal, query string) (string, bool) {
-	if goal == "" || query == "" {
+// the user already provided anywhere in the conversation. In that case the
+// correct action is to fetch that URL directly instead of searching for it.
+func redirectSearchToFetch(userText, query string) (string, bool) {
+	if userText == "" || query == "" {
 		return "", false
 	}
 	normQuery := normalizeForURLMatch(query)
 	if normQuery == "" {
 		return "", false
 	}
-	for _, raw := range urlPattern.FindAllString(goal, -1) {
+	for _, raw := range urlPattern.FindAllString(userText, -1) {
 		normURL := normalizeForURLMatch(raw)
 		if normURL == "" {
 			continue
