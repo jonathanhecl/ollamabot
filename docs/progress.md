@@ -1,5 +1,29 @@
 # Progress
 
+## 2026-07-29 — Agent loop: global cap for network tools (fetch_webpage, web_search)
+
+The per-signature loop detector only counted identical calls (same tool + same
+normalized args). The model could cycle through many DIFFERENT URLs/queries —
+each under the threshold — and fetch for hours without triggering any detector.
+This was observed in a real session: ~40 `fetch_webpage` calls across ~15
+different URLs over 2 hours before any single URL hit the 5-call threshold.
+
+### Changes
+
+- `internal/agent/loop.go`:
+  - **Per-tool global counter** (`toolGlobalCounts`): tracks total calls per
+    tool name across all argument variants in a single `Run`.
+  - **Network tools** (`fetch_webpage`, `web_search`) get:
+    - Per-signature threshold lowered from 5 to **3** (same URL/query 3 times
+      → abort).
+    - Global cap: warn at **8** total calls, abort at **12** total calls in
+      one turn, regardless of URL/query differences. The abort message tells
+      the model to synthesize an answer from data already fetched.
+  - New helper: `isNetworkFetchTool`.
+- `internal/agent/plan_loop_test.go`: new test
+  `TestAgentRunStopsExcessiveNetworkFetch` verifying that cycling through 13
+  different URLs (each called once) is caught by the global cap.
+
 ## 2026-07-29 — Agent loop: stop MCP/workspace confusion and tighter loop detection
 
 The agent was getting stuck calling `list_files` repeatedly after `vault_list`

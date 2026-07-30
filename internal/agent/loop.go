@@ -82,6 +82,10 @@ func (a *Agent) SetOptions(opts map[string]any) {
 // Run executes the iterative multi-turn planning and tool loop.
 func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message, think bool, handler StreamHandler) ([]ollama.Message, error) {
 	toolCallCounts := make(map[string]int)
+	// Per-tool global call counts (across all argument variants). Used to cap
+	// expensive network tools that the model can spin through on many different
+	// URLs/queries without triggering the per-signature loop detector.
+	toolGlobalCounts := make(map[string]int)
 
 	cfg := a.config()
 	limit := a.getContextLimit(ctx, model)
@@ -768,20 +772,42 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				key := toolName + ":" + signature
 				toolCallCounts[key]++
 				repeatCount := toolCallCounts[key]
+				toolGlobalCounts[toolName]++
+				globalCount := toolGlobalCounts[toolName]
 				var repetitiveLoopErr error
 
 				// No-op calls (empty or path-only args with no meaningful parameters)
 				// are almost always a stuck model. Abort earlier for those.
 				isNoOpCall := isNoOpToolCall(toolName, params)
+				// Network tools are expensive and the model tends to cycle
+				// through many different URLs/queries, each under the per-
+				// signature threshold. Use a lower per-signature threshold and
+				// a global cap to stop this pattern.
+				isNetworkTool := isNetworkFetchTool(toolName)
 				abortThreshold := 5
 				if isNoOpCall {
 					abortThreshold = 3
+				} else if isNetworkTool {
+					abortThreshold = 3
 				}
 
-				if repeatCount >= abortThreshold {
+				// Global per-tool cap: even with different arguments, calling
+				// a network tool too many times in one turn means the model is
+				// thrashing. Warn at networkWarnThreshold, abort at
+				// networkAbortThreshold.
+				networkWarnThreshold := 8
+				networkAbortThreshold := 12
+				if isNetworkTool && globalCount >= networkAbortThreshold {
+					repetitiveLoopErr = fmt.Errorf("detected excessive network tool usage: %s called %d times total in this turn (across different URLs/queries). Stop fetching and synthesize an answer from the data you already have, or ask the user for clarification", toolName, globalCount)
+					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
+				} else if isNetworkTool && globalCount >= networkWarnThreshold {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called %s %d times total in this turn. You have enough data to answer — synthesize your response from what you already fetched. Further fetching will be blocked soon.]", result, toolName, globalCount)
+				}
+
+				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if repeatCount >= 3 && !isNoOpCall {
+				} else if repetitiveLoopErr == nil && repeatCount >= 3 && !isNoOpCall {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. %s]", result, toolName, repeatCount, repetitiveLoopHint(toolName, a.registry))
 				}
 
@@ -1014,6 +1040,18 @@ func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
 func isWorkspaceFileTool(toolName string) bool {
 	switch toolName {
 	case "read_file", "list_files", "write_file", "edit_file", "apply_diff", "search_files":
+		return true
+	}
+	return false
+}
+
+// isNetworkFetchTool reports whether a tool makes network requests. These are
+// expensive and the model tends to cycle through many different URLs/queries
+// without triggering the per-signature loop detector, so they get a lower
+// per-signature threshold plus a global per-turn cap.
+func isNetworkFetchTool(toolName string) bool {
+	switch toolName {
+	case "fetch_webpage", "web_search":
 		return true
 	}
 	return false

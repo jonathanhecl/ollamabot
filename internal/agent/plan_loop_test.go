@@ -342,3 +342,75 @@ func TestAgentRunStopsNoOpLoopEarly(t *testing.T) {
 		t.Fatalf("expected error to mention list_files, got %v", err)
 	}
 }
+
+// TestAgentRunStopsExcessiveNetworkFetch verifies that calling fetch_webpage
+// many times with DIFFERENT URLs (each under the per-signature threshold) is
+// caught by the global per-tool cap and aborts the run.
+func TestAgentRunStopsExcessiveNetworkFetch(t *testing.T) {
+	workspace := t.TempDir()
+
+	// Cycle through different URLs so no single signature hits the per-key
+	// threshold; only the global cap should catch it.
+	urls := []string{
+		"https://example.com/page-1",
+		"https://example.com/page-2",
+		"https://example.com/page-3",
+		"https://example.com/page-4",
+		"https://example.com/page-5",
+		"https://example.com/page-6",
+		"https://example.com/page-7",
+		"https://example.com/page-8",
+		"https://example.com/page-9",
+		"https://example.com/page-10",
+		"https://example.com/page-11",
+		"https://example.com/page-12",
+		"https://example.com/page-13",
+	}
+	callIdx := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			url := urls[callIdx%len(urls)]
+			callIdx++
+			args, _ := json.Marshal(map[string]any{"url": url})
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role: "assistant",
+					ToolCalls: []ollama.ToolCall{{
+						Type: "function",
+						Function: ollama.ToolFunction{
+							Name:      "fetch_webpage",
+							Arguments: args,
+						},
+					}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{Workspace: workspace}
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := a.Run(ctx, "test-model", []ollama.Message{{Role: "user", Content: "Fetch many pages"}}, false, nil)
+	if err == nil {
+		t.Fatal("expected excessive network usage error")
+	}
+	// Should mention either "excessive network" or "repetitive loop"
+	if !strings.Contains(err.Error(), "excessive network") && !strings.Contains(err.Error(), "repetitive loop") {
+		t.Fatalf("expected network-related loop error, got %v", err)
+	}
+}
