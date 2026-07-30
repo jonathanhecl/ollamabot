@@ -42,19 +42,17 @@ type Project struct {
 // TaskNotificationFunc defines a callback for task success or failure
 type TaskNotificationFunc func(proj Project, task ProjectTodo, err error)
 
-// OnTaskCompletion is a global callback triggered when an autonomous task completes or fails
-var OnTaskCompletion TaskNotificationFunc
-
 // AutonomousManager manages background tickers and executions of workspace projects
 type AutonomousManager struct {
-	mu          sync.RWMutex
-	cfgMgr      *config.Manager
-	client      *ollama.Client
-	memoryStore *memory.Store
-	isWorking   map[string]bool
-	cancelFunc  context.CancelFunc
-	tickerDone  chan struct{}
-	interval    time.Duration
+	mu               sync.RWMutex
+	cfgMgr           *config.Manager
+	client           *ollama.Client
+	memoryStore      *memory.Store
+	isWorking        map[string]bool
+	cancelFunc       context.CancelFunc
+	tickerDone       chan struct{}
+	interval         time.Duration
+	onTaskCompletion TaskNotificationFunc
 }
 
 func (am *AutonomousManager) config() config.Config {
@@ -88,6 +86,7 @@ func (am *AutonomousManager) Start(ctx context.Context) {
 	go func() {
 		defer close(am.tickerDone)
 		log.Println("[autonomous] Background manager heartbeat started")
+		am.RecoverStaleTasks()
 		for {
 			select {
 			case <-ticker.C:
@@ -99,6 +98,54 @@ func (am *AutonomousManager) Start(ctx context.Context) {
 			}
 		}
 	}()
+}
+
+// RecoverStaleTasks scans all projects and resets tasks stuck in "in_progress"
+// whose UpdatedAt is older than the configured staleness threshold. This handles
+// the case where the process died mid-execution and the in-memory isWorking flag
+// was lost, leaving a task permanently marked as in_progress.
+func (am *AutonomousManager) RecoverStaleTasks() {
+	threshold := am.config().AutonomousStaleTaskMinutes
+	if threshold <= 0 {
+		threshold = 30
+	}
+	cutoff := time.Now().Add(-time.Duration(threshold) * time.Minute)
+
+	projects, err := am.ListProjects()
+	if err != nil {
+		log.Printf("[autonomous] RecoverStaleTasks: failed to list projects: %v", err)
+		return
+	}
+
+	recovered := 0
+	for _, proj := range projects {
+		if proj.Status != "in_progress" {
+			continue
+		}
+		dirty := false
+		for i := range proj.Todos {
+			t := &proj.Todos[i]
+			if t.Status == "in_progress" && t.UpdatedAt.Before(cutoff) {
+				t.Status = "pending"
+				t.Result = fmt.Sprintf("Recovered from stale in_progress state (last updated %s). Previous result: %s", t.UpdatedAt.Format(time.RFC3339), t.Result)
+				t.UpdatedAt = time.Now()
+				recovered++
+				dirty = true
+			}
+		}
+		if dirty {
+			proj.Status = "pending"
+			proj.CurrentTask = ""
+			if err := am.SaveProject(proj); err != nil {
+				log.Printf("[autonomous] RecoverStaleTasks: failed to save project %s: %v", proj.ID, err)
+			} else {
+				log.Printf("[autonomous] RecoverStaleTasks: reset stale tasks in project %q", proj.Name)
+			}
+		}
+	}
+	if recovered > 0 {
+		log.Printf("[autonomous] RecoverStaleTasks: recovered %d stale task(s) across %d project(s)", recovered, len(projects))
+	}
 }
 
 // Stop stops the background heartbeat loop
@@ -134,6 +181,23 @@ func (am *AutonomousManager) UpdateMemoryStore(ms *memory.Store) {
 	am.mu.Lock()
 	defer am.mu.Unlock()
 	am.memoryStore = ms
+}
+
+// SetOnTaskCompletion registers a callback fired when an autonomous task completes or fails.
+func (am *AutonomousManager) SetOnTaskCompletion(fn TaskNotificationFunc) {
+	am.mu.Lock()
+	defer am.mu.Unlock()
+	am.onTaskCompletion = fn
+}
+
+// notifyTaskCompletion safely invokes the registered callback if any.
+func (am *AutonomousManager) notifyTaskCompletion(proj Project, task ProjectTodo, err error) {
+	am.mu.RLock()
+	fn := am.onTaskCompletion
+	am.mu.RUnlock()
+	if fn != nil {
+		fn(proj, task, err)
+	}
 }
 
 // ListProjects scans the workspace root for folders containing "project.json"
@@ -471,9 +535,7 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		task.Result = "No default model configured in settings. Cannot execute."
 		_ = am.SaveProject(proj)
 		err := fmt.Errorf("missing Ollama default model")
-		if OnTaskCompletion != nil {
-			OnTaskCompletion(proj, *task, err)
-		}
+		am.notifyTaskCompletion(proj, *task, err)
 		return err
 	}
 
@@ -589,9 +651,7 @@ Task Description: %s
 			task.Result = fmt.Sprintf("Error running agent turn: %v", runErr)
 		}
 		_ = am.SaveProject(proj)
-		if OnTaskCompletion != nil {
-			OnTaskCompletion(proj, *task, runErr)
-		}
+		am.notifyTaskCompletion(proj, *task, runErr)
 		return runErr
 	}
 
@@ -603,6 +663,28 @@ Task Description: %s
 			break
 		}
 	}
+
+	// Post-execution verification: independently inspect the workspace to
+	// confirm the task was genuinely completed. On failure, mark the task as
+	// failed with the identified gaps so it can be retried or reviewed.
+	verification := am.verifyTask(ctx, proj, *task, resultText, projectWorkspaceDir)
+	if !verification.Success {
+		gaps := strings.Join(verification.Gaps, "; ")
+		if gaps == "" {
+			gaps = "(no specific gaps listed)"
+		}
+		task.Status = "failed"
+		task.Result = fmt.Sprintf("Verification FAILED.\nEvidence: %s\nGaps: %s\nAgent's claimed result:\n%s", verification.Evidence, gaps, resultText)
+		task.UpdatedAt = time.Now()
+		proj.Status = "pending"
+		proj.CurrentTask = ""
+		_ = am.SaveProject(proj)
+		verifyErr := fmt.Errorf("task verification failed: %s", gaps)
+		log.Printf("[autonomous] Task %s verification FAILED for project %q: %s", task.ID, proj.Name, gaps)
+		am.notifyTaskCompletion(proj, *task, verifyErr)
+		return verifyErr
+	}
+	log.Printf("[autonomous] Task %s verification passed for project %q", task.ID, proj.Name)
 
 	task.Status = "completed"
 	task.Result = resultText
@@ -666,9 +748,7 @@ Task Description: %s
 	_ = os.WriteFile(logPath, []byte(logContent.String()), 0644)
 	log.Printf("[autonomous] Task execution completed successfully for project %q: %s", proj.Name, task.ID)
 
-	if OnTaskCompletion != nil {
-		OnTaskCompletion(proj, *task, nil)
-	}
+	am.notifyTaskCompletion(proj, *task, nil)
 
 	return nil
 }
@@ -696,4 +776,113 @@ func (am *AutonomousManager) GetProjectLogs(id string) ([]string, error) {
 		}
 	}
 	return logs, nil
+}
+
+// verificationSchema enforces structured output from the verification agent.
+var verificationSchema = map[string]any{
+	"type": "object",
+	"properties": map[string]any{
+		"success":  map[string]any{"type": "boolean"},
+		"evidence": map[string]any{"type": "string"},
+		"gaps": map[string]any{
+			"type":  "array",
+			"items": map[string]any{"type": "string"},
+		},
+	},
+	"required": []string{"success", "evidence"},
+}
+
+// verificationResponse is the parsed result of the verification agent turn.
+type verificationResponse struct {
+	Success  bool     `json:"success"`
+	Evidence string   `json:"evidence"`
+	Gaps     []string `json:"gaps"`
+}
+
+// verifyTask runs a short, focused agent turn that independently inspects the
+// project workspace to confirm the task was actually completed. It uses the
+// subagent model when available (cheaper), falling back to the main model.
+// Returns the parsed verification response, or a permissive default
+// (success=true) if verification is disabled or fails to run, so that
+// verification issues never block tasks that would otherwise complete.
+func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task ProjectTodo, resultText, projectWorkspaceDir string) verificationResponse {
+	if !am.config().AutonomousVerificationEnabled {
+		return verificationResponse{Success: true, Evidence: "verification disabled"}
+	}
+
+	verifyModel := am.config().OllamaModelSubagent
+	if strings.TrimSpace(verifyModel) == "" {
+		verifyModel = am.config().OllamaDefaultModel
+	}
+	if verifyModel == "" {
+		return verificationResponse{Success: true, Evidence: "no model available for verification"}
+	}
+
+	// Scoped registry so the verifier can read files in the project dir.
+	registry := tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
+		Providers:   am.config().SearchProviders,
+		BraveAPIKey: am.config().BraveSearchAPIKey,
+	})
+	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	a := NewAgent(am.cfgMgr, am.client, registry)
+
+	prompt := fmt.Sprintf(`You are a strict code reviewer verifying whether an autonomous task was completed correctly.
+
+Project: %s
+Goal: %s
+Task: %s
+Workspace folder: %s
+Agent's claimed result:
+%s
+
+Use list_files and read_file to inspect the workspace folder. Verify that the files the agent claims to have created or modified actually exist and contain meaningful, non-placeholder content. Check for obvious errors, empty stubs, or incomplete implementations.
+
+Respond with a JSON object conforming to the schema:
+- success: true only if the task objective is genuinely fulfilled.
+- evidence: concrete description of what you found (file names, key content snippets).
+- gaps: list of specific missing or broken items (empty array if none).`,
+		proj.Name, proj.Goal, task.Content, projectWorkspaceDir, resultText)
+
+	messages := []ollama.Message{
+		{Role: "system", Content: "You are a verification agent. Inspect files and report structured JSON only."},
+		{Role: "user", Content: prompt},
+	}
+
+	verifyCtx, cancel := SubagentContext(ctx, am.config())
+	defer cancel()
+
+	finalHistory, err := a.Run(verifyCtx, verifyModel, messages, false, &dummyStreamHandler{})
+	if err != nil {
+		log.Printf("[autonomous] Verification run failed for task %s: %v (accepting task as completed)", task.ID, err)
+		return verificationResponse{Success: true, Evidence: fmt.Sprintf("verification run failed: %v", err)}
+	}
+
+	// Extract the last assistant message with content.
+	var raw string
+	for i := len(finalHistory) - 1; i >= 0; i-- {
+		if finalHistory[i].Role == "assistant" && strings.TrimSpace(finalHistory[i].Content) != "" {
+			raw = finalHistory[i].Content
+			break
+		}
+	}
+	raw = strings.TrimSpace(raw)
+	// Strip markdown code fences if present.
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+
+	var vr verificationResponse
+	if err := json.Unmarshal([]byte(raw), &vr); err != nil {
+		log.Printf("[autonomous] Verification response not valid JSON for task %s: %v (raw: %s). Accepting task as completed.", task.ID, err, truncate(raw, 200))
+		return verificationResponse{Success: true, Evidence: fmt.Sprintf("verification response unparseable: %v", err)}
+	}
+	return vr
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }

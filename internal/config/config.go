@@ -17,46 +17,48 @@ import (
 )
 
 type Config struct {
-	OllamaBaseURL                string
-	OllamaProbeModels            []string
-	OllamaDefaultModel           string
-	OllamaModelVision            string
-	OllamaModelAudio             string
-	OllamaModelEmbed             string
-	OllamaModelImage             string
-	OllamaImageSteps             int
-	TelegramBotToken             string
-	TelegramAuthorizedIDs        []string
-	TelegramSessionExpiryMin     int
-	TelegramStartupNotification  bool
-	ServerPort                   string
-	ServerEnabled                bool
-	WebSearchEnabled             bool
-	ServerExposeNetwork          bool
-	SessionAutoName              bool
-	Workspace                    string
-	WorkspaceRaw                 string
-	SessionsPath                 string
-	SessionsPathRaw              string
-	MemoryPath                   string
-	MemoryPathRaw                string
-	SkillsPath                   string
-	SkillsPathRaw                string
-	SleepModeEnabled             bool
-	SleepModeInactivityThreshold string
-	SleepModeResumeDelay         string
-	OllamaModelLearning          string
-	SearchProviders              []string // ordered list: "brave", "tavily", "ddg"
-	BraveSearchAPIKey            string
-	TavilyAPIKey                 string
-	SleepModeSubagentsEnabled    bool
-	OllamaModelSubagent          string
-	OllamaThinkEnabled           bool
-	OllamaMaxTokens              int
-	OllamaMaxContext             int
-	ServerPassword               string
-	PlanConfirmation             string
-	SubagentTimeoutMinutes       int
+	OllamaBaseURL                 string
+	OllamaProbeModels             []string
+	OllamaDefaultModel            string
+	OllamaModelVision             string
+	OllamaModelAudio              string
+	OllamaModelEmbed              string
+	OllamaModelImage              string
+	OllamaImageSteps              int
+	TelegramBotToken              string
+	TelegramAuthorizedIDs         []string
+	TelegramSessionExpiryMin      int
+	TelegramStartupNotification   bool
+	ServerPort                    string
+	ServerEnabled                 bool
+	WebSearchEnabled              bool
+	ServerExposeNetwork           bool
+	SessionAutoName               bool
+	Workspace                     string
+	WorkspaceRaw                  string
+	SessionsPath                  string
+	SessionsPathRaw               string
+	MemoryPath                    string
+	MemoryPathRaw                 string
+	SkillsPath                    string
+	SkillsPathRaw                 string
+	SleepModeEnabled              bool
+	SleepModeInactivityThreshold  string
+	SleepModeResumeDelay          string
+	OllamaModelLearning           string
+	SearchProviders               []string // ordered list: "brave", "tavily", "ddg"
+	BraveSearchAPIKey             string
+	TavilyAPIKey                  string
+	SleepModeSubagentsEnabled     bool
+	OllamaModelSubagent           string
+	OllamaThinkEnabled            bool
+	OllamaMaxTokens               int
+	OllamaMaxContext              int
+	ServerPassword                string
+	PlanConfirmation              string
+	SubagentTimeoutMinutes        int
+	AutonomousStaleTaskMinutes    int
+	AutonomousVerificationEnabled bool
 }
 
 func Load(path string) (Config, error) {
@@ -78,36 +80,38 @@ func Load(path string) (Config, error) {
 	}
 
 	cfg := Config{
-		OllamaBaseURL:                "http://localhost:11434",
-		ServerPort:                   "8080",
-		ServerEnabled:                true,
-		WebSearchEnabled:             false,
-		ServerExposeNetwork:          true,
-		SessionAutoName:              true,
-		Workspace:                    "workspace",
-		WorkspaceRaw:                 "workspace",
-		SessionsPath:                 "sessions",
-		SessionsPathRaw:              "sessions",
-		MemoryPath:                   "memory",
-		MemoryPathRaw:                "memory",
-		SkillsPath:                   "skills",
-		SkillsPathRaw:                "skills",
-		SleepModeEnabled:             false,
-		SleepModeInactivityThreshold: "30m",
-		SleepModeResumeDelay:         "10m",
-		OllamaModelLearning:          "",
-		SearchProviders:              []string{"ddg"},
-		BraveSearchAPIKey:            "",
-		TavilyAPIKey:                 "",
-		SleepModeSubagentsEnabled:    false,
-		OllamaModelSubagent:          "",
-		OllamaThinkEnabled:           true,
-		OllamaMaxTokens:              16384,
-		OllamaMaxContext:             0,
-		ServerPassword:               "",
-		TelegramSessionExpiryMin:     30,
-		PlanConfirmation:             "smart",
-		SubagentTimeoutMinutes:       10,
+		OllamaBaseURL:                 "http://localhost:11434",
+		ServerPort:                    "8080",
+		ServerEnabled:                 true,
+		WebSearchEnabled:              false,
+		ServerExposeNetwork:           true,
+		SessionAutoName:               true,
+		Workspace:                     "workspace",
+		WorkspaceRaw:                  "workspace",
+		SessionsPath:                  "sessions",
+		SessionsPathRaw:               "sessions",
+		MemoryPath:                    "memory",
+		MemoryPathRaw:                 "memory",
+		SkillsPath:                    "skills",
+		SkillsPathRaw:                 "skills",
+		SleepModeEnabled:              false,
+		SleepModeInactivityThreshold:  "30m",
+		SleepModeResumeDelay:          "10m",
+		OllamaModelLearning:           "",
+		SearchProviders:               []string{"ddg"},
+		BraveSearchAPIKey:             "",
+		TavilyAPIKey:                  "",
+		SleepModeSubagentsEnabled:     false,
+		OllamaModelSubagent:           "",
+		OllamaThinkEnabled:            true,
+		OllamaMaxTokens:               16384,
+		OllamaMaxContext:              0,
+		ServerPassword:                "",
+		TelegramSessionExpiryMin:      30,
+		PlanConfirmation:              "smart",
+		SubagentTimeoutMinutes:        10,
+		AutonomousStaleTaskMinutes:    30,
+		AutonomousVerificationEnabled: true,
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -222,6 +226,16 @@ func Load(path string) (Config, error) {
 	if value := apply("SUBAGENT_TIMEOUT_MINUTES"); value != "" {
 		if val, err := strconv.Atoi(value); err == nil && val > 0 {
 			cfg.SubagentTimeoutMinutes = val
+		}
+	}
+	if value := apply("AUTONOMOUS_STALE_TASK_MINUTES"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.AutonomousStaleTaskMinutes = val
+		}
+	}
+	if value := apply("AUTONOMOUS_VERIFICATION_ENABLED"); value != "" {
+		if val, err := strconv.ParseBool(value); err == nil {
+			cfg.AutonomousVerificationEnabled = val
 		}
 	}
 	if value := apply("WEB_SEARCH_PRIORITY"); value != "" {
@@ -526,7 +540,9 @@ func SaveBasic(path string, cfg Config) error {
 			"SESSION_EXPIRY_MIN=%d\n"+
 			"SESSION_PLAN_CONFIRMATION=%s\n\n"+
 			"# Resource Limits\n"+
-			"SUBAGENT_TIMEOUT_MINUTES=%d\n\n"+
+			"SUBAGENT_TIMEOUT_MINUTES=%d\n"+
+			"AUTONOMOUS_STALE_TASK_MINUTES=%d\n"+
+			"AUTONOMOUS_VERIFICATION_ENABLED=%t\n\n"+
 			"# Ollama\n"+
 			"OLLAMA_BASE_URL=%s\n"+
 			"OLLAMA_DEFAULT_MODEL=%s\n"+
@@ -568,6 +584,8 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.TelegramSessionExpiryMin,
 		cfg.PlanConfirmation,
 		cfg.SubagentTimeoutMinutes,
+		cfg.AutonomousStaleTaskMinutes,
+		cfg.AutonomousVerificationEnabled,
 		cfg.OllamaBaseURL,
 		cfg.OllamaDefaultModel,
 		strings.Join(cfg.OllamaProbeModels, ","),

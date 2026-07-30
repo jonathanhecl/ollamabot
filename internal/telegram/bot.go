@@ -436,8 +436,10 @@ func (b *Bot) Start(ctx context.Context) error {
 	log.Println("[Telegram] Polling loop started successfully")
 	b.sendStartupNotification()
 
-	agent.OnTaskCompletion = func(proj agent.Project, task agent.ProjectTodo, err error) {
-		b.notifyTaskCompletion(proj, task, err)
+	if b.autoMgr != nil {
+		b.autoMgr.SetOnTaskCompletion(func(proj agent.Project, task agent.ProjectTodo, err error) {
+			b.notifyTaskCompletion(proj, task, err)
+		})
 	}
 	offset := int64(0)
 	retryDelay := 5 * time.Second
