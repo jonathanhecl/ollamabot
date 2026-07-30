@@ -184,8 +184,16 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	// list_files, etc.) instead of the matching MCP tool.
 	mcpReturnedNames := make(map[string]bool)
 
+	// --- STATIC SYSTEM PREFIX (computed once, reused every iteration) ---
+	// These messages don't change between loop iterations, so we build them
+	// once before the loop instead of re-reading files from disk every turn.
+	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, skillsBlock)
+
 	for i := 0; i < MaxIterations; i++ {
-		var systemPrefix []ollama.Message
+		// --- DYNAMIC SYSTEM PREFIX (rebuilt each iteration) ---
+		// Only the date/time, todo progress, and plan reinforcement actually
+		// change between iterations.
+		var dynamicPrefix []ollama.Message
 
 		// Inject current date and time so the model always knows the temporal context
 		now := time.Now()
@@ -197,77 +205,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 		utcOffset := fmt.Sprintf("UTC%s%02d:%02d", sign, offset/3600, (offset%3600)/60)
 		timeStr := now.Format("Monday, January 2, 2006 at 3:04 PM")
-		systemPrefix = append(systemPrefix, ollama.Message{
+		dynamicPrefix = append(dynamicPrefix, ollama.Message{
 			Role:    "system",
 			Content: fmt.Sprintf("Current date and time: %s (%s)", timeStr, utcOffset),
 		})
-
-		// Load SOUL.md dynamically
-		if soul, err := LoadSoul(); err == nil && soul != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: soul,
-			})
-		}
-
-		// Load USER_PROFILE.md dynamically
-		if profile, err := LoadUserProfile(); err == nil && profile != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: "# User Profile & Preferences\n" + profile,
-			})
-		}
-
-		// Inject memory tools instruction
-		if a.config().OllamaModelEmbed != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n\n## What to Store\n- Permanent user preferences, personality traits, and communication style.\n- Technical decisions and architectural choices with rationale.\n- Lessons learned from debugging: error patterns, root causes, and working solutions.\n- Workspace-specific setups: missing dependencies, required env vars, unique build steps.\n- Durable facts about the user or project that apply across sessions.\n- Write self-contained, descriptive entries with enough context (technologies, file paths, exact solution) to be useful in isolation.\n\n## What NOT to Store\n- Current dates, times, or temporal context (the system already injects this).\n- Greetings, acknowledgments, or conversational filler.\n- Transient task state or progress (e.g. 'currently working on X', 'step 2 done').\n- Information that only applies to the current session.\n- Trivial or obvious facts that any model would know.\n- Anything you would not search for in a future conversation.\n\n## Rules\n- Before adding any memory, ask yourself: 'Will this be useful in a future session?' If no, do not store it.\n- Always search memory first (memory_search) before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: ALWAYS search for related facts first. If you learn updated information, DELETE the old version BEFORE adding the new one. Do not store near-identical or overlapping facts.\n- Lessons Learned: When you solve a difficult error or discover workspace-specific setups, store a concise 'lesson learned' memory so you do not repeat the mistake.",
-			})
-		}
-
-		// Inject image generation capability instruction
-		if strings.TrimSpace(a.config().OllamaModelImage) != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for standard square images, 1024x512 for landscape, 512x1024 for portrait. You can also specify custom smaller or aspect-ratio dimensions (like 64, 128, 256, etc.) directly when generating specific UI assets like icons, buttons, or logos. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language. Do NOT output the generated image filename, path, or reference (e.g. do not say 'Reference: generated_...' or 'Referencia: ...') in your response to the user, as the user interface automatically renders the generated image bubble under your message. Simply confirm that the image is ready.",
-			})
-		}
-
-		// Inject MCP capability instruction
-		if a.registry != nil && a.registry.MCPManager() != nil {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role: "system",
-				Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
-					"## CRITICAL: MCP tools vs workspace tools\n" +
-					"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
-					"- To READ content that an MCP tool listed: use the matching MCP read tool (e.g. vault_read, get_note), NOT read_file.\n" +
-					"- To LIST entries in an MCP service: use the MCP list tool (e.g. vault_list), NOT list_files.\n" +
-					"- To WRITE/UPDATE content in an MCP service: use the matching MCP write tool, NOT write_file or edit_file.\n" +
-					"- NEVER call read_file, list_files, write_file, edit_file, or apply_diff on paths or filenames that came from an MCP tool result. Those files do not exist in the workspace; calling workspace tools on them will fail and loop.\n" +
-					"- If an MCP tool returns a filename like 'OpenAI.md', do NOT assume it lives under the workspace path. It lives inside the MCP service and must be accessed via MCP tools only.\n\n" +
-					"## Transport\n" +
-					"Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically.\n\n" +
-					"## Failures\n" +
-					"If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback.",
-			})
-		}
-
-		// Inject proactive recalled memories if any
-		if recalledMemoriesBlock != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: recalledMemoriesBlock,
-			})
-		}
-
-		// Inject loaded skills block if discovered
-		if skillsBlock != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: "# Loaded Custom Skills\n\n" + skillsBlock,
-			})
-		}
 
 		// 1. Check Todo list status
 		todoStore := a.registry.TodoStore()
@@ -286,29 +227,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		if todoNote != "" {
-			systemPrefix = append(systemPrefix, ollama.Message{
+			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: todoNote,
 			})
 		}
 
-		// Inject the current goal reinforcement
-		if goal != "" {
-			goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
-			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: goalReinforce,
-			})
-		}
-
-		// Inject reinforcement for clarification
-		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool. Put the question only in 'question'. Every entry in 'options' must be an affirmative statement the user can click, never another question. Good options: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad options: \"Do you want a plan?\", \"¿Quieres que revise tus gustos?\". Do not assume or guess if key details are missing."
-		systemPrefix = append(systemPrefix, ollama.Message{
-			Role:    "system",
-			Content: clarificationReinforce,
-		})
-
-		// Inject reinforcement for plan confirmation
+		// Inject reinforcement for plan confirmation (changes with plan state)
 		planMode := a.config().PlanConfirmation
 		if planMode == "" {
 			planMode = "smart"
@@ -324,27 +249,29 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			currentStep := activePlan.Steps[currentIdx]
 			planReinforce := fmt.Sprintf("An approved execution plan is already active.\nSummary: %s\nCurrent step %d of %d: %s\nDo NOT call present_plan again. Execute the current step using the appropriate tools, then call complete_plan_step exactly once when the full top-level step is finished before moving to the next step. Do NOT respond with promises such as \"I will proceed\", \"I will investigate\", or \"I will do this later\" unless you either call a tool now or call defer_plan_continuation with a clear user-facing follow-up message.",
 				activePlan.Summary, activePlan.Completed+1, len(activePlan.Steps), currentStep)
-			systemPrefix = append(systemPrefix, ollama.Message{
+			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
 			})
 		} else if planMode == "always" {
 			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions."
-			systemPrefix = append(systemPrefix, ollama.Message{
+			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
 			})
 		} else if planMode == "smart" {
 			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. DO NOT call present_plan for simple tasks, simple questions, weather retrieval, or when you only need to run a single tool call (e.g., calling web_search to find the weather or read_file to read a document). In those cases, call the tool directly without presenting a plan first."
-			systemPrefix = append(systemPrefix, ollama.Message{
+			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
 			})
 		}
 
-		// 2. Build system instructions incorporating Todo checklists, goals, and skills
-		activeMessages := make([]ollama.Message, 0, len(systemPrefix)+len(messages))
-		activeMessages = append(activeMessages, systemPrefix...)
+		// 2. Build active messages: static prefix + dynamic prefix + conversation
+		systemPrefixLen := len(staticPrefix) + len(dynamicPrefix)
+		activeMessages := make([]ollama.Message, 0, systemPrefixLen+len(messages))
+		activeMessages = append(activeMessages, staticPrefix...)
+		activeMessages = append(activeMessages, dynamicPrefix...)
 		activeMessages = append(activeMessages, messages...)
 
 		// --- CONTEXT OPTIMIZATION CHECK ---
@@ -425,8 +352,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 
 					// Rebuild activeMessages with optimized messages
-					activeMessages = make([]ollama.Message, 0, len(systemPrefix)+len(messages))
-					activeMessages = append(activeMessages, systemPrefix...)
+					activeMessages = make([]ollama.Message, 0, len(staticPrefix)+len(dynamicPrefix)+len(messages))
+					activeMessages = append(activeMessages, staticPrefix...)
+					activeMessages = append(activeMessages, dynamicPrefix...)
 					activeMessages = append(activeMessages, messages...)
 
 					// Calculate tokens after optimization
@@ -610,7 +538,21 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			emptyChatErrRetries = 0
 			todoTextOnlyRetries = 0
 
-			for _, call := range toolCalls {
+			// --- Phase 1: Pre-execution (sequential) ---
+			// Prepare each tool call: parse params, rescue paths, redirect
+			// web_search -> fetch_webpage, and classify as parallel-safe.
+			type preparedCall struct {
+				call              ollama.ToolCall
+				toolName          string
+				params            map[string]any
+				toolSource        string
+				redirectedToFetch bool
+				parallelSafe      bool
+			}
+			prepared := make([]preparedCall, len(toolCalls))
+			allParallelSafe := len(toolCalls) > 1
+
+			for idx, call := range toolCalls {
 				toolName := call.Function.Name
 				var params map[string]any
 				_ = json.Unmarshal(call.Function.Arguments, &params)
@@ -642,23 +584,47 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				toolSource := a.registry.GetToolSource(toolName)
-				if handler != nil {
-					handler.OnToolStart(toolName, params, toolSource)
+				ps := isParallelSafeTool(toolName, params, toolSource)
+				if !ps {
+					allParallelSafe = false
 				}
 
-				// Execute tool
-				var result string
-				var terr error
-				if toolName == "complete_plan_step" && !planStepHasAction {
-					terr = fmt.Errorf("you must execute at least one action tool for the current plan step before calling complete_plan_step")
-					result = fmt.Sprintf("Error: %v", terr)
-				} else {
-					result, terr = a.registry.Execute(ctx, call)
+				prepared[idx] = preparedCall{
+					call:              call,
+					toolName:          toolName,
+					params:            params,
+					toolSource:        toolSource,
+					redirectedToFetch: redirectedToFetch,
+					parallelSafe:      ps,
 				}
+			}
+
+			// --- Phase 2+3: Execution and Post-processing ---
+			// If all calls are parallel-safe read-only tools, execute them
+			// concurrently with goroutines, then post-process in order.
+			// Otherwise, execute AND post-process each call sequentially so
+			// that state changes (e.g. planStepHasAction) are visible to
+			// subsequent calls in the same batch.
+			type execResult struct {
+				result string
+				terr   error
+			}
+
+			// postProcess handles all post-execution logic for a single tool
+			// call result: error recovery, loop detection, path memory, etc.
+			// Returns (abort, abortErr): abort is true if the loop should
+			// stop immediately due to a repetitive loop detection.
+			postProcess := func(pc preparedCall, er execResult) (bool, error) {
+				result := er.result
+				terr := er.terr
+				toolName := pc.toolName
+				params := pc.params
+				toolSource := pc.toolSource
+
 				if terr != nil {
 					result = fmt.Sprintf("Error: %v", terr)
 				}
-				if redirectedToFetch && terr == nil {
+				if pc.redirectedToFetch && terr == nil {
 					result = "[SYSTEM NOTE: The user already provided this URL; it was fetched directly instead of searching.]\n\n" + result
 				}
 
@@ -836,7 +802,54 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					Content: result,
 				})
 				if repetitiveLoopErr != nil {
-					return messages, repetitiveLoopErr
+					return true, repetitiveLoopErr
+				}
+				return false, nil
+			}
+
+			if allParallelSafe {
+				// Parallel execution: run all tools concurrently, then
+				// post-process results in order.
+				results := make([]execResult, len(prepared))
+				var wg sync.WaitGroup
+				for idx := range prepared {
+					wg.Add(1)
+					go func(i int) {
+						defer wg.Done()
+						pc := prepared[i]
+						if handler != nil {
+							handler.OnToolStart(pc.toolName, pc.params, pc.toolSource)
+						}
+						r, err := a.registry.Execute(ctx, pc.call)
+						results[i] = execResult{result: r, terr: err}
+					}(idx)
+				}
+				wg.Wait()
+
+				for idx, pc := range prepared {
+					if abort, abortErr := postProcess(pc, results[idx]); abort {
+						return messages, abortErr
+					}
+				}
+			} else {
+				// Sequential execution: execute AND post-process each call
+				// one at a time so state changes are visible to subsequent
+				// calls in the same batch.
+				for _, pc := range prepared {
+					if handler != nil {
+						handler.OnToolStart(pc.toolName, pc.params, pc.toolSource)
+					}
+					var r string
+					var err error
+					if pc.toolName == "complete_plan_step" && !planStepHasAction {
+						err = fmt.Errorf("you must execute at least one action tool for the current plan step before calling complete_plan_step")
+						r = fmt.Sprintf("Error: %v", err)
+					} else {
+						r, err = a.registry.Execute(ctx, pc.call)
+					}
+					if abort, abortErr := postProcess(pc, execResult{result: r, terr: err}); abort {
+						return messages, abortErr
+					}
 				}
 			}
 
@@ -939,6 +952,100 @@ func buildTodoProgressNote(snap []tools.TodoItem) string {
 	}
 	b.WriteString("Use data from earlier tool results to complete pending steps. Do not repeat what is already done.")
 	return b.String()
+}
+
+// buildStaticSystemPrefix constructs the system messages that don't change
+// between loop iterations: SOUL.md, USER_PROFILE.md, memory/image/MCP
+// instructions, recalled memories, skills, goal reinforcement, and
+// clarification reinforcement. Computing these once per Run avoids
+// re-reading files from disk up to 50 times.
+func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock string) []ollama.Message {
+	var prefix []ollama.Message
+
+	// Load SOUL.md once
+	if soul, err := LoadSoul(); err == nil && soul != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: soul,
+		})
+	}
+
+	// Load USER_PROFILE.md once
+	if profile, err := LoadUserProfile(); err == nil && profile != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: "# User Profile & Preferences\n" + profile,
+		})
+	}
+
+	// Memory tools instruction (static)
+	if a.config().OllamaModelEmbed != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n\n## What to Store\n- Permanent user preferences, personality traits, and communication style.\n- Technical decisions and architectural choices with rationale.\n- Lessons learned from debugging: error patterns, root causes, and working solutions.\n- Workspace-specific setups: missing dependencies, required env vars, unique build steps.\n- Durable facts about the user or project that apply across sessions.\n- Write self-contained, descriptive entries with enough context (technologies, file paths, exact solution) to be useful in isolation.\n\n## What NOT to Store\n- Current dates, times, or temporal context (the system already injects this).\n- Greetings, acknowledgments, or conversational filler.\n- Transient task state or progress (e.g. 'currently working on X', 'step 2 done').\n- Information that only applies to the current session.\n- Trivial or obvious facts that any model would know.\n- Anything you would not search for in a future conversation.\n\n## Rules\n- Before adding any memory, ask yourself: 'Will this be useful in a future session?' If no, do not store it.\n- Always search memory first (memory_search) before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: ALWAYS search for related facts first. If you learn updated information, DELETE the old version BEFORE adding the new one. Do not store near-identical or overlapping facts.\n- Lessons Learned: When you solve a difficult error or discover workspace-specific setups, store a concise 'lesson learned' memory so you do not repeat the mistake.",
+		})
+	}
+
+	// Image generation instruction (static)
+	if strings.TrimSpace(a.config().OllamaModelImage) != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for standard square images, 1024x512 for landscape, 512x1024 for portrait. You can also specify custom smaller or aspect-ratio dimensions (like 64, 128, 256, etc.) directly when generating specific UI assets like icons, buttons, or logos. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language. Do NOT output the generated image filename, path, or reference (e.g. do not say 'Reference: generated_...' or 'Referencia: ...') in your response to the user, as the user interface automatically renders the generated image bubble under your message. Simply confirm that the image is ready.",
+		})
+	}
+
+	// MCP capability instruction (static)
+	if a.registry != nil && a.registry.MCPManager() != nil {
+		prefix = append(prefix, ollama.Message{
+			Role: "system",
+			Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
+				"## CRITICAL: MCP tools vs workspace tools\n" +
+				"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
+				"- To READ content that an MCP tool listed: use the matching MCP read tool (e.g. vault_read, get_note), NOT read_file.\n" +
+				"- To LIST entries in an MCP service: use the MCP list tool (e.g. vault_list), NOT list_files.\n" +
+				"- To WRITE/UPDATE content in an MCP service: use the matching MCP write tool, NOT write_file or edit_file.\n" +
+				"- NEVER call read_file, list_files, write_file, edit_file, or apply_diff on paths or filenames that came from an MCP tool result. Those files do not exist in the workspace; calling workspace tools on them will fail and loop.\n" +
+				"- If an MCP tool returns a filename like 'OpenAI.md', do NOT assume it lives under the workspace path. It lives inside the MCP service and must be accessed via MCP tools only.\n\n" +
+				"## Transport\n" +
+				"Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically.\n\n" +
+				"## Failures\n" +
+				"If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback.",
+		})
+	}
+
+	// Recalled memories (static for this Run)
+	if recalledMemoriesBlock != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: recalledMemoriesBlock,
+		})
+	}
+
+	// Skills block (static for this Run)
+	if skillsBlock != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: "# Loaded Custom Skills\n\n" + skillsBlock,
+		})
+	}
+
+	// Goal reinforcement (static for this Run)
+	if goal != "" {
+		goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: goalReinforce,
+		})
+	}
+
+	// Clarification reinforcement (static)
+	clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool. Put the question only in 'question'. Every entry in 'options' must be an affirmative statement the user can click, never another question. Good options: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad options: \"Do you want a plan?\", \"¿Quieres que revise tus gustos?\". Do not assume or guess if key details are missing."
+	prefix = append(prefix, ollama.Message{
+		Role:    "system",
+		Content: clarificationReinforce,
+	})
+
+	return prefix
 }
 
 func (a *Agent) getContextLimit(ctx context.Context, model string) int64 {
@@ -1054,6 +1161,45 @@ func isNetworkFetchTool(toolName string) bool {
 	case "fetch_webpage", "web_search":
 		return true
 	}
+	return false
+}
+
+// isParallelSafeTool reports whether a tool call can be executed concurrently
+// with other tool calls in the same batch. Read-only tools that don't modify
+// shared state (files, memory, plans, todos) are safe to parallelize. Tools
+// that require approval, modify state, or interact with the user must run
+// sequentially.
+func isParallelSafeTool(toolName string, params map[string]any, toolSource string) bool {
+	// MCP tools: only parallelize if the tool name suggests a read-only
+	// operation. Conservative: default to sequential for MCP tools unless
+	// the name clearly indicates read/list/get.
+	if toolSource != "internal" {
+		lower := strings.ToLower(toolName)
+		if strings.Contains(lower, "list") || strings.Contains(lower, "read") || strings.Contains(lower, "get") || strings.Contains(lower, "search") {
+			return true
+		}
+		return false
+	}
+
+	switch toolName {
+	// Read-only workspace tools
+	case "read_file", "list_files", "search_files", "list_code_definitions":
+		return true
+	// Network fetch tools (read-only by nature)
+	case "fetch_webpage", "web_search":
+		return true
+	// Memory search is read-only
+	case "memory_search", "memory_list":
+		return true
+	// mcp_list_servers is read-only
+	case "mcp_list_servers":
+		return true
+	}
+	// Everything else (write_file, edit_file, apply_diff, execute_command,
+	// memory_add, memory_delete, present_plan, ask_clarification,
+	// complete_plan_step, defer_plan_continuation, generate_image,
+	// send_files, mcp_add_server, mcp_delete_server, TodoWrite, etc.)
+	// is sequential.
 	return false
 }
 

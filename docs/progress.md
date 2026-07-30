@@ -1,5 +1,46 @@
 # Progress
 
+## 2026-07-30 — Agent harness efficiency: system prefix caching, parallel tools, autonomous context
+
+Three improvements to make the autonomous agent more efficient:
+
+### 1. System prefix caching (`internal/agent/loop.go`)
+
+Previously, every loop iteration (up to 50) re-read `SOUL.md`, `USER_PROFILE.md`,
+skills, and rebuilt 8+ static system messages from disk. Now these are computed
+**once** before the loop in `buildStaticSystemPrefix()` and reused every
+iteration. Only the date/time, todo progress, and plan reinforcement (which
+actually change) are rebuilt per iteration as `dynamicPrefix`.
+
+### 2. Parallel tool execution (`internal/agent/loop.go`)
+
+When the model returns multiple `tool_calls` in a single response, read-only
+tools (`fetch_webpage`, `web_search`, `read_file`, `list_files`, `search_files`,
+`memory_search`, `memory_list`, `mcp_list_servers`, MCP read/list/get tools)
+are now executed **concurrently** with goroutines. Stateful tools
+(`write_file`, `edit_file`, `execute_command`, `complete_plan_step`, etc.)
+remain sequential. If any call in the batch is not parallel-safe, the entire
+batch runs sequentially to preserve state ordering (e.g. `planStepHasAction`
+must be visible to `complete_plan_step`).
+
+New helper: `isParallelSafeTool(toolName, params, toolSource)`.
+
+### 3. Autonomous prior task context (`internal/agent/autonomous.go`)
+
+`ExecuteTask` now injects a "## Prior Task Context" section into the system
+prompt with the content and results of previously completed tasks in the same
+project (truncated to 500 chars per task). This prevents the agent from
+re-reading files or re-fetching web pages that prior tasks already gathered.
+
+### Tests
+
+- `TestAgentRunParallelToolExecution`: 3 `read_file` calls execute without
+  deadlock.
+- `TestAgentRunSequentialForStatefulTools`: mixed `read_file` + `write_file`
+  batch runs sequentially; `write_file` creates the file.
+- `TestAutonomousPriorTaskContext`: `ExecuteTask` injects prior task context
+  into system messages.
+
 ## 2026-07-29 — Agent loop: global cap for network tools (fetch_webpage, web_search)
 
 The per-signature loop detector only counted identical calls (same tool + same

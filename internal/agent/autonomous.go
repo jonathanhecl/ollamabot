@@ -501,7 +501,37 @@ Project ID: %s
 Project Name: %s
 High-Level Goal: %s
 
-## Current Task to Execute Now
+`,
+		proj.ID, proj.Name, proj.Goal,
+	))
+
+	// Inject context from previously completed tasks in this project so the
+	// agent doesn't re-read/re-fetch information that prior tasks already
+	// gathered. Each result is truncated to keep the context concise.
+	if taskIdx > 0 {
+		var priorCtx strings.Builder
+		priorCtx.WriteString("## Prior Task Context (completed tasks in this project)\n")
+		priorCtx.WriteString("The following tasks were already completed in this project. Use this context to avoid re-reading files or re-fetching information that prior tasks already gathered.\n\n")
+		hasPrior := false
+		for i := 0; i < taskIdx; i++ {
+			pt := proj.Todos[i]
+			if pt.Status != "completed" || strings.TrimSpace(pt.Result) == "" {
+				continue
+			}
+			hasPrior = true
+			result := pt.Result
+			// Truncate long results to keep context manageable.
+			if len(result) > 500 {
+				result = result[:500] + "... [truncated]"
+			}
+			fmt.Fprintf(&priorCtx, "### Task %s: %s\nStatus: completed\nResult:\n%s\n\n", pt.ID, pt.Content, result)
+		}
+		if hasPrior {
+			systemInstructions.WriteString(priorCtx.String())
+		}
+	}
+
+	systemInstructions.WriteString(fmt.Sprintf(`## Current Task to Execute Now
 Task ID: %s
 Task Description: %s
 
@@ -510,7 +540,7 @@ Task Description: %s
 - Work step-by-step using tools. Build high-quality, beautiful, robust code files and assets (e.g. index.html, styles.css, app.js).
 - Avoid placeholders or incomplete steps.
 - When finished, return a clear text response detailing all code files you edited or created, and summarizing the execution result of this task. Do not mention system ticks.`,
-		proj.ID, proj.Name, proj.Goal, task.ID, task.Content, projectWorkspaceDir,
+		task.ID, task.Content, projectWorkspaceDir,
 	))
 
 	messages := []ollama.Message{

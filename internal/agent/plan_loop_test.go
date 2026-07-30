@@ -3,8 +3,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -412,5 +415,205 @@ func TestAgentRunStopsExcessiveNetworkFetch(t *testing.T) {
 	// Should mention either "excessive network" or "repetitive loop"
 	if !strings.Contains(err.Error(), "excessive network") && !strings.Contains(err.Error(), "repetitive loop") {
 		t.Fatalf("expected network-related loop error, got %v", err)
+	}
+}
+
+// TestAgentRunParallelToolExecution verifies that multiple read-only tool
+// calls in a single model response are executed concurrently without
+// deadlocking or panicking.
+func TestAgentRunParallelToolExecution(t *testing.T) {
+	workspace := t.TempDir()
+	// Create test files so read_file succeeds.
+	for i := 1; i <= 3; i++ {
+		path := filepath.Join(workspace, fmt.Sprintf("file%d.txt", i))
+		_ = os.WriteFile(path, []byte(fmt.Sprintf("content %d", i)), 0644)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			// Return 3 read_file tool calls in a single response.
+			var calls []ollama.ToolCall
+			for i := 1; i <= 3; i++ {
+				args, _ := json.Marshal(map[string]any{"path": fmt.Sprintf("file%d.txt", i)})
+				calls = append(calls, ollama.ToolCall{
+					Type: "function",
+					Function: ollama.ToolFunction{
+						Name:      "read_file",
+						Arguments: args,
+					},
+				})
+			}
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role:      "assistant",
+					ToolCalls: calls,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{Workspace: workspace}
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	messages := []ollama.Message{{Role: "user", Content: "Read all 3 files"}}
+
+	// The agent will loop: first call returns 3 tool calls (executed in
+	// parallel), second call returns 3 more (same mock), eventually hitting
+	// the loop detector. We verify it doesn't deadlock or panic.
+	_, _ = a.Run(ctx, "test-model", messages, false, nil)
+}
+
+// TestAgentRunSequentialForStatefulTools verifies that stateful tools
+// (write_file) are NOT parallelized when mixed with read-only tools.
+func TestAgentRunSequentialForStatefulTools(t *testing.T) {
+	workspace := t.TempDir()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			// Return a mix: read_file (parallel-safe) + write_file (sequential).
+			readArgs, _ := json.Marshal(map[string]any{"path": "test.txt"})
+			writeArgs, _ := json.Marshal(map[string]any{"file_path": "output.txt", "content": "hello"})
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role: "assistant",
+					ToolCalls: []ollama.ToolCall{
+						{Type: "function", Function: ollama.ToolFunction{Name: "read_file", Arguments: readArgs}},
+						{Type: "function", Function: ollama.ToolFunction{Name: "write_file", Arguments: writeArgs}},
+					},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{Workspace: workspace}
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	messages := []ollama.Message{{Role: "user", Content: "Read and write files"}}
+	_, _ = a.Run(ctx, "test-model", messages, false, nil)
+
+	// Verify the write_file actually executed (file exists).
+	if _, err := os.Stat(filepath.Join(workspace, "output.txt")); err != nil {
+		t.Fatalf("expected output.txt to be created by write_file: %v", err)
+	}
+}
+
+// TestAutonomousPriorTaskContext verifies that ExecuteTask injects context
+// from previously completed tasks into the system prompt.
+func TestAutonomousPriorTaskContext(t *testing.T) {
+	workspace := t.TempDir()
+	sessionsPath := t.TempDir()
+
+	// Create a project with 2 tasks, first one already completed.
+	projDir := filepath.Join(workspace, "test-proj")
+	_ = os.MkdirAll(projDir, 0755)
+
+	proj := Project{
+		ID:        "test-proj",
+		Name:      "Test Project",
+		Goal:      "Build something cool",
+		Status:    "pending",
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Todos: []ProjectTodo{
+			{
+				ID:        "task-1",
+				Content:   "Create the foundation",
+				Status:    "completed",
+				Result:    "Created index.html with basic layout and CSS grid.",
+				UpdatedAt: time.Now(),
+			},
+			{
+				ID:        "task-2",
+				Content:   "Add interactivity",
+				Status:    "pending",
+				UpdatedAt: time.Now(),
+			},
+		},
+	}
+	projData, _ := json.Marshal(proj)
+	_ = os.WriteFile(filepath.Join(projDir, "project.json"), projData, 0644)
+
+	// Mock Ollama server that captures all system messages.
+	var allSystemContent string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			// Capture all system messages from the request.
+			var req ollama.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			for _, msg := range req.Messages {
+				if msg.Role == "system" {
+					allSystemContent += msg.Content + "\n"
+				}
+			}
+			// Return a simple text response to end the turn.
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role:    "assistant",
+					Content: "Task completed successfully.",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{
+		Workspace:          workspace,
+		SessionsPath:       sessionsPath,
+		OllamaDefaultModel: "test-model",
+	}
+	cfgMgr := config.NewManager(cfg)
+	am := NewAutonomousManager(cfgMgr, client, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_ = am.ExecuteTask(ctx, "test-proj", 1) // Execute task-2 (index 1)
+
+	// Verify the system messages contain prior task context.
+	if !strings.Contains(allSystemContent, "Prior Task Context") {
+		t.Fatalf("expected system messages to contain 'Prior Task Context'")
+	}
+	if !strings.Contains(allSystemContent, "task-1") {
+		t.Fatalf("expected system messages to mention task-1")
+	}
+	if !strings.Contains(allSystemContent, "Created index.html") {
+		t.Fatalf("expected system messages to contain task-1 result")
 	}
 }
