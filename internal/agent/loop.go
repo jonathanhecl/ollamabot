@@ -175,6 +175,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	contextOptimizationFailed := false
 	lengthRetries := 0
 
+	// Track filenames returned by MCP tools during this turn, so we can warn
+	// the model when it tries to access them via workspace tools (read_file,
+	// list_files, etc.) instead of the matching MCP tool.
+	mcpReturnedNames := make(map[string]bool)
+
 	for i := 0; i < MaxIterations; i++ {
 		var systemPrefix []ollama.Message
 
@@ -228,8 +233,19 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		// Inject MCP capability instruction
 		if a.registry != nil && a.registry.MCPManager() != nil {
 			systemPrefix = append(systemPrefix, ollama.Message{
-				Role:    "system",
-				Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments. Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically. If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback.",
+				Role: "system",
+				Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
+					"## CRITICAL: MCP tools vs workspace tools\n" +
+					"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
+					"- To READ content that an MCP tool listed: use the matching MCP read tool (e.g. vault_read, get_note), NOT read_file.\n" +
+					"- To LIST entries in an MCP service: use the MCP list tool (e.g. vault_list), NOT list_files.\n" +
+					"- To WRITE/UPDATE content in an MCP service: use the matching MCP write tool, NOT write_file or edit_file.\n" +
+					"- NEVER call read_file, list_files, write_file, edit_file, or apply_diff on paths or filenames that came from an MCP tool result. Those files do not exist in the workspace; calling workspace tools on them will fail and loop.\n" +
+					"- If an MCP tool returns a filename like 'OpenAI.md', do NOT assume it lives under the workspace path. It lives inside the MCP service and must be accessed via MCP tools only.\n\n" +
+					"## Transport\n" +
+					"Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically.\n\n" +
+					"## Failures\n" +
+					"If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback.",
 			})
 		}
 
@@ -601,27 +617,27 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// Path parameter rescue
 				a.rescuePathParam(toolName, params)
 
-			// Re-serialize params
-			rescuedArgsJSON, _ := json.Marshal(params)
-			call.Function.Arguments = rescuedArgsJSON
+				// Re-serialize params
+				rescuedArgsJSON, _ := json.Marshal(params)
+				call.Function.Arguments = rescuedArgsJSON
 
-			// Guardrail: if the model tries to web_search for a URL the user
-			// already provided, redirect the call to fetch_webpage directly.
-			redirectedToFetch := false
-			if toolName == "web_search" {
-				if q, _ := params["query"].(string); q != "" {
-					if u, ok := redirectSearchToFetch(userText, q); ok {
-						log.Printf("[guardrail] web_search -> fetch_webpage (user already provided URL): %s", u)
-						toolName = "fetch_webpage"
-						params = map[string]any{"url": u}
-						call.Function.Name = toolName
-						call.Function.Arguments, _ = json.Marshal(params)
-						redirectedToFetch = true
+				// Guardrail: if the model tries to web_search for a URL the user
+				// already provided, redirect the call to fetch_webpage directly.
+				redirectedToFetch := false
+				if toolName == "web_search" {
+					if q, _ := params["query"].(string); q != "" {
+						if u, ok := redirectSearchToFetch(userText, q); ok {
+							log.Printf("[guardrail] web_search -> fetch_webpage (user already provided URL): %s", u)
+							toolName = "fetch_webpage"
+							params = map[string]any{"url": u}
+							call.Function.Name = toolName
+							call.Function.Arguments, _ = json.Marshal(params)
+							redirectedToFetch = true
+						}
 					}
 				}
-			}
 
-			toolSource := a.registry.GetToolSource(toolName)
+				toolSource := a.registry.GetToolSource(toolName)
 				if handler != nil {
 					handler.OnToolStart(toolName, params, toolSource)
 				}
@@ -635,12 +651,29 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				} else {
 					result, terr = a.registry.Execute(ctx, call)
 				}
-			if terr != nil {
-				result = fmt.Sprintf("Error: %v", terr)
-			}
-			if redirectedToFetch && terr == nil {
-				result = "[SYSTEM NOTE: The user already provided this URL; it was fetched directly instead of searching.]\n\n" + result
-			}
+				if terr != nil {
+					result = fmt.Sprintf("Error: %v", terr)
+				}
+				if redirectedToFetch && terr == nil {
+					result = "[SYSTEM NOTE: The user already provided this URL; it was fetched directly instead of searching.]\n\n" + result
+				}
+
+				// Track filenames returned by MCP tools so we can warn the
+				// model if it later tries to access them via workspace tools.
+				if toolSource != "internal" && terr == nil {
+					collectMCPReturnedNames(result, mcpReturnedNames)
+				}
+
+				// Guardrail: if the model calls a workspace file tool on a
+				// filename that was returned by an MCP tool, warn it to use
+				// the MCP tool instead. This catches the common confusion
+				// where the model sees vault_list return "OpenAI.md" and then
+				// tries read_file("workspace/OpenAI.md").
+				if isWorkspaceFileTool(toolName) && terr != nil {
+					if matched := matchMCPReturnedName(toolName, params, mcpReturnedNames); matched != "" {
+						result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The file '%s' was returned by an MCP tool earlier in this conversation. It lives inside the MCP service, NOT in the local workspace. Do NOT use %s on it — use the matching MCP read/list tool instead. Repeated workspace tool calls on MCP-returned files will not find them.]", result, matched, toolName)
+					}
+				}
 
 				// Proactive error recovery/assistance
 				lowerResult := strings.ToLower(result)
@@ -736,13 +769,20 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				toolCallCounts[key]++
 				repeatCount := toolCallCounts[key]
 				var repetitiveLoopErr error
-				if repeatCount >= 5 {
+
+				// No-op calls (empty or path-only args with no meaningful parameters)
+				// are almost always a stuck model. Abort earlier for those.
+				isNoOpCall := isNoOpToolCall(toolName, params)
+				abortThreshold := 5
+				if isNoOpCall {
+					abortThreshold = 3
+				}
+
+				if repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if repeatCount >= 4 {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the same normalized arguments %d times. You must justify why another identical execution is necessary or change approach before retrying.]", result, toolName, repeatCount)
-				} else if repeatCount >= 3 {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. To avoid a repetitive loop, please check the file path, verify the contents of the file using read_file, or try a different approach.]", result, toolName, repeatCount)
+				} else if repeatCount >= 3 && !isNoOpCall {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. %s]", result, toolName, repeatCount, repetitiveLoopHint(toolName, a.registry))
 				}
 
 				// Remember observed paths
@@ -910,4 +950,162 @@ func estimateTokens(messages []ollama.Message) int {
 		}
 	}
 	return (chars + 3) / 4
+}
+
+// isNoOpToolCall reports whether a tool call carries no meaningful parameters
+// (e.g. list_files with empty args, or vault_list with empty args). Repeating
+// such calls almost always indicates a stuck model, so the loop detector aborts
+// earlier for them.
+func isNoOpToolCall(toolName string, params map[string]any) bool {
+	// Drop trivial keys that don't change the result of a "list" operation.
+	meaningful := 0
+	for k := range params {
+		switch k {
+		case "path", "recursive", "include":
+			// For list_files, "path" defaults to "." and recursive/include are
+			// optional filters. Only count them as meaningful if non-default.
+			if k == "path" {
+				if v, _ := params[k].(string); v != "" && v != "." && v != "./" {
+					meaningful++
+				}
+			} else if k == "recursive" {
+				if v, _ := params[k].(bool); v {
+					meaningful++
+				}
+			} else if k == "include" {
+				if v, _ := params[k].(string); v != "" {
+					meaningful++
+				}
+			}
+		default:
+			// Any other key is considered meaningful.
+			if v := params[k]; v != nil && v != "" && v != false {
+				meaningful++
+			}
+		}
+	}
+	return meaningful == 0
+}
+
+// repetitiveLoopHint returns a tool-specific, actionable hint appended to the
+// warning message when a tool is being called repeatedly. The old generic hint
+// ("verify the contents of the file using read_file") was harmful for non-read
+// tools because it pushed the model toward more file operations.
+func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
+	// If the tool is an MCP tool, suggest checking the MCP server or using a
+	// different MCP tool instead of looping.
+	if registry != nil && registry.MCPManager() != nil && registry.MCPManager().HasTool(toolName) {
+		return "You are repeating the same MCP tool call. If the result is not what you expect, the MCP server may be misconfigured or the data may not exist. Use mcp_list_servers to check the server status, or try a different MCP tool. Do NOT fall back to workspace tools (list_files, read_file) — the data lives inside the MCP service, not in the workspace."
+	}
+	switch toolName {
+	case "list_files", "search_files":
+		return "Repeatedly listing the same directory will not produce different results. The files you are looking for may not exist in the workspace — if they came from an MCP tool (e.g. vault_list), use the matching MCP read tool instead. Otherwise, change your approach or ask the user for clarification."
+	case "read_file":
+		return "You already read this file. Re-reading it will return the same content. Use the content you already have, or if the file does not exist, check whether it lives in an MCP service (use the MCP read tool, not read_file)."
+	case "web_search", "fetch_webpage":
+		return "You already ran this search/fetch. Repeating it will return the same results. Use the data you already have, refine your query, or try a different source."
+	default:
+		return "To avoid a repetitive loop, change your arguments, use a different tool, or ask the user for clarification. Do NOT repeat the exact same call."
+	}
+}
+
+// isWorkspaceFileTool reports whether a tool operates on the local workspace
+// filesystem (as opposed to MCP services, web, memory, etc.).
+func isWorkspaceFileTool(toolName string) bool {
+	switch toolName {
+	case "read_file", "list_files", "write_file", "edit_file", "apply_diff", "search_files":
+		return true
+	}
+	return false
+}
+
+// collectMCPReturnedNames scans an MCP tool result for tokens that look like
+// filenames (e.g. "OpenAI.md", "Noticias.md", "notes/foo.txt") and records
+// their basenames so we can later warn the model if it tries to access them
+// via workspace tools.
+func collectMCPReturnedNames(result string, into map[string]bool) {
+	if result == "" || into == nil {
+		return
+	}
+	// Match tokens that look like filenames: word chars + optional path
+	// separators + a dot + extension. Keep it conservative to avoid noise.
+	// Examples: "OpenAI.md", "./notes/Foo.txt", "X_Posts/agent/README.md".
+	for _, line := range strings.Split(result, "\n") {
+		fields := strings.Fields(line)
+		for _, f := range fields {
+			clean := strings.Trim(f, "\"'`.,;:()[]{}")
+			if clean == "" {
+				continue
+			}
+			// Strip leading bullets or list markers.
+			clean = strings.TrimLeft(clean, "-*•·#> ")
+			if clean == "" {
+				continue
+			}
+			base := filepath.Base(clean)
+			if hasFileExtension(base) && !isCommonNonFileToken(base) {
+				into[strings.ToLower(base)] = true
+			}
+		}
+	}
+}
+
+// hasFileExtension reports whether s looks like a filename with an extension.
+func hasFileExtension(s string) bool {
+	dot := strings.LastIndex(s, ".")
+	if dot <= 0 || dot == len(s)-1 {
+		return false
+	}
+	ext := s[dot+1:]
+	if len(ext) > 6 {
+		return false
+	}
+	for _, c := range ext {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+// isCommonNonFileToken filters out tokens that have a dot+ext pattern but are
+// not filenames (e.g. "v1.2", "127.0.0.1", "true.json" is fine but "no." is not).
+func isCommonNonFileToken(s string) bool {
+	// Pure numbers like "1.2" or IP-like "127.0.0.1"
+	dots := strings.Count(s, ".")
+	allDigitOrDot := true
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || c == '.') {
+			allDigitOrDot = false
+			break
+		}
+	}
+	if allDigitOrDot && dots > 0 {
+		return true
+	}
+	return false
+}
+
+// matchMCPReturnedName checks whether a workspace file tool call references a
+// filename that was previously returned by an MCP tool. Returns the matched
+// basename (lowercased) or "".
+func matchMCPReturnedName(toolName string, params map[string]any, mcpNames map[string]bool) string {
+	if len(mcpNames) == 0 {
+		return ""
+	}
+	var pathStr string
+	switch toolName {
+	case "read_file", "list_files", "search_files":
+		pathStr, _ = params["path"].(string)
+	case "write_file", "edit_file", "apply_diff":
+		pathStr, _ = params["file_path"].(string)
+	}
+	if pathStr == "" {
+		return ""
+	}
+	base := strings.ToLower(filepath.Base(pathStr))
+	if mcpNames[base] {
+		return base
+	}
+	return ""
 }

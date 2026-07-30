@@ -1,5 +1,41 @@
 # Progress
 
+## 2026-07-29 — Agent loop: stop MCP/workspace confusion and tighter loop detection
+
+The agent was getting stuck calling `list_files` repeatedly after `vault_list`
+returned filenames like `OpenAI.md`. Root cause: the model saw MCP-returned
+filenames and tried to read them with workspace tools (`read_file`,
+`list_files`), which failed because those files live inside the MCP service
+(Obsidian vault), not in the local workspace. The loop detector then aborted
+after 5 wasted iterations with a misleading hint that pushed the model toward
+*more* file operations.
+
+### Changes
+
+- `internal/agent/loop.go`:
+  - **MCP system prompt** rewritten to explicitly state that files returned by
+    MCP tools live inside the external service, not the workspace, and that the
+    model must use the matching MCP read/list/write tool — never `read_file`,
+    `list_files`, `write_file`, `edit_file`, or `apply_diff` — on them.
+  - **Loop detection** is now tool-aware:
+    - No-op calls (e.g. `list_files {}`, `vault_list {}`) abort after **3**
+      iterations instead of 5, since repeating them never produces new data.
+    - Meaningful calls still abort at 5.
+    - The warning hint is now tool-specific. The old generic hint ("verify the
+      file using read_file") was harmful for non-read tools and has been
+      replaced with targeted advice (use MCP tools, change args, ask user).
+  - **New guardrail**: filenames returned by MCP tools during a turn are
+    tracked. When a workspace file tool fails on a path whose basename matches
+    an MCP-returned filename, a warning is appended telling the model to use
+    the MCP tool instead. This catches the exact `vault_list` → `read_file`
+    confusion pattern.
+  - New helpers: `isNoOpToolCall`, `repetitiveLoopHint`,
+    `isWorkspaceFileTool`, `collectMCPReturnedNames`, `hasFileExtension`,
+    `isCommonNonFileToken`, `matchMCPReturnedName`.
+- `internal/agent/plan_loop_test.go`: new test
+  `TestAgentRunStopsNoOpLoopEarly` verifying that `list_files` with empty args
+  aborts after 3 calls (vs 5 for meaningful calls).
+
 ## 2026-07-29 — MCP tool cache: tools stay visible when a server is down
 
 If an MCP server was unreachable at startup, `tools/list` failed and its

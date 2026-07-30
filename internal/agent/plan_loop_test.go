@@ -288,3 +288,57 @@ func TestAgentRunStopsRepeatedToolLoop(t *testing.T) {
 		t.Fatalf("expected repetitive loop error, got %v", err)
 	}
 }
+
+// TestAgentRunStopsNoOpLoopEarly verifies that repeating a no-op tool call
+// (e.g. list_files with empty args) aborts after 3 iterations instead of 5,
+// and that the error message mentions the repetitive loop.
+func TestAgentRunStopsNoOpLoopEarly(t *testing.T) {
+	workspace := t.TempDir()
+	// list_files with empty args -> defaults to "." -> no-op signature.
+	toolArgs, _ := json.Marshal(map[string]any{})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role: "assistant",
+					ToolCalls: []ollama.ToolCall{{
+						Type: "function",
+						Function: ollama.ToolFunction{
+							Name:      "list_files",
+							Arguments: toolArgs,
+						},
+					}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	cfg := config.Config{Workspace: workspace}
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := a.Run(ctx, "test-model", []ollama.Message{{Role: "user", Content: "List files repeatedly"}}, false, nil)
+	if err == nil {
+		t.Fatal("expected repetitive loop error for no-op list_files")
+	}
+	if got := err.Error(); got == "" || !strings.Contains(got, "detected repetitive loop") {
+		t.Fatalf("expected repetitive loop error, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "list_files") {
+		t.Fatalf("expected error to mention list_files, got %v", err)
+	}
+}
