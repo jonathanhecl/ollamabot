@@ -1,5 +1,53 @@
 # Progress
 
+## 2026-07-30 — Autonomous harness: staleness recovery, post-task verification, callback cleanup
+
+Three robustness improvements to the autonomous project manager
+(`internal/agent/autonomous.go`):
+
+### 1. Stale task recovery on startup
+
+If the process dies while a task is `in_progress`, the in-memory `isWorking`
+flag is lost and the task stays stuck forever. `RecoverStaleTasks()` now runs
+at the start of the heartbeat loop: it scans all `in_progress` projects and
+resets any task whose `UpdatedAt` is older than `AUTONOMOUS_STALE_TASK_MINUTES`
+(default 30) back to `pending`, recording the previous result for context.
+
+### 2. Post-execution verification
+
+After each task's `agent.Run` completes, `verifyTask()` runs a second, focused
+agent turn (using the subagent model when available) that independently
+inspects the project workspace with `list_files`/`read_file` and returns
+structured JSON (`success`, `evidence`, `gaps`). If verification fails, the
+task is marked `failed` with the identified gaps instead of `completed`,
+preventing the agent from "finishing" projects that don't actually work.
+Controlled by `AUTONOMOUS_VERIFICATION_ENABLED` (default true). Verification
+errors fall back to accepting the task, so verification issues never block
+otherwise-complete tasks.
+
+### 3. `OnTaskCompletion` moved from global to struct field
+
+The package-level `var OnTaskCompletion` was replaced by a field on
+`AutonomousManager` with a `SetOnTaskCompletion()` setter and
+`notifyTaskCompletion()` helper. This avoids global state collisions between
+multiple manager instances (tests, multi-tenant). `telegram/bot.go` updated to
+use the new setter.
+
+### Config additions (`internal/config/config.go`, `.env.example`)
+
+- `AUTONOMOUS_STALE_TASK_MINUTES` (default 30): staleness threshold in minutes.
+- `AUTONOMOUS_VERIFICATION_ENABLED` (default true): toggle post-task verification.
+
+### Tests (`internal/agent/autonomous_test.go`)
+
+- `TestAutonomousManager_RecoverStaleTasks`: stale task reset, fresh task
+  preserved, completed project untouched.
+- `TestAutonomousManager_RecoverStaleTasks_DefaultThreshold`: verifies the
+  30-minute default when the config value is 0.
+- `TestAutonomousManager_SetOnTaskCompletion`: callback invocation and nil safety.
+- `TestVerificationResponse_Parsing`: JSON schema parsing including markdown
+  fence stripping and invalid JSON handling.
+
 ## 2026-07-30 — Agent harness efficiency: system prefix caching, parallel tools, autonomous context
 
 Three improvements to make the autonomous agent more efficient:
