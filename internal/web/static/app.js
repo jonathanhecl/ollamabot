@@ -2721,15 +2721,24 @@ async function processNextQueueItem() {
     }
     await readEventStream(response.body, {
       tool_approval_required: (value) => {
+        assistant.waiting = false;
+        assistant.streaming = false;
         state.pendingApproval = normalizeApprovalPayload(value);
         renderApprovalCard();
         showApprovalDialog(state.pendingApproval.id, state.pendingApproval.tool, state.pendingApproval.arguments);
+        renderMessages();
       },
       tool_clarification_required: (value) => {
+        assistant.waiting = false;
+        assistant.streaming = false;
         showClarificationDialog(value.id, value.question, value.options);
+        renderMessages();
       },
       tool_plan_confirmation: (value) => {
+        assistant.waiting = false;
+        assistant.streaming = false;
         showPlanConfirmationCard(value.id, value.summary, value.steps);
+        renderMessages();
       },
       plan_progress: (value) => {
         state.activePlan = value?.active_plan || null;
@@ -3301,6 +3310,12 @@ function renderMessages() {
     div.innerHTML = `<span class="role">${escapeHtml(roleName)}${queuedBadge}${queuedActions}</span>${media}${activePlanHtml}${stepsHtml}${legacyPreContent}${contentHtml}${legacyPostContent}${pending}${metricsHtml}${metaHtml}`;
     els.messages.appendChild(div);
     msgIdx++;
+  }
+  if (state.currentPlanConfirmationId && els.planConfirmationCard) {
+    if (els.planConfirmationCard.parentNode !== els.messages) {
+      els.messages.appendChild(els.planConfirmationCard);
+    }
+    els.planConfirmationCard.style.display = "block";
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }

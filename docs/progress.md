@@ -423,4 +423,4 @@ Fixed Ollama status 400 errors (`Jinja Exception: System message must be at the 
 
 - `internal/ollama/client.go`: added `SanitizeMessages(messages)` to automatically consolidate system prompts into a single initial system message at index 0 and convert mid-conversation system notes to user-role messages before posting to `/api/chat`.
 - `internal/ollama/client_test.go`: added unit test `TestSanitizeMessages`.
-- `internal/web/static/app.js`: updated `/api/chat/stream` response handling to extract and display HTTP error details in a visible chat step bubble (`⚠️ Error: ...`) when requests fail.
+- `internal/web/static/app.js`: updated `/api/chat/stream` response handling to extract and display HTTP error details in a visible chat step bubble (`⚠️ Error: ...`) when requests fail. Updated `tool_plan_confirmation`, `tool_approval_required`, and `tool_clarification_required` event handlers to set `assistant.waiting = false` and `assistant.streaming = false`, and added automatic re-attachment of `els.planConfirmationCard` in `renderMessages()` so approval buttons appear clearly without getting stuck in `PROCESSING`.
