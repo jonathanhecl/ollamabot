@@ -29,6 +29,7 @@ type ModelReport struct {
 	HasAudioEncoder  bool
 	HasVisionEncoder bool
 	ModifiedAt       string
+	Size             int64
 }
 
 func FromOllama(tag ollama.ModelTag, show ollama.ShowResponse) ModelReport {
@@ -61,6 +62,7 @@ func FromOllama(tag ollama.ModelTag, show ollama.ShowResponse) ModelReport {
 		HasAudioEncoder:  hasAudio,
 		HasVisionEncoder: hasVision,
 		ModifiedAt:       tag.ModifiedAt,
+		Size:             tag.Size,
 	}
 }
 

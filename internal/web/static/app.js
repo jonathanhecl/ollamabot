@@ -574,6 +574,13 @@ if (searchInput) {
     renderModels();
   });
 }
+const sortSelect = document.querySelector("#modelSort");
+if (sortSelect) {
+  sortSelect.addEventListener("change", (e) => {
+    state.modelSortBy = e.target.value;
+    renderModels();
+  });
+}
 
 // Session filtering wiring
 if (els.sessionSearch) {
@@ -1890,6 +1897,38 @@ function modelForRole(role) {
   return null;
 }
 
+function getActiveRolesCount(m) {
+  let count = 0;
+  if (m.name === state.activeModel) count++;
+  if (m.name === state.learningModel) count++;
+  if (m.name === state.subagentModel) count++;
+  if (m.name === state.visionModel) count++;
+  if (m.name === state.audioModel) count++;
+  if (m.name === state.embeddingsModel) count++;
+  if (m.name === state.imageModel) count++;
+  return count;
+}
+
+function parseParamCount(paramStr) {
+  if (!paramStr) return 0;
+  const s = String(paramStr).toUpperCase().trim();
+  const match = s.match(/([\d.]+)\s*([BMK])?/);
+  if (!match) return 0;
+  let val = parseFloat(match[1]) || 0;
+  const unit = match[2];
+  if (unit === 'B') val *= 1e9;
+  else if (unit === 'M') val *= 1e6;
+  else if (unit === 'K') val *= 1e3;
+  return val;
+}
+
+function formatDateShort(dateStr) {
+  if (!dateStr) return "";
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
 function renderModels() {
   els.modelsBody.innerHTML = "";
   const query = state.modelSearchQuery.toLowerCase().trim();
@@ -1927,8 +1966,53 @@ function renderModels() {
     filteredModels = filteredModels.filter((m) => canBeMain(m));
   }
 
-  // Sort models: active first, then useful ones, and useless ones at the very bottom
+  // Sort models according to user selection
+  const sortBy = state.modelSortBy || "default";
+
   filteredModels.sort((a, b) => {
+    if (sortBy === "roles_desc") {
+      const rA = getActiveRolesCount(a);
+      const rB = getActiveRolesCount(b);
+      if (rA !== rB) return rB - rA;
+    } else if (sortBy === "params_desc") {
+      const pA = parseParamCount(a.parameters);
+      const pB = parseParamCount(b.parameters);
+      if (pA !== pB) return pB - pA;
+    } else if (sortBy === "params_asc") {
+      const pA = parseParamCount(a.parameters);
+      const pB = parseParamCount(b.parameters);
+      if (pA !== pB) return pA - pB;
+    } else if (sortBy === "size_desc") {
+      const sA = a.size || a.size_vram || 0;
+      const sB = b.size || b.size_vram || 0;
+      if (sA !== sB) return sB - sA;
+    } else if (sortBy === "size_asc") {
+      const sA = a.size || a.size_vram || 0;
+      const sB = b.size || b.size_vram || 0;
+      if (sA !== sB) return sA - sB;
+    } else if (sortBy === "context_desc") {
+      const cA = a.context_length || 0;
+      const cB = b.context_length || 0;
+      if (cA !== cB) return cB - cA;
+    } else if (sortBy === "context_asc") {
+      const cA = a.context_length || 0;
+      const cB = b.context_length || 0;
+      if (cA !== cB) return cA - cB;
+    } else if (sortBy === "date_desc") {
+      const dA = a.modified_at ? new Date(a.modified_at).getTime() : 0;
+      const dB = b.modified_at ? new Date(b.modified_at).getTime() : 0;
+      if (dA !== dB) return dB - dA;
+    } else if (sortBy === "date_asc") {
+      const dA = a.modified_at ? new Date(a.modified_at).getTime() : 0;
+      const dB = b.modified_at ? new Date(b.modified_at).getTime() : 0;
+      if (dA !== dB) return dA - dB;
+    } else if (sortBy === "name_asc") {
+      return a.name.localeCompare(b.name);
+    } else if (sortBy === "name_desc") {
+      return b.name.localeCompare(a.name);
+    }
+
+    // Default sorting logic: Active roles first, useful ones, then alphabetical
     const aMain = canBeMain(a);
     const aVis = a.capabilities?.vision === "comprobado" || a.capabilities?.vision === "inferido";
     const aAud = a.capabilities?.audio === "comprobado" || a.capabilities?.audio === "inferido";
@@ -1944,10 +2028,10 @@ function renderModels() {
     if (aUseless !== bUseless) {
       return aUseless ? 1 : -1;
     }
-    const aSelected = a.name === state.activeModel;
-    const bSelected = b.name === state.activeModel;
-    if (aSelected !== bSelected) {
-      return aSelected ? -1 : 1;
+    const rA = getActiveRolesCount(a);
+    const rB = getActiveRolesCount(b);
+    if (rA !== rB) {
+      return rB - rA;
     }
     return a.name.localeCompare(b.name);
   });
@@ -2045,8 +2129,10 @@ function renderModels() {
       </div>
       <div class="caps">${capBadges(model.capabilities)}</div>
       <div class="model-meta">
-        <div class="model-meta-info">
+        <div class="model-meta-info" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--muted);">
           <span>ctx ${model.context_length ? escapeHtml(model.context_length.toLocaleString()) : "-"}</span>
+          ${model.size ? `<span>· disk ${formatBytes(model.size)}</span>` : ""}
+          ${model.modified_at ? `<span title="${escapeAttr(model.modified_at)}">· installed ${escapeHtml(formatDateShort(model.modified_at))}</span>` : ""}
         </div>
         <div style="flex: 1; max-width: 140px;">
           ${hardwareBarHtml}

@@ -84,6 +84,7 @@ type ModelView struct {
 	HasVisionEncoder bool                           `json:"has_vision_encoder"`
 	IsDefault        bool                           `json:"is_default"`
 	Source           string                         `json:"source"`
+	ModifiedAt       string                         `json:"modified_at"`
 }
 
 type ModelsResponse struct {
@@ -1078,10 +1079,14 @@ func modelView(report capabilities.ModelReport, running *ollama.RunningModel, de
 		HasVisionEncoder: report.HasVisionEncoder,
 		IsDefault:        report.Name == defaultModel,
 		Source:           source,
+		Size:             report.Size,
+		ModifiedAt:       report.ModifiedAt,
 	}
 	if running != nil {
 		view.Loaded = true
-		view.Size = running.Size
+		if running.Size > 0 {
+			view.Size = running.Size
+		}
 		view.SizeVRAM = running.SizeVRAM
 		view.ExpiresAt = running.ExpiresAt
 		if running.ContextLength > 0 {

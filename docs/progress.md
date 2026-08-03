@@ -406,3 +406,12 @@ Fixed a bug in MCP JSON-RPC payload generation where `CallToolParams.Arguments` 
 - `internal/mcp/manager.go`: ensured `args` is initialized to non-nil `map[string]any` before building `CallToolParams` so empty arguments strictly output `"arguments": {}`.
 - `internal/mcp/mcp_test.go`: added unit test `TestCallToolParams_EmptyArgumentsJSON`.
 - `internal/agent/loop.go`: added early system warning on `repeatCount >= 2` for no-op/list calls and enhanced `repetitiveLoopHint` for MCP list tools to explicitly direct the model to read individual files with MCP read/get tools.
+
+## 2026-08-03 — Model sorting and metadata controls in Web UI
+
+Added flexible model sorting and additional metadata (disk size, installation date) to the "Manage Models & Roles" modal in the Web UI.
+
+- `internal/capabilities/capabilities.go`: exposed `Size` (bytes) from `ollama.ModelTag` in `ModelReport`.
+- `internal/web/server.go`: added `ModifiedAt` and populated `Size` & `ModifiedAt` in `ModelView` response.
+- `internal/web/static/index.html`: added `<select id="modelSort">` dropdown with 11 sorting modes (Parameter Size, File/Disk Size, Context Length, Installation Date, Assigned Roles, Name).
+- `internal/web/static/app.js`: implemented `parseParamCount`, `getActiveRolesCount`, and `formatDateShort` to sort models dynamically and display disk size & installation date on each model card.
