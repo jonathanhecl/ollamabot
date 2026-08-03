@@ -153,6 +153,16 @@ func (r *Registry) SetSessionStore(store *sessions.Store) {
 	r.sessionStore = store
 }
 
+func (r *Registry) getSessionStore() *sessions.Store {
+	if r.sessionStore != nil {
+		return r.sessionStore
+	}
+	if strings.TrimSpace(r.sessionsPath) != "" {
+		return sessions.NewStore(r.sessionsPath)
+	}
+	return nil
+}
+
 // SetPlanProgressHandler assigns a callback fired when complete_plan_step advances.
 func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
 	r.planProgressHandler = h
@@ -980,6 +990,85 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					},
 				},
 				"required": []string{"ref"},
+			},
+		},
+	})
+
+	r.enabled["sessions_list"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "sessions_list",
+			Description: "List previous chat sessions with metadata (session ID, title, model, creation date, last active date). Supports filtering by keyword ('query') or date range ('since_days', e.g. 7 for the past week). Use this to discover session IDs of past conversations.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Optional keyword filter to search session titles and objectives.",
+					},
+					"since_days": map[string]any{
+						"type":        "integer",
+						"description": "Optional filter for sessions active within the last N days (e.g. 7 for past week).",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of sessions to return (default 20).",
+						"default":     20,
+					},
+				},
+			},
+		},
+	})
+
+	r.enabled["sessions_search"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "sessions_search",
+			Description: "Search across all previous chat session message histories and titles for a specific keyword or phrase. Returns matching session IDs, titles, dates, and relevant message text snippets.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"query": map[string]any{
+						"type":        "string",
+						"description": "Keyword or phrase to search for across past chat histories.",
+					},
+					"since_days": map[string]any{
+						"type":        "integer",
+						"description": "Optional filter for sessions active within the last N days (e.g. 7 for past week).",
+					},
+					"limit": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of matching sessions to return (default 10).",
+						"default":     10,
+					},
+				},
+				"required": []string{"query"},
+			},
+		},
+	})
+
+	r.enabled["session_read"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "session_read",
+			Description: "Read the message history (user and assistant turns) of a specific previous chat session by session ID. Note: This tool is strictly read-only and does not modify or reply to old sessions.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id": map[string]any{
+						"type":        "string",
+						"description": "The unique ID of the session to read (from sessions_list or sessions_search).",
+					},
+					"max_messages": map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of recent messages to return from the session (default 50).",
+						"default":     50,
+					},
+				},
+				"required": []string{"session_id"},
 			},
 		},
 	})
@@ -2081,8 +2170,280 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 		r.RefreshMCP()
 		return fmt.Sprintf("MCP server %q removed successfully.", srvName), nil
+	case "sessions_list":
+		store := r.getSessionStore()
+		if store == nil {
+			return "Session store is not configured.", nil
+		}
+		list, err := store.List()
+		if err != nil {
+			return "", fmt.Errorf("failed to list sessions: %w", err)
+		}
+		sinceDays := asInt(args["since_days"])
+		limit := asInt(args["limit"])
+		if limit <= 0 {
+			limit = 20
+		}
+		query, _ := args["query"].(string)
+		query = strings.ToLower(strings.TrimSpace(query))
+
+		var cutoff time.Time
+		if sinceDays > 0 {
+			cutoff = time.Now().AddDate(0, 0, -sinceDays)
+		}
+
+		var matches []sessions.Session
+		for _, s := range list {
+			t := s.LastMessageAt
+			if t.IsZero() {
+				t = s.UpdatedAt
+			}
+			if t.IsZero() {
+				t = s.CreatedAt
+			}
+			if !cutoff.IsZero() && t.Before(cutoff) {
+				continue
+			}
+			if query != "" {
+				inTitle := strings.Contains(strings.ToLower(s.Title), query)
+				inObj := strings.Contains(strings.ToLower(s.GoalObjective), query)
+				inID := strings.Contains(strings.ToLower(s.ID), query)
+				if !inTitle && !inObj && !inID {
+					continue
+				}
+			}
+			matches = append(matches, s)
+		}
+
+		if len(matches) == 0 {
+			return "No previous sessions found matching criteria.", nil
+		}
+
+		if limit > 0 && len(matches) > limit {
+			matches = matches[:limit]
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Found %d previous session(s):\n", len(matches))
+		for _, s := range matches {
+			t := s.LastMessageAt
+			if t.IsZero() {
+				t = s.UpdatedAt
+			}
+			if t.IsZero() {
+				t = s.CreatedAt
+			}
+			dateStr := t.Format("2006-01-02 15:04:05")
+			title := s.Title
+			if title == "" {
+				title = "(Untitled)"
+			}
+			fmt.Fprintf(&sb, "- ID: %s | Title: %q | Last Active: %s | Model: %s\n", s.ID, title, dateStr, s.Model)
+		}
+		return sb.String(), nil
+	case "sessions_search":
+		store := r.getSessionStore()
+		if store == nil {
+			return "Session store is not configured.", nil
+		}
+		query, _ := args["query"].(string)
+		query = strings.TrimSpace(query)
+		if query == "" {
+			return "", fmt.Errorf("missing required argument: query")
+		}
+		lowerQuery := strings.ToLower(query)
+
+		sinceDays := asInt(args["since_days"])
+		limit := asInt(args["limit"])
+		if limit <= 0 {
+			limit = 10
+		}
+
+		var cutoff time.Time
+		if sinceDays > 0 {
+			cutoff = time.Now().AddDate(0, 0, -sinceDays)
+		}
+
+		list, err := store.List()
+		if err != nil {
+			return "", fmt.Errorf("failed to list sessions: %w", err)
+		}
+
+		type matchResult struct {
+			session  sessions.Session
+			snippets []string
+		}
+
+		var results []matchResult
+
+		for _, item := range list {
+			t := item.LastMessageAt
+			if t.IsZero() {
+				t = item.UpdatedAt
+			}
+			if t.IsZero() {
+				t = item.CreatedAt
+			}
+			if !cutoff.IsZero() && t.Before(cutoff) {
+				continue
+			}
+
+			fullSess, err := store.Get(item.ID)
+			if err != nil {
+				continue
+			}
+
+			var snippets []string
+			if strings.Contains(strings.ToLower(fullSess.Title), lowerQuery) {
+				snippets = append(snippets, fmt.Sprintf("[Title Match] %s", fullSess.Title))
+			}
+
+			for idx, rawMsg := range fullSess.Messages {
+				var msg sessions.RawMsg
+				if err := json.Unmarshal(rawMsg, &msg); err != nil {
+					continue
+				}
+				if msg.Role == "system" {
+					continue
+				}
+				if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
+					snippet := msg.Content
+					if len(snippet) > 200 {
+						matchIdx := strings.Index(strings.ToLower(snippet), lowerQuery)
+						start := matchIdx - 60
+						if start < 0 {
+							start = 0
+						}
+						end := matchIdx + len(lowerQuery) + 60
+						if end > len(snippet) {
+							end = len(snippet)
+						}
+						snippet = "..." + snippet[start:end] + "..."
+					}
+					ts := msg.Timestamp
+					if ts == "" {
+						ts = fmt.Sprintf("message #%d", idx+1)
+					}
+					snippets = append(snippets, fmt.Sprintf("[%s] %s: %s", ts, strings.ToUpper(msg.Role), snippet))
+				}
+			}
+
+			if len(snippets) > 0 {
+				results = append(results, matchResult{session: fullSess, snippets: snippets})
+				if limit > 0 && len(results) >= limit {
+					break
+				}
+			}
+		}
+
+		if len(results) == 0 {
+			return fmt.Sprintf("No sessions found containing query %q.", query), nil
+		}
+
+		var sb strings.Builder
+		fmt.Fprintf(&sb, "Found %d matching session(s) for query %q:\n\n", len(results), query)
+		for _, res := range results {
+			t := res.session.LastMessageAt
+			if t.IsZero() {
+				t = res.session.UpdatedAt
+			}
+			if t.IsZero() {
+				t = res.session.CreatedAt
+			}
+			fmt.Fprintf(&sb, "=== Session ID: %s | Title: %q | Last Active: %s ===\n", res.session.ID, res.session.Title, t.Format("2006-01-02 15:04:05"))
+			for _, snip := range res.snippets {
+				fmt.Fprintf(&sb, "  - %s\n", snip)
+			}
+			sb.WriteString("\n")
+		}
+		return sb.String(), nil
+	case "session_read":
+		store := r.getSessionStore()
+		if store == nil {
+			return "Session store is not configured.", nil
+		}
+		sessID, _ := args["session_id"].(string)
+		sessID = strings.TrimSpace(sessID)
+		if sessID == "" {
+			return "", fmt.Errorf("missing required argument: session_id")
+		}
+		maxMsgs := asInt(args["max_messages"])
+		if maxMsgs <= 0 {
+			maxMsgs = 50
+		}
+
+		sess, err := store.Get(sessID)
+		if err != nil {
+			return "", fmt.Errorf("failed to read session %q: %w", sessID, err)
+		}
+
+		var validMsgs []sessions.RawMsg
+		for _, rawMsg := range sess.Messages {
+			var msg sessions.RawMsg
+			if err := json.Unmarshal(rawMsg, &msg); err == nil {
+				if msg.Role == "user" || msg.Role == "assistant" {
+					validMsgs = append(validMsgs, msg)
+				}
+			}
+		}
+
+		if len(validMsgs) == 0 {
+			return fmt.Sprintf("Session %q contains no readable messages.", sessID), nil
+		}
+
+		if maxMsgs > 0 && len(validMsgs) > maxMsgs {
+			validMsgs = validMsgs[len(validMsgs)-maxMsgs:]
+		}
+
+		var sb strings.Builder
+		t := sess.LastMessageAt
+		if t.IsZero() {
+			t = sess.UpdatedAt
+		}
+		if t.IsZero() {
+			t = sess.CreatedAt
+		}
+		fmt.Fprintf(&sb, "--- Session ID: %s | Title: %q | Model: %s | Last Active: %s ---\n", sess.ID, sess.Title, sess.Model, t.Format("2006-01-02 15:04:05"))
+		if sess.GoalObjective != "" {
+			fmt.Fprintf(&sb, "Goal Objective: %s\n", sess.GoalObjective)
+		}
+		sb.WriteString("\n")
+
+		for _, msg := range validMsgs {
+			role := strings.ToUpper(msg.Role)
+			ts := msg.Timestamp
+			if ts == "" {
+				ts = "N/A"
+			}
+			content := msg.Content
+			if content == "" && msg.Thinking != "" {
+				content = fmt.Sprintf("[Thinking]: %s", msg.Thinking)
+			}
+			if content == "" && len(msg.Steps) > 0 {
+				content = fmt.Sprintf("[%d step(s) executed]", len(msg.Steps))
+			}
+			fmt.Fprintf(&sb, "[%s] (%s):\n%s\n\n", role, ts, content)
+		}
+		return sb.String(), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
+	}
+}
+
+func asInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		var parsed int
+		_, _ = fmt.Sscanf(n, "%d", &parsed)
+		return parsed
+	default:
+		return 0
 	}
 }
 

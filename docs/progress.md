@@ -1,5 +1,21 @@
 # Progress
 
+## 2026-08-03 — Session history query tools: sessions_list, sessions_search, session_read
+
+Added read-only tools allowing the agent to list, search, and inspect past chat sessions when requested by the user:
+
+### 1. Read-Only Session Query Tools (`internal/tools/tools.go`)
+- `sessions_list`: Lists previous chat sessions with metadata (ID, title, model, last active timestamp) and supports filtering by keyword (`query`) and time range (`since_days`, e.g. 7 for past week).
+- `sessions_search`: Searches across past session titles and full message histories for specific text keywords/phrases, returning matching session IDs and message snippets.
+- `session_read`: Reads the full message transcript (user and assistant turns) of a specific past session by `session_id`. Strictly read-only; cannot modify or reply to old sessions.
+
+### 2. Parallel Safety & System Prompt Integration (`internal/agent/loop.go`)
+- Marked `sessions_list`, `sessions_search`, and `session_read` as parallel-safe read-only tools in `isParallelSafeTool()`.
+- System prompt updated with explicit instructions explaining how and when to use session query tools.
+
+### 3. Tests (`internal/tools/sessions_tools_test.go`)
+- Unit tests covering `sessions_list` (date and query filters), `sessions_search` (message content matching), and `session_read` (transcript formatting).
+
 ## 2026-08-03 — MCP tool optimization: origin enrichment, active server context, schema fallback, empty result handling
 
 Four key improvements to MCP tool handling and local model routing (`internal/tools`, `internal/mcp`, `internal/agent`):

@@ -1038,6 +1038,17 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock 
 		})
 	}
 
+	// Session history access instruction
+	prefix = append(prefix, ollama.Message{
+		Role: "system",
+		Content: "## Past Session History Access\n" +
+			"You have access to read-only tools to search and consult previous chat sessions:\n" +
+			"- `sessions_list`: List previous chat sessions by date range (`since_days`, e.g. 7 for past week) or keyword (`query`).\n" +
+			"- `sessions_search`: Search across previous chat session message histories for specific keywords or topics.\n" +
+			"- `session_read`: Read the full transcript (user and assistant turns) of a specific past session by `session_id`.\n" +
+			"Use these tools when the user asks to summarize past discussions, recall what was talked about in prior chats, or look up previous sessions. Note that past sessions are read-only; you cannot write messages or post replies to old sessions.",
+	})
+
 	// Recalled memories (static for this Run)
 	if recalledMemoriesBlock != "" {
 		prefix = append(prefix, ollama.Message{
@@ -1215,6 +1226,9 @@ func isParallelSafeTool(toolName string, params map[string]any, toolSource strin
 		return true
 	// Memory search is read-only
 	case "memory_search", "memory_list":
+		return true
+	// Past session query tools are read-only
+	case "sessions_list", "sessions_search", "session_read":
 		return true
 	// mcp_list_servers is read-only
 	case "mcp_list_servers":
