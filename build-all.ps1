@@ -33,14 +33,14 @@ if (-not [string]::IsNullOrEmpty($Version)) {
     $ldflags += " -X 'main.version=$Version'"
 }
 
-# Target matrix: OS, Arch, Packaging Format
+# Target matrix: OS, Arch, Packaging Format, Label
 $targets = @(
-    @{ OS = "windows"; Arch = "amd64"; Format = "zip" },
-    @{ OS = "windows"; Arch = "arm64"; Format = "zip" },
-    @{ OS = "linux";   Arch = "amd64"; Format = "targz" },
-    @{ OS = "linux";   Arch = "arm64"; Format = "targz" },
-    @{ OS = "darwin";  Arch = "amd64"; Format = "targz" },
-    @{ OS = "darwin";  Arch = "arm64"; Format = "targz" }
+    @{ OS = "windows"; Arch = "amd64"; Format = "zip";   Label = "windows-amd64" },
+    @{ OS = "windows"; Arch = "arm64"; Format = "zip";   Label = "windows-arm64" },
+    @{ OS = "linux";   Arch = "amd64"; Format = "targz"; Label = "linux-amd64" },
+    @{ OS = "linux";   Arch = "arm64"; Format = "targz"; Label = "linux-arm64" },
+    @{ OS = "darwin";  Arch = "amd64"; Format = "targz"; Label = "darwin-amd64-intel" },
+    @{ OS = "darwin";  Arch = "arm64"; Format = "targz"; Label = "darwin-arm64-applesilicon" }
 )
 
 Write-Host "Iniciando compilación multiplataforma..." -ForegroundColor Cyan
@@ -49,16 +49,17 @@ foreach ($target in $targets) {
     $os = $target.OS
     $arch = $target.Arch
     $format = $target.Format
+    $label = $target.Label
     
     # Executable name inside the compressed package (always generic ollamabot)
     $binaryName = if ($os -eq "windows") { "ollamabot.exe" } else { "ollamabot" }
     
-    # Compressed file name: e.g. ollamabot-v1.0.0-windows-amd64.zip
+    # Compressed file name: e.g. ollamabot-v1.0.0-darwin-arm64-applesilicon.tar.gz
     $packBase = "ollamabot"
     if (-not [string]::IsNullOrEmpty($Version)) {
         $packBase += "-$Version"
     }
-    $packName = "$packBase-$os-$arch"
+    $packName = "$packBase-$label"
     if ($format -eq "zip") {
         $packName += ".zip"
     } else {
