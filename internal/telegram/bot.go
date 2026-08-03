@@ -1940,7 +1940,7 @@ func (h *telegramStreamAdapter) OnToolStart(name string, args any, source string
 	h.recorder.OnToolStart(name, args, source)
 	toolLabel := getTelegramToolLabel(name, args)
 	if source != "" && source != "internal" {
-		toolLabel = fmt.Sprintf("%s (MCP)", toolLabel)
+		toolLabel = fmt.Sprintf("%s (%s)", toolLabel, source)
 	}
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔧 *Running tool:* `%s`...", toolLabel), 0, "Markdown")
 }
@@ -2647,7 +2647,15 @@ func (h *telegramApprovalHandler) RequestApproval(ctx context.Context, toolName 
 	}()
 
 	argsJSON, _ := json.MarshalIndent(args, "", "  ")
-	text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe AI agent is attempting to execute a potentially risky action:\n\n*Tool:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", toolName, string(argsJSON))
+	toolDisplay := toolName
+	if h.bot.mcpManager != nil && h.bot.mcpManager.HasTool(toolName) {
+		if srv := h.bot.mcpManager.GetToolServer(toolName); srv != "" {
+			toolDisplay = fmt.Sprintf("%s (mcp:%s)", toolName, srv)
+		} else {
+			toolDisplay = fmt.Sprintf("%s (mcp)", toolName)
+		}
+	}
+	text := fmt.Sprintf("🛡️ *Security Confirmation Required*\n\nThe AI agent is attempting to execute a potentially risky action:\n\n*Tool:* `%s`\n*Arguments:*\n```json\n%s\n```\n\nDo you approve this execution?", toolDisplay, string(argsJSON))
 
 	markup := &InlineKeyboardMarkup{
 		InlineKeyboard: [][]InlineKeyboardButton{
@@ -2667,9 +2675,9 @@ func (h *telegramApprovalHandler) RequestApproval(ctx context.Context, toolName 
 	case approved := <-ch:
 		var statusText string
 		if approved {
-			statusText = fmt.Sprintf("✅ *Approved:* executed `%s`", toolName)
+			statusText = fmt.Sprintf("✅ *Approved:* executed `%s`", toolDisplay)
 		} else {
-			statusText = fmt.Sprintf("❌ *Denied:* skipped `%s`", toolName)
+			statusText = fmt.Sprintf("❌ *Denied:* skipped `%s`", toolDisplay)
 		}
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return approved, nil
