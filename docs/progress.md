@@ -1,12 +1,21 @@
 # Progress
 
-## 2026-08-03 — Session history query tools: flexible date filtering, previews, tokenized search, context limits
+## 2026-08-03 — Sleep Manager Maintenance, Vector Memory Indexing, Daily Digests & Export Tools
 
-Enhanced read-only session query tools (`sessions_list`, `sessions_search`, `session_read` in `internal/tools/tools.go`, `internal/agent/loop.go`):
+Implemented background sleep mode maintenance tasks and new session digest/export capabilities (`internal/learning`, `internal/tools`, `internal/agent`):
 
-### 1. Flexible Date Filtering & Snippet Previews (`internal/tools/tools.go`)
-- **Date Filtering (`date_from`, `date_to`, `since_days`)**: `sessions_list` and `sessions_search` support filtering by exact dates (`YYYY-MM-DD`), date ranges, or relative days (`since_days`).
-- **First Message Snippet Previews**: `sessions_list` extracts a 90-character preview snippet of the first user message for sessions with empty or default titles (e.g. *"New session"*, *"Telegram Chat"*), making untitled sessions recognizable.
+### 1. Background Sleep Maintenance & Memory Indexing (`internal/learning/sleep_manager.go`)
+- **Vector Memory Indexing**: Instructed the background reflector agent during sleep mode to extract durable facts, technical decisions, and user preferences and store them directly into vector memory (`memory_add`).
+- **Session Auto-Naming**: Automatically assigns descriptive titles to sessions left with default/placeholder titles (*"New session"*, *"Telegram Chat"*) during sleep reflection via `engine.AutoNameSession`.
+- **Daily Digest Generation**: Automatically generates and appends daily activity summaries in `sessions/digests/digest_YYYY-MM-DD.md` summarizing analyzed sessions, goals, and reflector actions.
+
+### 2. Executive Digest & Session Export Tools (`internal/tools/tools.go`, `internal/agent/loop.go`)
+- **`sessions_digest`**: Read-only tool that retrieves structured daily digests or builds an executive summary of activity across past sessions over a specified timeframe (`since_days` or date range).
+- **`session_export`**: Tool that exports any session transcript into a clean, formatted Markdown document (`exports/session_<id>.md`) in the workspace for documentation or sharing.
+
+### 3. Tests & System Integration (`internal/tools/sessions_tools_test.go`)
+- Unit tests added for `sessions_digest` and `session_export`.
+- All tests (`go test ./...`) passing cleanly.
 
 ### 2. Multi-word Tokenized Search & Length Safeguards (`internal/tools/tools.go`)
 - **Tokenized Search**: `sessions_search` splits queries into words/tokens and matches messages containing all search terms even if non-contiguous.

@@ -1093,6 +1093,56 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
+	r.enabled["sessions_digest"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "sessions_digest",
+			Description: "Retrieve executive daily summaries / digests of past chat sessions over a period of time (e.g. past week or date range). Use this when the user asks for a summary or digest of what was accomplished recently across all chats.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"since_days": map[string]any{
+						"type":        "integer",
+						"description": "Optional filter for digests/sessions within the last N days (default 7).",
+						"default":     7,
+					},
+					"date_from": map[string]any{
+						"type":        "string",
+						"description": "Optional start date filter in YYYY-MM-DD format (e.g. '2026-08-01').",
+					},
+					"date_to": map[string]any{
+						"type":        "string",
+						"description": "Optional end date filter in YYYY-MM-DD format (e.g. '2026-08-03').",
+					},
+				},
+			},
+		},
+	})
+
+	r.enabled["session_export"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "session_export",
+			Description: "Export the full transcript of a past chat session into a clean Markdown document in the workspace. Use this when the user asks to save, export, or generate a report from a past session.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"session_id": map[string]any{
+						"type":        "string",
+						"description": "The ID of the session to export.",
+					},
+					"output_path": map[string]any{
+						"type":        "string",
+						"description": "Optional output file path relative to workspace (e.g. 'exports/session_summary.md'). Defaults to 'exports/session_<id>.md'.",
+					},
+				},
+				"required": []string{"session_id"},
+			},
+		},
+	})
+
 	r.enabled["send_files"] = true
 	r.defs = append(r.defs, ollama.Tool{
 		Type: "function",
@@ -2478,6 +2528,188 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			sb.WriteString(bodyLines[i])
 		}
 		return sb.String(), nil
+	case "sessions_digest":
+		store := r.getSessionStore()
+		if store == nil {
+			return "Session store is not configured.", nil
+		}
+		fromTime, toTime, dateErr := parseDateFilter(args)
+		if dateErr != nil {
+			return "", dateErr
+		}
+		sinceDays := asInt(args["since_days"])
+		if sinceDays <= 0 && fromTime.IsZero() && toTime.IsZero() {
+			fromTime = time.Now().AddDate(0, 0, -7)
+		}
+
+		// 1. Try reading generated daily digest files in sessions/digests
+		digestsDir := filepath.Join(r.sessionsPath, "digests")
+		var digestFiles []string
+		if entries, err := os.ReadDir(digestsDir); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() && strings.HasPrefix(e.Name(), "digest_") && strings.HasSuffix(e.Name(), ".md") {
+					datePart := strings.TrimSuffix(strings.TrimPrefix(e.Name(), "digest_"), ".md")
+					if t, err := time.Parse("2006-01-02", datePart); err == nil {
+						dayStart := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+						dayEnd := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, time.Local)
+						if !fromTime.IsZero() && dayEnd.Before(fromTime) {
+							continue
+						}
+						if !toTime.IsZero() && dayStart.After(toTime) {
+							continue
+						}
+						digestFiles = append(digestFiles, filepath.Join(digestsDir, e.Name()))
+					}
+				}
+			}
+		}
+
+		if len(digestFiles) > 0 {
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "Found %d Daily Digest file(s):\n\n", len(digestFiles))
+			for _, path := range digestFiles {
+				if content, err := os.ReadFile(path); err == nil {
+					sb.WriteString(string(content))
+					sb.WriteString("\n\n")
+				}
+			}
+			return sb.String(), nil
+		}
+
+		// 2. Fallback: On-the-fly executive digest from sessions store
+		list, err := store.List()
+		if err != nil {
+			return "", fmt.Errorf("failed to list sessions: %w", err)
+		}
+
+		var matches []sessions.Session
+		for _, s := range list {
+			t := s.LastMessageAt
+			if t.IsZero() {
+				t = s.UpdatedAt
+			}
+			if t.IsZero() {
+				t = s.CreatedAt
+			}
+			if !fromTime.IsZero() && t.Before(fromTime) {
+				continue
+			}
+			if !toTime.IsZero() && t.After(toTime) {
+				continue
+			}
+			matches = append(matches, s)
+		}
+
+		if len(matches) == 0 {
+			return "No sessions found to digest for the specified timeframe.", nil
+		}
+
+		var sb strings.Builder
+		sb.WriteString("# Executive Session Digest\n\n")
+		fmt.Fprintf(&sb, "Summarizing %d session(s):\n\n", len(matches))
+		for _, s := range matches {
+			t := s.LastMessageAt
+			if t.IsZero() {
+				t = s.UpdatedAt
+			}
+			if t.IsZero() {
+				t = s.CreatedAt
+			}
+			title := s.Title
+			if title == "" || sessions.IsDefaultTitle(title) {
+				title = "(Untitled)"
+			}
+			fmt.Fprintf(&sb, "### Session %s: %q\n", s.ID, title)
+			fmt.Fprintf(&sb, "- Last Active: %s\n", t.Format("2006-01-02 15:04:05"))
+			fmt.Fprintf(&sb, "- Model: %s\n", s.Model)
+			if s.GoalObjective != "" {
+				fmt.Fprintf(&sb, "- Goal Objective: %s [Status: %s]\n", s.GoalObjective, s.GoalStatus)
+			}
+			if p := getSessionFirstUserMessage(store, s.ID); p != "" {
+				fmt.Fprintf(&sb, "- Topic Preview: %q\n", p)
+			}
+			sb.WriteString("\n")
+		}
+		return sb.String(), nil
+	case "session_export":
+		store := r.getSessionStore()
+		if store == nil {
+			return "Session store is not configured.", nil
+		}
+		sessID, _ := args["session_id"].(string)
+		sessID = strings.TrimSpace(sessID)
+		if sessID == "" {
+			return "", fmt.Errorf("missing required argument: session_id")
+		}
+		outPath, _ := args["output_path"].(string)
+		outPath = strings.TrimSpace(outPath)
+		if outPath == "" {
+			outPath = filepath.Join("exports", fmt.Sprintf("session_%s.md", sessID))
+		}
+
+		sess, err := store.Get(sessID)
+		if err != nil {
+			return "", fmt.Errorf("failed to read session %q: %w", sessID, err)
+		}
+
+		var sb strings.Builder
+		t := sess.LastMessageAt
+		if t.IsZero() {
+			t = sess.UpdatedAt
+		}
+		if t.IsZero() {
+			t = sess.CreatedAt
+		}
+		title := sess.Title
+		if title == "" {
+			title = "(Untitled)"
+		}
+		fmt.Fprintf(&sb, "# Exported Chat Session — %s\n\n", title)
+		fmt.Fprintf(&sb, "- **Session ID**: %s\n", sess.ID)
+		fmt.Fprintf(&sb, "- **Model**: %s\n", sess.Model)
+		fmt.Fprintf(&sb, "- **Last Active**: %s\n", t.Format("2006-01-02 15:04:05"))
+		if sess.GoalObjective != "" {
+			fmt.Fprintf(&sb, "- **Goal Objective**: %s (%s)\n", sess.GoalObjective, sess.GoalStatus)
+		}
+		sb.WriteString("\n---\n\n## Transcript\n\n")
+
+		for idx, rawMsg := range sess.Messages {
+			var msg sessions.RawMsg
+			if err := json.Unmarshal(rawMsg, &msg); err == nil {
+				if msg.Role == "system" {
+					continue
+				}
+				role := strings.ToUpper(msg.Role)
+				ts := msg.Timestamp
+				if ts == "" {
+					ts = fmt.Sprintf("Turn #%d", idx+1)
+				}
+				content := msg.Content
+				if content == "" && msg.Thinking != "" {
+					content = fmt.Sprintf("*[Thinking]:*\n%s", msg.Thinking)
+				}
+				fmt.Fprintf(&sb, "### %s (`%s`)\n\n%s\n\n", role, ts, content)
+			}
+		}
+
+		relPath := outPath
+		absPath := outPath
+		if !filepath.IsAbs(outPath) {
+			absPath = filepath.Join(r.workspace, outPath)
+		} else {
+			if rel, err := filepath.Rel(r.workspace, outPath); err == nil {
+				relPath = rel
+			}
+		}
+
+		if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+			return "", fmt.Errorf("failed to create export directory: %w", err)
+		}
+		if err := os.WriteFile(absPath, []byte(sb.String()), 0644); err != nil {
+			return "", fmt.Errorf("failed to write export file: %w", err)
+		}
+
+		return fmt.Sprintf("Session %s successfully exported to file: %s", sessID, relPath), nil
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}

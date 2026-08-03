@@ -16,6 +16,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
@@ -527,12 +528,15 @@ Your goal:
    - A 👍 (positive) confirms the approach was good — reinforce those patterns in skills if applicable.
 2. Pay HIGHEST priority to explicit user text feedback (corrections, preferences, praise). These are direct instructions from the user about what to improve or remember.
 3. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
-4. Identify user preferences or tastes. If found, update the User Profile at 'agent/USER_PROFILE.md' by reading it first with 'read_file' and updating it with 'Write' or 'Edit'.
+4. Identify user preferences, tastes, or durable technical facts/decisions.
+   - For general user profile info (name, language, coding styles), update 'agent/USER_PROFILE.md' using 'read_file' and 'Write' or 'Edit'.
+   - For specific durable facts, project decisions, or debugging solutions, call 'memory_add' to store them into long-term vector memory for future recall.
 5. Call the appropriate tools to make these improvements. You have access to:
-   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent. If a similar skill exists, modify it using 'skill_edit' instead of creating a duplicate file to prevent cluttering.
+   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent.
    - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
+   - 'memory_add' to store durable facts, key decisions, or user preferences into long-term memory.
 
-If no changes are needed to skills or the user profile, respond explaining why, and do not call any tools.
+If no changes are needed to skills, memory, or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String(), textFeedbackSection)
 
 	registry := tools.NewRegistry(sm.config().WebSearchEnabled, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{
@@ -541,6 +545,7 @@ Provide a clear final summary of what you did.`, len(validSessions), historyText
 		TavilyAPIKey: sm.config().TavilyAPIKey,
 	})
 	registry.SetSkillsPath(sm.config().SkillsPath)
+	registry.SetSessionStore(sm.sessionStore)
 
 	reflectorAgent := agent.NewAgent(sm.cfgMgr, sm.client, registry)
 	reflectorAgent.SetOptions(map[string]any{
@@ -549,16 +554,13 @@ Provide a clear final summary of what you did.`, len(validSessions), historyText
 
 	systemPrompt := `You are the OllamaBot Self-Improvement Reflector.
 You operate in the background during sleep mode.
-You have access to tools to modify skills, identity, and the user profile.
-Be precise and constructive. Focus on creating high-quality, actionable, clear skill guidelines.
-When editing or creating skills, use standard SKILL.md format:
-- Frontmatter containing name, description, homepage.
-- ## Description header.
-- ## Instructions header containing list items starting with - [ ], -, or numbered steps.
+You have access to tools to modify skills, identity, user profile, and long-term memory ('memory_add').
+Be precise and constructive. Focus on creating high-quality, actionable, clear skill guidelines and indexing durable knowledge.
+When editing or creating skills, use standard SKILL.md format.
 
-To prevent duplicates, you MUST check the existing skills with 'skill_list' before creating a new one. If a skill with similar intent exists, modify it instead of creating a new one. The 'skill_create' tool will also block creation if a similar skill already exists.
+To prevent duplicates, you MUST check existing skills with 'skill_list' before creating a new one.
 
-User text feedback (corrections, preferences, praise) is the HIGHEST priority signal. Always act on explicit feedback before inferring patterns from conversation history.
+If you discover durable facts, user preferences, or key technical decisions in the analyzed sessions, call 'memory_add' to store them into long-term memory for future recall.
 
 Keep the user profile ('agent/USER_PROFILE.md') structured:
 - Name
@@ -571,7 +573,7 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 - Date/time
 - Chat Session ID(s) analyzed
 - Issue or user preferences detected
-- Actions executed (skills created, user profile updated, etc.)
+- Actions executed (skills created, user profile updated, memories stored, etc.)
 - Justification/Reasoning`
 
 	messages := []ollama.Message{
@@ -616,6 +618,30 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 		sm.appendToAuditLog(consolidatedSessIDs, actions, summary)
 	}
 
+	// Auto-name untitled sessions and update daily digest
+	for _, sessID := range validSessions {
+		if sess, err := sm.sessionStore.Get(sessID); err == nil {
+			if sessions.IsDefaultTitle(sess.Title) {
+				var text string
+				for _, raw := range sess.Messages {
+					var m struct {
+						Role    string `json:"role"`
+						Content string `json:"content"`
+					}
+					if json.Unmarshal(raw, &m) == nil && m.Role == "user" && strings.TrimSpace(m.Content) != "" {
+						text = m.Content
+						break
+					}
+				}
+				if text != "" {
+					_ = engine.AutoNameSession(ctx, sm.config(), sm.client, sm.sessionStore, sessID, text)
+				}
+			}
+		}
+	}
+
+	sm.generateDailyDigest(validSessions, summary)
+
 	sm.mu.Lock()
 	for _, sID := range validSessions {
 		sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sID)
@@ -624,6 +650,54 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 	_ = sm.SaveState()
 
 	log.Printf("[sleep] Analysis of sessions [%s] completed successfully.", consolidatedSessIDs)
+}
+
+func (sm *SleepManager) generateDailyDigest(analyzedIDs []string, reflectionSummary string) {
+	if len(analyzedIDs) == 0 {
+		return
+	}
+	digestsDir := filepath.Join(sm.config().SessionsPath, "digests")
+	if err := os.MkdirAll(digestsDir, 0755); err != nil {
+		log.Printf("[sleep] Failed to create digests dir: %v", err)
+		return
+	}
+
+	todayStr := time.Now().Format("2006-01-02")
+	digestPath := filepath.Join(digestsDir, fmt.Sprintf("digest_%s.md", todayStr))
+
+	var sb strings.Builder
+	if _, err := os.Stat(digestPath); os.IsNotExist(err) {
+		fmt.Fprintf(&sb, "# Daily Digest — %s\n\n", todayStr)
+	} else {
+		sb.WriteString("\n---\n\n")
+	}
+
+	fmt.Fprintf(&sb, "## Sleep Reflection Run (%s)\n", time.Now().Format("15:04:05"))
+	fmt.Fprintf(&sb, "- Analyzed Sessions: %d (%s)\n", len(analyzedIDs), strings.Join(analyzedIDs, ", "))
+	for _, id := range analyzedIDs {
+		if sess, err := sm.sessionStore.Get(id); err == nil {
+			title := sess.Title
+			if title == "" {
+				title = "(Untitled)"
+			}
+			fmt.Fprintf(&sb, "  - Session %s: %q (Model: %s)\n", sess.ID, title, sess.Model)
+			if sess.GoalObjective != "" {
+				fmt.Fprintf(&sb, "    - Goal Objective: %s [Status: %s]\n", sess.GoalObjective, sess.GoalStatus)
+			}
+		}
+	}
+	if reflectionSummary != "" {
+		fmt.Fprintf(&sb, "- Reflection Summary:\n%s\n", reflectionSummary)
+	}
+
+	f, err := os.OpenFile(digestPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Printf("[sleep] Failed to open daily digest file: %v", err)
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(sb.String())
+	log.Printf("[sleep] Updated daily digest at %s", digestPath)
 }
 
 func (sm *SleepManager) appendToAuditLog(sessionID string, actions []string, summary string) {

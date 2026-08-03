@@ -1042,12 +1042,14 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock 
 	if a.registry != nil && a.registry.SessionStore() != nil {
 		prefix = append(prefix, ollama.Message{
 			Role: "system",
-			Content: "## Past Session History Access\n" +
-				"You have access to read-only tools to search and consult previous chat sessions:\n" +
+			Content: "## Past Session History & Digest Tools\n" +
+				"You have access to tools to search, consult, digest, and export previous chat sessions:\n" +
 				"- `sessions_list`: List previous chat sessions by date range (`date_from`, `date_to` in YYYY-MM-DD format, or `since_days`) or keyword (`query`).\n" +
-				"- `sessions_search`: Search across previous chat session message histories for specific keywords or topics (supports `date_from` / `date_to` date filtering).\n" +
+				"- `sessions_search`: Search across previous chat session message histories for specific keywords or topics.\n" +
 				"- `session_read`: Read the message transcript (user and assistant turns) of a specific past session by `session_id`.\n" +
-				"Use these tools when the user asks to summarize past discussions, recall what was talked about in prior chats, or look up previous sessions. Note that past sessions are read-only; you cannot write messages or post replies to old sessions.",
+				"- `sessions_digest`: Retrieve executive daily summaries / digests of past chat sessions over a period of time (`since_days` or date range).\n" +
+				"- `session_export`: Export a past session transcript to a Markdown report file in the workspace (`output_path`).\n" +
+				"Use these tools when the user asks to summarize past discussions, recall what was talked about in prior chats, export reports, or look up previous sessions.",
 		})
 	}
 
@@ -1230,7 +1232,7 @@ func isParallelSafeTool(toolName string, params map[string]any, toolSource strin
 	case "memory_search", "memory_list":
 		return true
 	// Past session query tools are read-only
-	case "sessions_list", "sessions_search", "session_read":
+	case "sessions_list", "sessions_search", "session_read", "sessions_digest":
 		return true
 	// mcp_list_servers is read-only
 	case "mcp_list_servers":

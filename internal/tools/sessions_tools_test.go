@@ -155,4 +155,31 @@ func TestSessionsTools(t *testing.T) {
 			t.Errorf("expected formatted session transcript, got:\n%s", out)
 		}
 	})
+
+	// 6. Test sessions_digest
+	t.Run("sessions_digest", func(t *testing.T) {
+		out, err := execTool("sessions_digest", map[string]any{
+			"since_days": 30,
+		})
+		if err != nil {
+			t.Fatalf("sessions_digest error: %v", err)
+		}
+		if !strings.Contains(out, "Digest") || !strings.Contains(out, s1ID) {
+			t.Errorf("expected executive session digest containing s1ID, got:\n%s", out)
+		}
+	})
+
+	// 7. Test session_export
+	t.Run("session_export", func(t *testing.T) {
+		out, err := execTool("session_export", map[string]any{
+			"session_id":  s1ID,
+			"output_path": "exports/test_export.md",
+		})
+		if err != nil {
+			t.Fatalf("session_export error: %v", err)
+		}
+		if !strings.Contains(out, "successfully exported") {
+			t.Errorf("expected success message for session_export, got:\n%s", out)
+		}
+	})
 }
