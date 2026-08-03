@@ -1898,14 +1898,27 @@ function modelForRole(role) {
 }
 
 function getActiveRolesCount(m) {
+  if (!m) return 0;
   let count = 0;
-  if (m.name === state.activeModel) count++;
-  if (m.name === state.learningModel) count++;
-  if (m.name === state.subagentModel) count++;
-  if (m.name === state.visionModel) count++;
-  if (m.name === state.audioModel) count++;
-  if (m.name === state.embeddingsModel) count++;
-  if (m.name === state.imageModel) count++;
+  const name = m.name;
+  const canVision = m.capabilities?.vision === "comprobado" || m.capabilities?.vision === "inferido";
+  const canAudio = m.capabilities?.audio === "comprobado" || m.capabilities?.audio === "inferido";
+
+  const isMain = name === state.activeModel;
+  const isLearning = name === state.learningModel;
+  const isSubagent = name === state.subagentModel;
+  const isVision = name === state.visionModel || (isMain && !state.visionModel && canVision);
+  const isAudio = name === state.audioModel || (isMain && !state.audioModel && canAudio);
+  const isEmbed = name === state.embeddingsModel;
+  const isImage = name === state.imageModel;
+
+  if (isMain) count++;
+  if (isLearning) count++;
+  if (isSubagent) count++;
+  if (isVision) count++;
+  if (isAudio) count++;
+  if (isEmbed) count++;
+  if (isImage) count++;
   return count;
 }
 
@@ -2012,7 +2025,13 @@ function renderModels() {
       return b.name.localeCompare(a.name);
     }
 
-    // Default sorting logic: Active roles first, useful ones, then alphabetical
+    // Default sorting logic: Models with assigned active roles first (most roles first)
+    const rA = getActiveRolesCount(a);
+    const rB = getActiveRolesCount(b);
+    if (rA !== rB) {
+      return rB - rA;
+    }
+
     const aMain = canBeMain(a);
     const aVis = a.capabilities?.vision === "comprobado" || a.capabilities?.vision === "inferido";
     const aAud = a.capabilities?.audio === "comprobado" || a.capabilities?.audio === "inferido";
@@ -2027,11 +2046,6 @@ function renderModels() {
 
     if (aUseless !== bUseless) {
       return aUseless ? 1 : -1;
-    }
-    const rA = getActiveRolesCount(a);
-    const rB = getActiveRolesCount(b);
-    if (rA !== rB) {
-      return rB - rA;
     }
     return a.name.localeCompare(b.name);
   });
@@ -2127,7 +2141,7 @@ function renderModels() {
         </div>
         <div class="sub">${escapeHtml(model.family || "-")} · ${escapeHtml(model.parameters || "-")} · ${escapeHtml(model.quantization || "-")}</div>
       </div>
-      <div class="caps">${capBadges(model.capabilities)}</div>
+      <div class="caps">${capBadges(model.capabilities, model)}</div>
       <div class="model-meta">
         <div class="model-meta-info" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--muted);">
           <span>ctx ${model.context_length ? escapeHtml(model.context_length.toLocaleString()) : "-"}</span>
@@ -3713,7 +3727,40 @@ function capabilityFor(kind) {
   return false;
 }
 
-function capBadges(caps = {}) {
+function isRoleActiveForCap(capName, model) {
+  if (!model) return true;
+  const name = model.name;
+  const canVision = model.capabilities?.vision === "comprobado" || model.capabilities?.vision === "inferido";
+  const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
+
+  const isMain = name === state.activeModel;
+  const isLearning = name === state.learningModel;
+  const isSubagent = name === state.subagentModel;
+  const isVision = name === state.visionModel || (isMain && !state.visionModel && canVision);
+  const isAudio = name === state.audioModel || (isMain && !state.audioModel && canAudio);
+  const isEmbed = name === state.embeddingsModel;
+  const isImage = name === state.imageModel;
+
+  switch (capName) {
+    case "completion":
+      return isMain || isLearning || isSubagent;
+    case "tools":
+      return isMain || isLearning || isSubagent;
+    case "thinking":
+      return (isMain || isLearning || isSubagent) && state.settings?.ollama_think_enabled !== false;
+    case "vision":
+      return isVision;
+    case "audio":
+      return isAudio;
+    case "embedding":
+      return isEmbed;
+    case "image":
+      return isImage;
+  }
+  return false;
+}
+
+function capBadges(caps = {}, model = null) {
   const order = ["completion", "tools", "thinking", "vision", "embedding", "audio"];
   const glyphs = {
     completion: "⚡ text",
@@ -3725,11 +3772,15 @@ function capBadges(caps = {}) {
   };
   return order.map((name) => {
     const status = caps ? (caps[name] || "pendiente") : "pendiente";
-    const cls = status === "comprobado" ? "ok" : status === "inferido" ? "inferred" : "";
+    if (status !== "comprobado" && status !== "inferido") {
+      return "";
+    }
+    const isActive = isRoleActiveForCap(name, model);
+    const cls = isActive ? (status === "comprobado" ? "ok" : "inferred") : "inactive-cap";
     const label = glyphs[name] || name;
-    const engStatus = status === "comprobado" ? "confirmed" : status === "inferido" ? "inferred" : "pending";
-    return `<span class="cap ${cls}" title="${name}: ${engStatus}">${label}</span>`;
-  }).join("");
+    const engStatus = status === "comprobado" ? "confirmed" : "inferred";
+    return `<span class="cap ${cls}" title="${name}: ${engStatus}${isActive ? ' (Active Role)' : ' (Inactive)'}">${label}</span>`;
+  }).filter(Boolean).join("");
 }
 
 function renderMarkdown(text) {
