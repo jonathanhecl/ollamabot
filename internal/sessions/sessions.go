@@ -36,11 +36,33 @@ type Session struct {
 	GoalObjective    string                 `json:"goal_objective,omitempty"`
 	GoalStatus       string                 `json:"goal_status,omitempty"`    // "active", "paused", "completed", "failed", or ""
 	GoalReasoning    string                 `json:"goal_reasoning,omitempty"` // last evaluator reasoning
+	GoalProgress     int                    `json:"goal_progress,omitempty"`  // 0-100 percentage
+	GoalMilestones   []GoalMilestone        `json:"goal_milestones,omitempty"`
 	GoalCycleActive  bool                   `json:"goal_cycle_active,omitempty"`
 	GoalRestartCount int                    `json:"goal_restart_count,omitempty"`
 	ActivePlan       *SessionPlan           `json:"active_plan,omitempty"`
 	PendingApproval  *PendingApproval       `json:"pending_approval,omitempty"`
 	ApprovalGrants   []SessionApprovalGrant `json:"approval_grants,omitempty"`
+}
+
+type GoalMilestone struct {
+	Description string    `json:"description"`
+	Completed   bool      `json:"completed"`
+	CompletedAt time.Time `json:"completed_at,omitempty"`
+}
+
+// RenderProgressBar returns a visual progress bar string (e.g., "[██████░░░░] 60%").
+func RenderProgressBar(percent int) string {
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	totalBlocks := 10
+	filledBlocks := (percent * totalBlocks) / 100
+	emptyBlocks := totalBlocks - filledBlocks
+	return fmt.Sprintf("[%s%s] %d%%", strings.Repeat("█", filledBlocks), strings.Repeat("░", emptyBlocks), percent)
 }
 
 // IsEmpty returns true if the session contains no messages, no active goals, and no feedback, AND has a default/empty title.

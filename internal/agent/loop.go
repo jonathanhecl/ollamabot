@@ -171,6 +171,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 	}
 
+	// Automatic pre-fetch of relevant past session context based on user prompt
+	var pastSessionsBlock string
+	if a.registry != nil && a.registry.SessionStore() != nil {
+		currentSessID := a.registry.SessionID()
+		pastSessionsBlock = buildPastSessionsContext(a.registry.SessionStore(), goal, currentSessID)
+	}
+
 	emptyChatErrRetries := 0
 	planStepHasAction := false
 	planTextOnlyRetries := 0
@@ -187,7 +194,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	// --- STATIC SYSTEM PREFIX (computed once, reused every iteration) ---
 	// These messages don't change between loop iterations, so we build them
 	// once before the loop instead of re-reading files from disk every turn.
-	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, skillsBlock)
+	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, skillsBlock, pastSessionsBlock)
 
 	for i := 0; i < MaxIterations; i++ {
 		// --- DYNAMIC SYSTEM PREFIX (rebuilt each iteration) ---
@@ -936,6 +943,115 @@ func (a *Agent) rescuePathParam(toolName string, params map[string]any) {
 	}
 }
 
+func buildPastSessionsContext(store *sessions.Store, userPrompt string, currentSessionID string) string {
+	if store == nil {
+		return ""
+	}
+	userPrompt = strings.TrimSpace(userPrompt)
+	if len(userPrompt) < 10 {
+		return ""
+	}
+
+	words := strings.Fields(strings.ToLower(userPrompt))
+	var tokens []string
+	stopwords := map[string]bool{
+		"para": true, "como": true, "hacer": true, "sobre": true, "esta": true, "este": true,
+		"esto": true, "con": true, "que": true, "del": true, "los": true, "las": true, "una": true,
+		"uno": true, "unas": true, "unos": true, "por": true, "donde": true, "quien": true,
+		"cual": true, "cuando": true, "the": true, "and": true, "for": true, "with": true,
+		"this": true, "that": true, "from": true, "about": true, "what": true, "how": true,
+		"hola": true, "buenas": true, "please": true, "help": true, "ayuda": true,
+	}
+	for _, w := range words {
+		w = strings.TrimFunc(w, func(r rune) bool {
+			return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		})
+		if len(w) >= 4 && !stopwords[w] {
+			tokens = append(tokens, w)
+		}
+	}
+
+	if len(tokens) == 0 {
+		return ""
+	}
+
+	list, err := store.List()
+	if err != nil || len(list) <= 1 {
+		return ""
+	}
+
+	type match struct {
+		id    string
+		title string
+		date  string
+		score int
+	}
+
+	var matches []match
+	for _, item := range list {
+		if currentSessionID != "" && item.ID == currentSessionID {
+			continue
+		}
+		score := 0
+		lowerTitle := strings.ToLower(item.Title)
+		lowerGoal := strings.ToLower(item.GoalObjective)
+
+		for _, tok := range tokens {
+			if strings.Contains(lowerTitle, tok) {
+				score += 3
+			}
+			if strings.Contains(lowerGoal, tok) {
+				score += 2
+			}
+		}
+
+		if score > 0 {
+			t := item.LastMessageAt
+			if t.IsZero() {
+				t = item.UpdatedAt
+			}
+			if t.IsZero() {
+				t = item.CreatedAt
+			}
+			matches = append(matches, match{
+				id:    item.ID,
+				title: item.Title,
+				date:  t.Format("2006-01-02"),
+				score: score,
+			})
+		}
+	}
+
+	if len(matches) == 0 {
+		return ""
+	}
+
+	for i := 0; i < len(matches); i++ {
+		for j := i + 1; j < len(matches); j++ {
+			if matches[j].score > matches[i].score {
+				matches[i], matches[j] = matches[j], matches[i]
+			}
+		}
+	}
+
+	if len(matches) > 3 {
+		matches = matches[:3]
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## Automatically Recalled Context from Relevant Past Sessions\n")
+	sb.WriteString("Based on the user's prompt, the following past sessions appear relevant:\n")
+	for _, m := range matches {
+		title := m.title
+		if title == "" || sessions.IsDefaultTitle(title) {
+			title = "(Untitled)"
+		}
+		fmt.Fprintf(&sb, "- Past Session ID: %s | Title: %q | Date: %s\n", m.id, title, m.date)
+	}
+	sb.WriteString("You may use session_read(session_id) if you need the full transcript.")
+	return sb.String()
+}
+
 func buildTodoProgressNote(snap []tools.TodoItem) string {
 	var b strings.Builder
 	b.WriteString("TODO progress:\n")
@@ -962,7 +1078,7 @@ func buildTodoProgressNote(snap []tools.TodoItem) string {
 // instructions, recalled memories, skills, goal reinforcement, and
 // clarification reinforcement. Computing these once per Run avoids
 // re-reading files from disk up to 50 times.
-func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock string) []ollama.Message {
+func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock, pastSessionsBlock string) []ollama.Message {
 	var prefix []ollama.Message
 
 	// Load SOUL.md once
@@ -1058,6 +1174,14 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock 
 		prefix = append(prefix, ollama.Message{
 			Role:    "system",
 			Content: recalledMemoriesBlock,
+		})
+	}
+
+	// Recalled past sessions (static for this Run)
+	if pastSessionsBlock != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: pastSessionsBlock,
 		})
 	}
 

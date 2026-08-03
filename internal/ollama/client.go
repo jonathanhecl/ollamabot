@@ -71,6 +71,38 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error
 	return out, err
 }
 
+// UnloadModel immediately releases a model from GPU VRAM by sending keep_alive: 0.
+func (c *Client) UnloadModel(ctx context.Context, model string) error {
+	if strings.TrimSpace(model) == "" {
+		return nil
+	}
+	req := ChatRequest{
+		Model:     model,
+		Messages:  []Message{},
+		KeepAlive: "0s",
+	}
+	req.Stream = boolPtr(false)
+	var out ChatResponse
+	return c.do(ctx, http.MethodPost, "/api/chat", req, &out)
+}
+
+// UnloadInactiveModels unloads all currently loaded models in Ollama except keepModel.
+func (c *Client) UnloadInactiveModels(ctx context.Context, keepModel string) error {
+	ps, err := c.Ps(ctx)
+	if err != nil {
+		return err
+	}
+	keepNorm := strings.ToLower(strings.TrimSpace(keepModel))
+	for _, m := range ps.Models {
+		mNorm := strings.ToLower(strings.TrimSpace(m.Name))
+		if keepNorm != "" && (mNorm == keepNorm || strings.HasPrefix(mNorm, keepNorm+":")) {
+			continue
+		}
+		_ = c.UnloadModel(ctx, m.Name)
+	}
+	return nil
+}
+
 func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatResponse) error) error {
 	req.Stream = boolPtr(true)
 	payload, err := json.Marshal(req)

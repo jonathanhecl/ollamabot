@@ -143,6 +143,10 @@ func (r *Registry) SetSessionID(id string) {
 	r.sessionID = id
 }
 
+func (r *Registry) SessionID() string {
+	return r.sessionID
+}
+
 // SetSessionsPath sets the path where session data (including attachments) is stored.
 func (r *Registry) SetSessionsPath(path string) {
 	r.sessionsPath = path

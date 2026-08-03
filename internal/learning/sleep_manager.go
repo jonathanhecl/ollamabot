@@ -173,6 +173,14 @@ func (sm *SleepManager) Pause() {
 	sm.isLearning = false
 	sm.isSleeping = false
 	sm.taskQueue = nil
+
+	if sm.client != nil {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			_ = sm.client.UnloadInactiveModels(ctx, sm.config().OllamaDefaultModel)
+		}()
+	}
 }
 
 func normalizeModelName(name string) string {

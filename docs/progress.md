@@ -1,13 +1,20 @@
 # Progress
 
-## 2026-08-03 — Sleep Manager Maintenance, Vector Memory Indexing, Daily Digests & Export Tools
+## 2026-08-03 — Automatic Session Context Pre-fetch, Smart VRAM Auto-Unload, Goal Progress Bar & Milestones
 
-Implemented background sleep mode maintenance tasks and new session digest/export capabilities (`internal/learning`, `internal/tools`, `internal/agent`):
+Implemented 3 high-impact intelligence, VRAM management, and goal tracking capabilities (`internal/agent`, `internal/ollama`, `internal/sessions`, `internal/learning`):
 
-### 1. Background Sleep Maintenance & Memory Indexing (`internal/learning/sleep_manager.go`)
-- **Vector Memory Indexing**: Instructed the background reflector agent during sleep mode to extract durable facts, technical decisions, and user preferences and store them directly into vector memory (`memory_add`).
-- **Session Auto-Naming**: Automatically assigns descriptive titles to sessions left with default/placeholder titles (*"New session"*, *"Telegram Chat"*) during sleep reflection via `engine.AutoNameSession`.
-- **Daily Digest Generation**: Automatically generates and appends daily activity summaries in `sessions/digests/digest_YYYY-MM-DD.md` summarizing analyzed sessions, goals, and reflector actions.
+### 1. Automatic Past Session Context Pre-fetch (`internal/agent/loop.go`)
+- **Proactive Context Pre-fetch**: Automatically evaluates user prompts during `agent.Run` against past session titles and goal objectives stored in `SessionStore`.
+- Injects a `## Automatically Recalled Context from Relevant Past Sessions` system prompt block so local LLMs immediately know relevant past chat context without requiring explicit tool calls.
+
+### 2. Smart VRAM Auto-Unload Manager (`internal/ollama/client.go`, `internal/learning/sleep_manager.go`)
+- **VRAM Reclaim (`keep_alive: 0`)**: Added `UnloadModel` and `UnloadInactiveModels` methods to `ollama.Client` to force GPU VRAM release.
+- **Sleep Manager Release**: Automatically unloads non-default/secondary models (vision, audio, subagents) when sleep mode pauses/resumes, keeping VRAM free for the user's GPU.
+
+### 3. Goal Milestones & Progress Bar Rendering (`internal/sessions/sessions.go`, `internal/agent/goal.go`)
+- **Goal Structure Enhancements**: Added `GoalMilestone` struct (`Description`, `Completed`, `CompletedAt`) and `GoalProgress` percentage field to `sessions.Session`.
+- **Visual Progress Bar**: Added `RenderProgressBar(percent int)` helper returning ASCII progress bars (e.g. `[██████░░░░] 60%`) formatted for Telegram messages and Web UI API.
 
 ### 2. Executive Digest & Session Export Tools (`internal/tools/tools.go`, `internal/agent/loop.go`)
 - **`sessions_digest`**: Read-only tool that retrieves structured daily digests or builds an executive summary of activity across past sessions over a specified timeframe (`since_days` or date range).

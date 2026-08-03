@@ -56,13 +56,14 @@ type ShowResponse struct {
 }
 
 type ChatRequest struct {
-	Model    string         `json:"model"`
-	Messages []Message      `json:"messages"`
-	Tools    []Tool         `json:"tools,omitempty"`
-	Format   any            `json:"format,omitempty"`
-	Options  map[string]any `json:"options,omitempty"`
-	Stream   *bool          `json:"stream,omitempty"`
-	Think    any            `json:"think,omitempty"`
+	Model     string         `json:"model"`
+	Messages  []Message      `json:"messages"`
+	Tools     []Tool         `json:"tools,omitempty"`
+	Format    any            `json:"format,omitempty"`
+	Options   map[string]any `json:"options,omitempty"`
+	Stream    *bool          `json:"stream,omitempty"`
+	Think     any            `json:"think,omitempty"`
+	KeepAlive any            `json:"keep_alive,omitempty"`
 }
 
 type ChatResponse struct {
