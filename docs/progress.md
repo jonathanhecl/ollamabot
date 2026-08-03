@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-08-03 — MCP tool optimization: origin enrichment, active server context, schema fallback, empty result handling
+
+Four key improvements to MCP tool handling and local model routing (`internal/tools`, `internal/mcp`, `internal/agent`):
+
+### 1. Tool Description Origin Enrichment (`internal/tools/tools.go`)
+- Prefix tool descriptions sent to Ollama with `[MCP Server: <server_name>] <description>` in both `SetMCPManager` and `RefreshMCP`.
+- Gives local models explicit context on which MCP server host and dataset each tool operates on.
+
+### 2. Input Schema Sanitization (`internal/tools/tools.go`)
+- Default `InputSchema.Type` to `"object"` if empty or omitted by an MCP server.
+- Prevents invalid function schemas (`"type": ""`) from confusing Ollama tool parsers.
+
+### 3. Dynamic Active Server Context in System Prompt (`internal/agent/loop.go`)
+- System prompt now queries `a.registry.MCPManager().GetServersStatus()` and dynamically lists connected MCP servers with their status and available tool names.
+- Gives the local model an explicit map of online MCP services at turn initialization without requiring a prior `mcp_list_servers` call.
+
+### 4. Empty Result Handling & Proactive Guidance (`internal/mcp/manager.go`, `internal/agent/loop.go`)
+- `mcp.Manager.Execute` now returns `"[MCP Tool executed successfully, but returned empty output or no results.]"` when a tool completes with empty text output.
+- `postProcess` appends proactive system guidance when an MCP tool returns 0 results, nudging local models to broaden search terms or check server status rather than retrying identical parameters or falling back to workspace tools.
+
 ## 2026-07-30 — Autonomous harness: staleness recovery, post-task verification, callback cleanup
 
 Three robustness improvements to the autonomous project manager

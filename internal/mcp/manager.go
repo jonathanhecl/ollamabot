@@ -339,6 +339,10 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 		return output, fmt.Errorf("tool returned error: %s", output)
 	}
 
+	if output == "" {
+		return "[MCP Tool executed successfully, but returned empty output or no results.]", nil
+	}
+
 	return output, nil
 }
 

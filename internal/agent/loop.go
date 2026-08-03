@@ -632,6 +632,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// model if it later tries to access them via workspace tools.
 				if toolSource != "internal" && terr == nil {
 					collectMCPReturnedNames(result, mcpReturnedNames)
+					if strings.Contains(result, "empty output or no results") {
+						result = fmt.Sprintf("%s\n\n[SYSTEM NOTE: The MCP tool returned 0 results or empty output. Consider broadening your query parameters or checking server status with mcp_list_servers. Do NOT call local workspace tools (read_file, list_files) as a substitute for MCP searches unless requested by the user.]", result)
+					}
 				}
 
 				// Guardrail: if the model calls a workspace file tool on a
@@ -994,22 +997,44 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock 
 		})
 	}
 
-	// MCP capability instruction (static)
+	// MCP capability instruction (static + dynamic active server status)
 	if a.registry != nil && a.registry.MCPManager() != nil {
+		mcpContent := "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
+			"## CRITICAL: MCP tools vs workspace tools\n" +
+			"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
+			"- To READ content that an MCP tool listed: use the matching MCP read tool (e.g. vault_read, get_note), NOT read_file.\n" +
+			"- To LIST entries in an MCP service: use the MCP list tool (e.g. vault_list), NOT list_files.\n" +
+			"- To WRITE/UPDATE content in an MCP service: use the matching MCP write tool, NOT write_file or edit_file.\n" +
+			"- NEVER call read_file, list_files, write_file, edit_file, or apply_diff on paths or filenames that came from an MCP tool result. Those files do not exist in the workspace; calling workspace tools on them will fail and loop.\n" +
+			"- If an MCP tool returns a filename like 'OpenAI.md', do NOT assume it lives under the workspace path. It lives inside the MCP service and must be accessed via MCP tools only.\n\n" +
+			"## Transport\n" +
+			"Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically.\n\n" +
+			"## Failures\n" +
+			"If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback."
+
+		if status, err := a.registry.MCPManager().GetServersStatus(); err == nil && len(status) > 0 {
+			var sb strings.Builder
+			sb.WriteString("\n\n## Connected MCP Servers and Available Tools\n")
+			for srvName, srv := range status {
+				st := srv.Status
+				if srv.Degraded {
+					st = "degraded (unreachable, cached tools)"
+				}
+				if srv.Error != "" {
+					st = fmt.Sprintf("error (%s)", srv.Error)
+				}
+				toolNames := make([]string, 0, len(srv.Tools))
+				for _, t := range srv.Tools {
+					toolNames = append(toolNames, t.Name)
+				}
+				fmt.Fprintf(&sb, "- Server %q [%s]: %s\n", srvName, st, strings.Join(toolNames, ", "))
+			}
+			mcpContent += sb.String()
+		}
+
 		prefix = append(prefix, ollama.Message{
-			Role: "system",
-			Content: "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
-				"## CRITICAL: MCP tools vs workspace tools\n" +
-				"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
-				"- To READ content that an MCP tool listed: use the matching MCP read tool (e.g. vault_read, get_note), NOT read_file.\n" +
-				"- To LIST entries in an MCP service: use the MCP list tool (e.g. vault_list), NOT list_files.\n" +
-				"- To WRITE/UPDATE content in an MCP service: use the matching MCP write tool, NOT write_file or edit_file.\n" +
-				"- NEVER call read_file, list_files, write_file, edit_file, or apply_diff on paths or filenames that came from an MCP tool result. Those files do not exist in the workspace; calling workspace tools on them will fail and loop.\n" +
-				"- If an MCP tool returns a filename like 'OpenAI.md', do NOT assume it lives under the workspace path. It lives inside the MCP service and must be accessed via MCP tools only.\n\n" +
-				"## Transport\n" +
-				"Do NOT use execute_command, shell, curl, wget, or fetch_webpage to manually query MCP transport endpoints (e.g., URLs ending in /mcp/, /mcp, /sse, /messages, or the Obsidian Local REST API). The MCP client handles all transport communication automatically.\n\n" +
-				"## Failures\n" +
-				"If an MCP tool fails or a server is not running, use mcp_list_servers to check status and report the issue instead of probing the endpoint manually. When the user explicitly asks for an action to be done through an MCP server (e.g., publishing or saving into that service) and the server is unreachable or the tool fails, STOP and tell the user the server is unavailable: do NOT substitute the action with workspace file writes or any other local workaround unless the user explicitly approves that fallback.",
+			Role:    "system",
+			Content: mcpContent,
 		})
 	}
 

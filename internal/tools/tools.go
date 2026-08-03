@@ -181,13 +181,21 @@ func (r *Registry) SetMCPManager(m *mcp.Manager) {
 		for k, v := range tool.InputSchema.Properties {
 			properties[k] = v
 		}
+		desc := tool.Description
+		if srv := m.GetToolServer(tool.Name); srv != "" && !strings.HasPrefix(desc, "[MCP Server:") {
+			desc = fmt.Sprintf("[MCP Server: %s] %s", srv, desc)
+		}
+		schemaType := tool.InputSchema.Type
+		if schemaType == "" {
+			schemaType = "object"
+		}
 		r.defs = append(r.defs, ollama.Tool{
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        tool.Name,
-				Description: tool.Description,
+				Description: desc,
 				Parameters: map[string]any{
-					"type":       tool.InputSchema.Type,
+					"type":       schemaType,
 					"properties": properties,
 					"required":   tool.InputSchema.Required,
 				},
@@ -335,13 +343,21 @@ func (r *Registry) RefreshMCP() {
 		for k, v := range tool.InputSchema.Properties {
 			properties[k] = v
 		}
+		desc := tool.Description
+		if srv := r.mcpManager.GetToolServer(tool.Name); srv != "" && !strings.HasPrefix(desc, "[MCP Server:") {
+			desc = fmt.Sprintf("[MCP Server: %s] %s", srv, desc)
+		}
+		schemaType := tool.InputSchema.Type
+		if schemaType == "" {
+			schemaType = "object"
+		}
 		r.defs = append(r.defs, ollama.Tool{
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        tool.Name,
-				Description: tool.Description,
+				Description: desc,
 				Parameters: map[string]any{
-					"type":       tool.InputSchema.Type,
+					"type":       schemaType,
 					"properties": properties,
 					"required":   tool.InputSchema.Required,
 				},
