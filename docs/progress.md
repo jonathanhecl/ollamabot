@@ -416,3 +416,11 @@ Added flexible model sorting and additional metadata (disk size, installation da
 - `internal/web/static/index.html`: added `<select id="modelSort">` dropdown with 11 sorting modes (Parameter Size, File/Disk Size, Context Length, Installation Date, Assigned Roles, Name).
 - `internal/web/static/app.js`: implemented `parseParamCount`, `getActiveRolesCount`, `isRoleActiveForCap`, and `formatDateShort`. Updated `capBadges` to hide missing capabilities completely, show supported capabilities with neutral styling by default, and color tags only when actively assigned to a role. Fixed sorting by assigned roles so all models with assigned roles (Main, Learn, Subagent, Vision, Audio, Embed, Image) are neatly grouped at the top ordered by active role count. Removed duplicate disk label in `model-meta-info`.
 - `internal/web/static/styles.css`: added `.cap.inactive-cap` style for uncolored, neutral capability tags. Fixed `.model-meta-info` flex-direction layout to horizontal row so metadata stays clean and aligned on a single line.
+
+## 2026-08-03 — Fix Ollama Jinja ChatTemplate system message position and Web UI error notifications
+
+Fixed Ollama status 400 errors (`Jinja Exception: System message must be at the beginning`) occurring on models with strict Jinja chat templates (e.g. `bonsai-27b`). Improved Web UI error visibility so backend streaming errors render clearly on screen.
+
+- `internal/ollama/client.go`: added `SanitizeMessages(messages)` to automatically consolidate system prompts into a single initial system message at index 0 and convert mid-conversation system notes to user-role messages before posting to `/api/chat`.
+- `internal/ollama/client_test.go`: added unit test `TestSanitizeMessages`.
+- `internal/web/static/app.js`: updated `/api/chat/stream` response handling to extract and display HTTP error details in a visible chat step bubble (`⚠️ Error: ...`) when requests fail.

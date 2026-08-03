@@ -2700,7 +2700,20 @@ async function processNextQueueItem() {
       signal: state.currentAbortController.signal,
     });
     if (!response.ok || !response.body) {
-      assistant.content = `Error: ${response.statusText}`;
+      let errText = response.statusText || `HTTP ${response.status}`;
+      try {
+        const errBody = await response.text();
+        if (errBody) {
+          try {
+            const parsed = JSON.parse(errBody);
+            errText = parsed.error || parsed.message || errText;
+          } catch (_) {
+            errText = errBody;
+          }
+        }
+      } catch (_) {}
+      assistant.content = `Error: ${errText}`;
+      appendContentStep(assistant, `⚠️ Error: ${errText}`);
       assistant.waiting = false;
       assistant.streaming = false;
       renderMessages();

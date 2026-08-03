@@ -12,6 +12,30 @@ import (
 	"time"
 )
 
+func TestSanitizeMessages(t *testing.T) {
+	msgs := []Message{
+		{Role: "system", Content: "Initial System Prompt"},
+		{Role: "user", Content: "Hello"},
+		{Role: "assistant", Content: "Hi!"},
+		{Role: "system", Content: "Mid-conversation system note"},
+		{Role: "user", Content: "How are you?"},
+	}
+
+	sanitized := SanitizeMessages(msgs)
+	if len(sanitized) != 4 {
+		t.Fatalf("expected 4 messages after system consolidation, got %d", len(sanitized))
+	}
+	if sanitized[0].Role != "system" || !strings.Contains(sanitized[0].Content, "Initial System Prompt") || !strings.Contains(sanitized[0].Content, "Mid-conversation system note") {
+		t.Errorf("unexpected index 0 system message: %#v", sanitized[0])
+	}
+	// Check that no subsequent message has Role == "system"
+	for i := 1; i < len(sanitized); i++ {
+		if sanitized[i].Role == "system" {
+			t.Errorf("found system message at index %d after sanitization: %#v", i, sanitized[i])
+		}
+	}
+}
+
 func TestClientEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

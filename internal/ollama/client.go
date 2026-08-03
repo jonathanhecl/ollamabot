@@ -64,8 +64,41 @@ func (c *Client) Show(ctx context.Context, model string) (ShowResponse, error) {
 	return out, err
 }
 
+// SanitizeMessages ensures that a list of messages sent to Ollama complies with strict
+// chat template requirements (such as Jinja templates requiring that 'system' messages
+// ONLY appear at index 0).
+func SanitizeMessages(messages []Message) []Message {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	var systemParts []string
+	var nonSystem []Message
+
+	for _, msg := range messages {
+		if msg.Role == "system" {
+			if strings.TrimSpace(msg.Content) != "" {
+				systemParts = append(systemParts, strings.TrimSpace(msg.Content))
+			}
+		} else {
+			nonSystem = append(nonSystem, msg)
+		}
+	}
+
+	if len(systemParts) > 0 {
+		sysMsg := Message{
+			Role:    "system",
+			Content: strings.Join(systemParts, "\n\n"),
+		}
+		return append([]Message{sysMsg}, nonSystem...)
+	}
+
+	return nonSystem
+}
+
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	req.Stream = boolPtr(false)
+	req.Messages = SanitizeMessages(req.Messages)
 	var out ChatResponse
 	err := c.do(ctx, http.MethodPost, "/api/chat", req, &out)
 	return out, err
@@ -105,6 +138,7 @@ func (c *Client) UnloadInactiveModels(ctx context.Context, keepModel string) err
 
 func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(ChatResponse) error) error {
 	req.Stream = boolPtr(true)
+	req.Messages = SanitizeMessages(req.Messages)
 	payload, err := json.Marshal(req)
 	if err != nil {
 		return err
