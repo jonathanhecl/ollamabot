@@ -405,3 +405,4 @@ Fixed a bug in MCP JSON-RPC payload generation where `CallToolParams.Arguments` 
 - `internal/mcp/types.go`: removed `omitempty` tag from `CallToolParams.Arguments`.
 - `internal/mcp/manager.go`: ensured `args` is initialized to non-nil `map[string]any` before building `CallToolParams` so empty arguments strictly output `"arguments": {}`.
 - `internal/mcp/mcp_test.go`: added unit test `TestCallToolParams_EmptyArgumentsJSON`.
+- `internal/agent/loop.go`: added early system warning on `repeatCount >= 2` for no-op/list calls and enhanced `repetitiveLoopHint` for MCP list tools to explicitly direct the model to read individual files with MCP read/get tools.

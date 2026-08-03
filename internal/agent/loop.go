@@ -783,7 +783,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if repetitiveLoopErr == nil && repeatCount >= 3 && !isNoOpCall {
+				} else if repetitiveLoopErr == nil && ((repeatCount >= 2 && isNoOpCall) || repeatCount >= 3) {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. %s]", result, toolName, repeatCount, repetitiveLoopHint(toolName, a.registry))
 				}
 
@@ -1292,6 +1292,10 @@ func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
 	// If the tool is an MCP tool, suggest checking the MCP server or using a
 	// different MCP tool instead of looping.
 	if registry != nil && registry.MCPManager() != nil && registry.MCPManager().HasTool(toolName) {
+		lower := strings.ToLower(toolName)
+		if strings.Contains(lower, "list") || strings.Contains(lower, "search") {
+			return "You are repeating an MCP list/search tool with identical arguments. You already have the file listing above. To read a specific file from the list, use the matching MCP read/get tool (e.g. vault_get, vault_read) passing the file path as an argument. Do NOT repeat the list tool with identical arguments."
+		}
 		return "You are repeating the same MCP tool call. If the result is not what you expect, the MCP server may be misconfigured or the data may not exist. Use mcp_list_servers to check the server status, or try a different MCP tool. Do NOT fall back to workspace tools (list_files, read_file) — the data lives inside the MCP service, not in the workspace."
 	}
 	switch toolName {
