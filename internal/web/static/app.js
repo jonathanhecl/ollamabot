@@ -2143,12 +2143,11 @@ function renderModels() {
       </div>
       <div class="caps">${capBadges(model.capabilities, model)}</div>
       <div class="model-meta">
-        <div class="model-meta-info" style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center; font-size: 11.5px; color: var(--muted);">
+        <div class="model-meta-info">
           <span>ctx ${model.context_length ? escapeHtml(model.context_length.toLocaleString()) : "-"}</span>
-          ${model.size ? `<span>· disk ${formatBytes(model.size)}</span>` : ""}
-          ${model.modified_at ? `<span title="${escapeAttr(model.modified_at)}">· installed ${escapeHtml(formatDateShort(model.modified_at))}</span>` : ""}
+          ${model.modified_at ? `<span>· installed ${escapeHtml(formatDateShort(model.modified_at))}</span>` : ""}
         </div>
-        <div style="flex: 1; max-width: 140px;">
+        <div style="flex-shrink: 0; min-width: 120px; max-width: 160px;">
           ${hardwareBarHtml}
         </div>
       </div>

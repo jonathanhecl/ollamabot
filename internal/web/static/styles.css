@@ -1782,21 +1782,24 @@ textarea {
 
 .model-card .model-meta {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: flex-start;
-  gap: 4px;
-  font-size: 11px;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
   color: var(--muted);
   border-top: none;
   padding-top: 0;
-  margin-top: 0;
+  margin-top: 2px;
 }
 
 .model-meta-info {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .model-hardware-bar {
