@@ -163,6 +163,10 @@ func (r *Registry) getSessionStore() *sessions.Store {
 	return nil
 }
 
+func (r *Registry) SessionStore() *sessions.Store {
+	return r.getSessionStore()
+}
+
 // SetPlanProgressHandler assigns a callback fired when complete_plan_step advances.
 func (r *Registry) SetPlanProgressHandler(h PlanProgressHandler) {
 	r.planProgressHandler = h
@@ -999,7 +1003,7 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "sessions_list",
-			Description: "List previous chat sessions with metadata (session ID, title, model, creation date, last active date). Supports filtering by keyword ('query') or date range ('since_days', e.g. 7 for the past week). Use this to discover session IDs of past conversations.",
+			Description: "List previous chat sessions with metadata (session ID, title, model, creation date, last active date). Supports filtering by keyword ('query'), date range ('date_from' and 'date_to' in YYYY-MM-DD format), or relative days ('since_days', e.g. 7 for past week). Use this to discover session IDs of past conversations.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -1010,6 +1014,14 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					"since_days": map[string]any{
 						"type":        "integer",
 						"description": "Optional filter for sessions active within the last N days (e.g. 7 for past week).",
+					},
+					"date_from": map[string]any{
+						"type":        "string",
+						"description": "Optional start date filter in YYYY-MM-DD format (e.g. '2026-08-01').",
+					},
+					"date_to": map[string]any{
+						"type":        "string",
+						"description": "Optional end date filter in YYYY-MM-DD format (e.g. '2026-08-03').",
 					},
 					"limit": map[string]any{
 						"type":        "integer",
@@ -1026,17 +1038,25 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "sessions_search",
-			Description: "Search across all previous chat session message histories and titles for a specific keyword or phrase. Returns matching session IDs, titles, dates, and relevant message text snippets.",
+			Description: "Search across all previous chat session message histories and titles for specific keywords or phrases. Supports date filtering ('date_from' and 'date_to' in YYYY-MM-DD format, or 'since_days'). Returns matching session IDs, titles, dates, and relevant message text snippets.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"query": map[string]any{
 						"type":        "string",
-						"description": "Keyword or phrase to search for across past chat histories.",
+						"description": "Keywords or phrase to search for across past chat histories.",
 					},
 					"since_days": map[string]any{
 						"type":        "integer",
 						"description": "Optional filter for sessions active within the last N days (e.g. 7 for past week).",
+					},
+					"date_from": map[string]any{
+						"type":        "string",
+						"description": "Optional start date filter in YYYY-MM-DD format (e.g. '2026-08-01').",
+					},
+					"date_to": map[string]any{
+						"type":        "string",
+						"description": "Optional end date filter in YYYY-MM-DD format (e.g. '2026-08-03').",
 					},
 					"limit": map[string]any{
 						"type":        "integer",
@@ -2179,18 +2199,17 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if err != nil {
 			return "", fmt.Errorf("failed to list sessions: %w", err)
 		}
-		sinceDays := asInt(args["since_days"])
+		fromTime, toTime, dateErr := parseDateFilter(args)
+		if dateErr != nil {
+			return "", dateErr
+		}
+
 		limit := asInt(args["limit"])
 		if limit <= 0 {
 			limit = 20
 		}
 		query, _ := args["query"].(string)
 		query = strings.ToLower(strings.TrimSpace(query))
-
-		var cutoff time.Time
-		if sinceDays > 0 {
-			cutoff = time.Now().AddDate(0, 0, -sinceDays)
-		}
 
 		var matches []sessions.Session
 		for _, s := range list {
@@ -2201,7 +2220,10 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			if t.IsZero() {
 				t = s.CreatedAt
 			}
-			if !cutoff.IsZero() && t.Before(cutoff) {
+			if !fromTime.IsZero() && t.Before(fromTime) {
+				continue
+			}
+			if !toTime.IsZero() && t.After(toTime) {
 				continue
 			}
 			if query != "" {
@@ -2235,10 +2257,14 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			}
 			dateStr := t.Format("2006-01-02 15:04:05")
 			title := s.Title
-			if title == "" {
+			preview := ""
+			if sessions.IsDefaultTitle(title) || title == "" {
 				title = "(Untitled)"
+				if p := getSessionFirstUserMessage(store, s.ID); p != "" {
+					preview = fmt.Sprintf(" | Preview: %q", p)
+				}
 			}
-			fmt.Fprintf(&sb, "- ID: %s | Title: %q | Last Active: %s | Model: %s\n", s.ID, title, dateStr, s.Model)
+			fmt.Fprintf(&sb, "- ID: %s | Title: %q%s | Last Active: %s | Model: %s\n", s.ID, title, preview, dateStr, s.Model)
 		}
 		return sb.String(), nil
 	case "sessions_search":
@@ -2251,18 +2277,18 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		if query == "" {
 			return "", fmt.Errorf("missing required argument: query")
 		}
-		lowerQuery := strings.ToLower(query)
 
-		sinceDays := asInt(args["since_days"])
+		fromTime, toTime, dateErr := parseDateFilter(args)
+		if dateErr != nil {
+			return "", dateErr
+		}
+
 		limit := asInt(args["limit"])
 		if limit <= 0 {
 			limit = 10
 		}
 
-		var cutoff time.Time
-		if sinceDays > 0 {
-			cutoff = time.Now().AddDate(0, 0, -sinceDays)
-		}
+		tokens := strings.Fields(strings.ToLower(query))
 
 		list, err := store.List()
 		if err != nil {
@@ -2284,7 +2310,10 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			if t.IsZero() {
 				t = item.CreatedAt
 			}
-			if !cutoff.IsZero() && t.Before(cutoff) {
+			if !fromTime.IsZero() && t.Before(fromTime) {
+				continue
+			}
+			if !toTime.IsZero() && t.After(toTime) {
 				continue
 			}
 
@@ -2294,7 +2323,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			}
 
 			var snippets []string
-			if strings.Contains(strings.ToLower(fullSess.Title), lowerQuery) {
+			if matchAllTokens(fullSess.Title, tokens) {
 				snippets = append(snippets, fmt.Sprintf("[Title Match] %s", fullSess.Title))
 			}
 
@@ -2306,15 +2335,19 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				if msg.Role == "system" {
 					continue
 				}
-				if strings.Contains(strings.ToLower(msg.Content), lowerQuery) {
+				if matchAllTokens(msg.Content, tokens) {
 					snippet := msg.Content
 					if len(snippet) > 200 {
-						matchIdx := strings.Index(strings.ToLower(snippet), lowerQuery)
+						firstTok := tokens[0]
+						matchIdx := strings.Index(strings.ToLower(snippet), firstTok)
+						if matchIdx < 0 {
+							matchIdx = 0
+						}
 						start := matchIdx - 60
 						if start < 0 {
 							start = 0
 						}
-						end := matchIdx + len(lowerQuery) + 60
+						end := matchIdx + len(firstTok) + 60
 						if end > len(snippet) {
 							end = len(snippet)
 						}
@@ -2395,20 +2428,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			validMsgs = validMsgs[len(validMsgs)-maxMsgs:]
 		}
 
-		var sb strings.Builder
-		t := sess.LastMessageAt
-		if t.IsZero() {
-			t = sess.UpdatedAt
-		}
-		if t.IsZero() {
-			t = sess.CreatedAt
-		}
-		fmt.Fprintf(&sb, "--- Session ID: %s | Title: %q | Model: %s | Last Active: %s ---\n", sess.ID, sess.Title, sess.Model, t.Format("2006-01-02 15:04:05"))
-		if sess.GoalObjective != "" {
-			fmt.Fprintf(&sb, "Goal Objective: %s\n", sess.GoalObjective)
-		}
-		sb.WriteString("\n")
-
+		var bodyLines []string
 		for _, msg := range validMsgs {
 			role := strings.ToUpper(msg.Role)
 			ts := msg.Timestamp
@@ -2422,7 +2442,40 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			if content == "" && len(msg.Steps) > 0 {
 				content = fmt.Sprintf("[%d step(s) executed]", len(msg.Steps))
 			}
-			fmt.Fprintf(&sb, "[%s] (%s):\n%s\n\n", role, ts, content)
+			bodyLines = append(bodyLines, fmt.Sprintf("[%s] (%s):\n%s\n\n", role, ts, content))
+		}
+
+		t := sess.LastMessageAt
+		if t.IsZero() {
+			t = sess.UpdatedAt
+		}
+		if t.IsZero() {
+			t = sess.CreatedAt
+		}
+		header := fmt.Sprintf("--- Session ID: %s | Title: %q | Model: %s | Last Active: %s ---\n", sess.ID, sess.Title, sess.Model, t.Format("2006-01-02 15:04:05"))
+		if sess.GoalObjective != "" {
+			header += fmt.Sprintf("Goal Objective: %s\n", sess.GoalObjective)
+		}
+		header += "\n"
+
+		const maxTotalChars = 12000
+		totalLen := len(header)
+		startIdx := 0
+		for i := len(bodyLines) - 1; i >= 0; i-- {
+			if totalLen+len(bodyLines[i]) > maxTotalChars {
+				startIdx = i + 1
+				break
+			}
+			totalLen += len(bodyLines[i])
+		}
+
+		var sb strings.Builder
+		sb.WriteString(header)
+		if startIdx > 0 {
+			fmt.Fprintf(&sb, "[SYSTEM NOTE: Truncated %d earlier message(s) to stay within character limit (%d max chars)]\n\n", startIdx, maxTotalChars)
+		}
+		for i := startIdx; i < len(bodyLines); i++ {
+			sb.WriteString(bodyLines[i])
 		}
 		return sb.String(), nil
 	default:
@@ -2445,6 +2498,62 @@ func asInt(v any) int {
 	default:
 		return 0
 	}
+}
+
+func parseDateFilter(args map[string]any) (time.Time, time.Time, error) {
+	var fromTime, toTime time.Time
+	if sinceDays := asInt(args["since_days"]); sinceDays > 0 {
+		fromTime = time.Now().AddDate(0, 0, -sinceDays)
+	}
+
+	if dateFromStr, ok := args["date_from"].(string); ok && strings.TrimSpace(dateFromStr) != "" {
+		t, err := time.Parse("2006-01-02", strings.TrimSpace(dateFromStr))
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_from format (expected YYYY-MM-DD): %w", err)
+		}
+		fromTime = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+	}
+
+	if dateToStr, ok := args["date_to"].(string); ok && strings.TrimSpace(dateToStr) != "" {
+		t, err := time.Parse("2006-01-02", strings.TrimSpace(dateToStr))
+		if err != nil {
+			return time.Time{}, time.Time{}, fmt.Errorf("invalid date_to format (expected YYYY-MM-DD): %w", err)
+		}
+		toTime = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 999999999, time.Local)
+	}
+
+	return fromTime, toTime, nil
+}
+
+func getSessionFirstUserMessage(store *sessions.Store, id string) string {
+	sess, err := store.Get(id)
+	if err != nil || len(sess.Messages) == 0 {
+		return ""
+	}
+	for _, raw := range sess.Messages {
+		var msg sessions.RawMsg
+		if err := json.Unmarshal(raw, &msg); err == nil && msg.Role == "user" && strings.TrimSpace(msg.Content) != "" {
+			content := strings.ReplaceAll(strings.TrimSpace(msg.Content), "\n", " ")
+			if len(content) > 90 {
+				return content[:90] + "..."
+			}
+			return content
+		}
+	}
+	return ""
+}
+
+func matchAllTokens(text string, tokens []string) bool {
+	if len(tokens) == 0 {
+		return true
+	}
+	lower := strings.ToLower(text)
+	for _, tok := range tokens {
+		if !strings.Contains(lower, tok) {
+			return false
+		}
+	}
+	return true
 }
 
 // maskSensitiveMap returns a copy of the map with every value masked, keeping

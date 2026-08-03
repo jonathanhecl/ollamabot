@@ -1,20 +1,20 @@
 # Progress
 
-## 2026-08-03 — Session history query tools: sessions_list, sessions_search, session_read
+## 2026-08-03 — Session history query tools: flexible date filtering, previews, tokenized search, context limits
 
-Added read-only tools allowing the agent to list, search, and inspect past chat sessions when requested by the user:
+Enhanced read-only session query tools (`sessions_list`, `sessions_search`, `session_read` in `internal/tools/tools.go`, `internal/agent/loop.go`):
 
-### 1. Read-Only Session Query Tools (`internal/tools/tools.go`)
-- `sessions_list`: Lists previous chat sessions with metadata (ID, title, model, last active timestamp) and supports filtering by keyword (`query`) and time range (`since_days`, e.g. 7 for past week).
-- `sessions_search`: Searches across past session titles and full message histories for specific text keywords/phrases, returning matching session IDs and message snippets.
-- `session_read`: Reads the full message transcript (user and assistant turns) of a specific past session by `session_id`. Strictly read-only; cannot modify or reply to old sessions.
+### 1. Flexible Date Filtering & Snippet Previews (`internal/tools/tools.go`)
+- **Date Filtering (`date_from`, `date_to`, `since_days`)**: `sessions_list` and `sessions_search` support filtering by exact dates (`YYYY-MM-DD`), date ranges, or relative days (`since_days`).
+- **First Message Snippet Previews**: `sessions_list` extracts a 90-character preview snippet of the first user message for sessions with empty or default titles (e.g. *"New session"*, *"Telegram Chat"*), making untitled sessions recognizable.
 
-### 2. Parallel Safety & System Prompt Integration (`internal/agent/loop.go`)
-- Marked `sessions_list`, `sessions_search`, and `session_read` as parallel-safe read-only tools in `isParallelSafeTool()`.
-- System prompt updated with explicit instructions explaining how and when to use session query tools.
+### 2. Multi-word Tokenized Search & Length Safeguards (`internal/tools/tools.go`)
+- **Tokenized Search**: `sessions_search` splits queries into words/tokens and matches messages containing all search terms even if non-contiguous.
+- **Context Limit Protection**: `session_read` caps output string length at ~12,000 characters (~3k tokens), truncating older turns with a `[SYSTEM NOTE]` when transcripts exceed limits.
 
-### 3. Tests (`internal/tools/sessions_tools_test.go`)
-- Unit tests covering `sessions_list` (date and query filters), `sessions_search` (message content matching), and `session_read` (transcript formatting).
+### 3. Conditional System Prompt & Tests (`internal/agent/loop.go`, `internal/tools/sessions_tools_test.go`)
+- System prompt instruction in `loop.go` is now conditionally injected only when `sessionStore` is configured.
+- Comprehensive unit tests covering `date_from`/`date_to` range filtering, untitled session previews, tokenized multi-word search, and transcript truncation.
 
 ## 2026-08-03 — MCP tool optimization: origin enrichment, active server context, schema fallback, empty result handling
 
