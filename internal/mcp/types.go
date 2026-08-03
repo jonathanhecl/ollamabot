@@ -79,7 +79,7 @@ type MCPInputSchema struct {
 // CallToolParams represents parameters for 'tools/call' method.
 type CallToolParams struct {
 	Name      string         `json:"name"`
-	Arguments map[string]any `json:"arguments,omitempty"`
+	Arguments map[string]any `json:"arguments"`
 }
 
 // CallToolResult represents results from 'tools/call' method.

@@ -390,3 +390,18 @@ Adjusted tool descriptions in `internal/tools/tools.go` to steer the model:
   provided and to prefer `fetch_webpage` for URLs.
 - `fetch_webpage`: now explicitly mentions it should be used when the user
   supplies a URL to analyze, summarize, or save.
+
+## 2026-08-03 — Telegram MCP tool source labels alignment with Web UI
+
+Updated Telegram channel tool execution and approval prompts to display the exact MCP server source (e.g. `(mcp:obsidian)`) matching the Web interface instead of generic `(MCP)`.
+
+- `internal/telegram/bot.go`: `OnToolStart` formats tool execution messages with the full `source` label (e.g. `vault_list (mcp:obsidian)`). `RequestApproval` includes `(mcp:<server>)` in the confirmation dialog.
+- `internal/telegram/bot_test.go`: added unit tests for MCP tool label formatting with source labels.
+
+## 2026-08-03 — Fix MCP tool execution with empty arguments (`arguments: {}`)
+
+Fixed a bug in MCP JSON-RPC payload generation where `CallToolParams.Arguments` had `json:"arguments,omitempty"`. When calling tools with empty arguments `{}` (such as `vault_list`), Go's JSON encoder omitted the `arguments` key entirely (`{"name": "vault_list"}`), causing strict MCP SDKs (e.g. Node/Zod validators) to reject calls with `Input validation error: Invalid arguments ... received undefined`.
+
+- `internal/mcp/types.go`: removed `omitempty` tag from `CallToolParams.Arguments`.
+- `internal/mcp/manager.go`: ensured `args` is initialized to non-nil `map[string]any` before building `CallToolParams` so empty arguments strictly output `"arguments": {}`.
+- `internal/mcp/mcp_test.go`: added unit test `TestCallToolParams_EmptyArgumentsJSON`.

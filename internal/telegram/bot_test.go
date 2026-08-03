@@ -96,3 +96,47 @@ func TestGetNumberEmoji(t *testing.T) {
 		}
 	}
 }
+
+func TestMCPToolLabelFormatting(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     any
+		source   string
+		expected string
+	}{
+		{
+			name:     "vault_list",
+			args:     nil,
+			source:   "mcp:obsidian",
+			expected: "vault_list (mcp:obsidian)",
+		},
+		{
+			name:     "execute_sql",
+			args:     nil,
+			source:   "mcp:sqlite",
+			expected: "execute_sql (mcp:sqlite)",
+		},
+		{
+			name:     "web_search",
+			args:     nil,
+			source:   "internal",
+			expected: "web_search",
+		},
+		{
+			name:     "custom_tool",
+			args:     nil,
+			source:   "mcp",
+			expected: "custom_tool (mcp)",
+		},
+	}
+
+	for _, tt := range tests {
+		toolLabel := getTelegramToolLabel(tt.name, tt.args)
+		if tt.source != "" && tt.source != "internal" {
+			toolLabel = toolLabel + " (" + tt.source + ")"
+		}
+		if toolLabel != tt.expected {
+			t.Errorf("For %s (%s), expected %q, got %q", tt.name, tt.source, tt.expected, toolLabel)
+		}
+	}
+}

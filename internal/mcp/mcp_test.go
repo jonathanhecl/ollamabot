@@ -152,6 +152,21 @@ func TestClient(t *testing.T) {
 	}
 }
 
+func TestCallToolParams_EmptyArgumentsJSON(t *testing.T) {
+	params := CallToolParams{
+		Name:      "vault_list",
+		Arguments: make(map[string]any),
+	}
+	bytes, err := json.Marshal(params)
+	if err != nil {
+		t.Fatalf("failed to marshal CallToolParams: %v", err)
+	}
+	expected := `{"name":"vault_list","arguments":{}}`
+	if string(bytes) != expected {
+		t.Errorf("expected JSON %s, got %s", expected, string(bytes))
+	}
+}
+
 func TestManager(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "mcp-test")
 	if err != nil {

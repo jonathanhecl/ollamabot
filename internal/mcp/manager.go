@@ -317,6 +317,10 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 		}
 	}
 
+	if args == nil {
+		args = make(map[string]any)
+	}
+
 	var callResult CallToolResult
 	params := CallToolParams{
 		Name:      toolName,
