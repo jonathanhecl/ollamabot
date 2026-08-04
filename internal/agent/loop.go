@@ -743,6 +743,17 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 				}
 
+				// Detect error states, denials/timeouts, and MCP schema validation errors early
+				isError := terr != nil || strings.HasPrefix(result, "Error")
+				isDeniedOrTimeout := strings.Contains(result, "Denied by user") || strings.Contains(result, "approval timeout") || strings.Contains(result, "approval failed")
+				isMCPValidationError := strings.Contains(result, "MCP error -32602") || strings.Contains(result, "Input validation error")
+
+				if isDeniedOrTimeout {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Tool execution was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool call. Inform the user that the action was not approved and ask how to proceed.]", result)
+				} else if isMCPValidationError {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The MCP tool rejected the provided arguments (schema validation error -32602). Do NOT retry with identical arguments; verify tool parameter schema or try a different approach.]", result)
+				}
+
 				// Check for repetitive loops.
 				signature, label := sessions.FormatApprovalSignature(toolName, params, a.config().Workspace)
 				key := toolName + ":" + signature
@@ -752,18 +763,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				globalCount := toolGlobalCounts[toolName]
 				var repetitiveLoopErr error
 
-				// No-op calls (empty or path-only args with no meaningful parameters)
-				// are almost always a stuck model. Abort earlier for those.
+				// Determine abort threshold dynamically based on call health.
+				// Errored, denied/timed out, or schema-invalid calls abort much earlier (2-3 retries)
+				// to prevent wasting time in multi-minute prompt evaluation loops.
 				isNoOpCall := isNoOpToolCall(toolName, params)
-				// Network tools are expensive and the model tends to cycle
-				// through many different URLs/queries, each under the per-
-				// signature threshold. Use a lower per-signature threshold and
-				// a global cap to stop this pattern.
 				isNetworkTool := isNetworkFetchTool(toolName)
 				abortThreshold := 5
-				if isNoOpCall {
-					abortThreshold = 3
-				} else if isNetworkTool {
+				if isDeniedOrTimeout || isMCPValidationError || isError {
+					abortThreshold = 2
+				} else if isNoOpCall || isNetworkTool {
 					abortThreshold = 3
 				}
 
@@ -783,12 +791,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if repetitiveLoopErr == nil && ((repeatCount >= 2 && isNoOpCall) || repeatCount >= 3) {
+				} else if repetitiveLoopErr == nil && ((repeatCount >= 2 && isNoOpCall) || repeatCount >= 3 || (repeatCount >= 2 && isError)) {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. %s]", result, toolName, repeatCount, repetitiveLoopHint(toolName, a.registry))
 				}
 
 				// Remember observed paths
-				isError := terr != nil || strings.HasPrefix(result, "Error")
 				a.paths.RememberToolResult(toolName, params, result, isError)
 				if !isError {
 					switch toolName {
