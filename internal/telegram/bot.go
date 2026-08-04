@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -636,6 +637,34 @@ func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, n
 		return false
 	}
 
+	// Ultra-fast Embedding Vector Cosine Similarity Check (10-20ms)
+	embedModel := b.config().OllamaModelEmbed
+	if strings.TrimSpace(embedModel) != "" {
+		var lastUserText string
+		for i := len(history) - 1; i >= 0; i-- {
+			if history[i].Role == "user" && strings.TrimSpace(history[i].Content) != "" {
+				lastUserText = history[i].Content
+				break
+			}
+		}
+		if lastUserText != "" {
+			ctxEmbed, cancelEmbed := context.WithTimeout(ctx, 2*time.Second)
+			defer cancelEmbed()
+
+			embedResp, err := b.client.Embed(ctxEmbed, ollama.EmbedRequest{
+				Model: embedModel,
+				Input: []string{lastUserText, newMessage},
+			})
+			if err == nil && len(embedResp.Embeddings) >= 2 {
+				score := calculateCosineSimilarity(embedResp.Embeddings[0], embedResp.Embeddings[1])
+				log.Printf("[Telegram Relation Check] Vector Embedding Cosine Similarity: %.3f (threshold: 0.55)", score)
+				return score >= 0.55
+			} else if err != nil {
+				log.Printf("[Telegram Relation Check] Embedding check failed: %v (falling back to LLM check)", err)
+			}
+		}
+	}
+
 	modelToUse := b.config().OllamaModelSubagent
 	if strings.TrimSpace(modelToUse) == "" {
 		modelToUse = b.config().OllamaDefaultModel
@@ -678,8 +707,8 @@ New User Message:
 		Options: map[string]any{"temperature": 0},
 	})
 	if err != nil {
-		log.Printf("[Telegram Relation Check] FAILED: %v", err)
-		return false // fallback: not related, start new session
+		log.Printf("[Telegram Relation Check] FAILED: %v. Starting new session.", err)
+		return false // fallback: not related, start new session instantly
 	}
 
 	rawText := strings.TrimSpace(resp.Message.Content)
@@ -693,6 +722,25 @@ New User Message:
 	// Fallback parsing for backwards compatibility or model non-compliance
 	ans := strings.ToLower(rawText)
 	return strings.Contains(ans, "yes") || strings.Contains(ans, "true")
+}
+
+func calculateCosineSimilarity(a, b []float64) float64 {
+	var dot, normA, normB float64
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		av := a[i]
+		bv := b[i]
+		dot += av * bv
+		normA += av * av
+		normB += bv * bv
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }
 
 func snapshotPath() string {
