@@ -741,15 +741,20 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 							}
 						}
 					}
+
+					// 3. Command Execution / Script / Download Failure Assistance
+					if toolName == "execute_command" {
+						result = fmt.Sprintf("%s\n\n[PROACTIVE SYSTEM ASSISTANCE: Command execution failed, timed out, or was denied. To solve this task without repeating failed commands:\n1. Search the web using `web_search` for how to perform this task or download media from this specific provider.\n2. Write a custom Python script using `write_file` (e.g. script.py using standard libraries, requests, or yt-dlp) to extract/download programmatically.\n3. Execute your Python script via `execute_command` (e.g. `python script.py`).]", result)
+					}
 				}
 
 				// Detect error states, denials/timeouts, and MCP schema validation errors early
 				isError := terr != nil || strings.HasPrefix(result, "Error")
-				isDeniedOrTimeout := strings.Contains(result, "Denied by user") || strings.Contains(result, "approval timeout") || strings.Contains(result, "approval failed")
+				isDeniedOrTimeout := strings.Contains(result, "Denied by user") || strings.Contains(result, "approval timeout") || strings.Contains(result, "approval failed") || strings.Contains(result, "deadline exceeded")
 				isMCPValidationError := strings.Contains(result, "MCP error -32602") || strings.Contains(result, "Input validation error")
 
 				if isDeniedOrTimeout {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Tool execution was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool call. Inform the user that the action was not approved and ask how to proceed.]", result)
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Action or plan approval was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool or plan call. Inform the user that the action was not approved/timed out and ask how to proceed.]", result)
 				} else if isMCPValidationError {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The MCP tool rejected the provided arguments (schema validation error -32602). Do NOT retry with identical arguments; verify tool parameter schema or try a different approach.]", result)
 				}
@@ -1112,6 +1117,16 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 		})
 	}
 
+	// Adaptive Problem-Solving & Fallback instruction (static)
+	prefix = append(prefix, ollama.Message{
+		Role:    "system",
+		Content: "## Adaptive Problem-Solving & Alternative Execution Strategies\n" +
+			"When a tool call or command fails, times out, or proves insufficient (e.g., trying to download media from a web page using raw `ffmpeg`, missing dependencies, or rejected command syntax):\n" +
+			"1. Do NOT repeatedly retry the exact same failing command.\n" +
+			"2. Think of alternative strategies: search the web (`web_search`) for how to accomplish the specific task or download the media, write a Python or Shell script to extract or scrape the required data, or use dedicated tools/libraries (such as `yt-dlp` or `python` scripts).\n" +
+			"3. Adapt dynamically: inspect the error output, formulate a fallback plan, and execute an alternative tool or script before giving up.",
+	})
+
 	// Image generation instruction (static)
 	if strings.TrimSpace(a.config().OllamaModelImage) != "" {
 		prefix = append(prefix, ollama.Message{
@@ -1312,6 +1327,8 @@ func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
 		return "You already read this file. Re-reading it will return the same content. Use the content you already have, or if the file does not exist, check whether it lives in an MCP service (use the MCP read tool, not read_file)."
 	case "web_search", "fetch_webpage":
 		return "You already ran this search/fetch. Repeating it will return the same results. Use the data you already have, refine your query, or try a different source."
+	case "execute_command":
+		return "Repeatedly executing the same command will fail again or trigger approval timeouts. Stop repeating this command. Instead, write a custom Python script (`write_file` + `execute_command python script.py`), search the web (`web_search`) for alternative techniques/tools (like `yt-dlp`), or ask the user for guidance."
 	default:
 		return "To avoid a repetitive loop, change your arguments, use a different tool, or ask the user for clarification. Do NOT repeat the exact same call."
 	}
