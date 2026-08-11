@@ -1393,7 +1393,7 @@ func isParallelSafeTool(toolName string, params map[string]any, toolSource strin
 	// Everything else (write_file, edit_file, apply_diff, execute_command,
 	// memory_add, memory_delete, present_plan, ask_clarification,
 	// complete_plan_step, defer_plan_continuation, generate_image,
-	// send_files, mcp_add_server, mcp_delete_server, TodoWrite, etc.)
+	// send_files, mcp_add_server, mcp_delete_server, todo_write, etc.)
 	// is sequential.
 	return false
 }

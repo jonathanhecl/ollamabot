@@ -537,11 +537,11 @@ Your goal:
 2. Pay HIGHEST priority to explicit user text feedback (corrections, preferences, praise). These are direct instructions from the user about what to improve or remember.
 3. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
 4. Identify user preferences, tastes, or durable technical facts/decisions.
-   - For general user profile info (name, language, coding styles), update 'agent/USER_PROFILE.md' using 'read_file' and 'Write' or 'Edit'.
+   - For general user profile info (name, language, coding styles), update 'agent/USER_PROFILE.md' using 'read_file' and 'write_file' or 'edit_file'.
    - For specific durable facts, project decisions, or debugging solutions, call 'memory_add' to store them into long-term vector memory for future recall.
 5. Call the appropriate tools to make these improvements. You have access to:
    - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent.
-   - 'read_file', 'Write', 'Edit' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
+   - 'read_file', 'write_file', 'edit_file' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
    - 'memory_add' to store durable facts, key decisions, or user preferences into long-term memory.
 
 If no changes are needed to skills, memory, or the user profile, respond explaining why, and do not call any tools.
@@ -577,7 +577,7 @@ Keep the user profile ('agent/USER_PROFILE.md') structured:
 - Tastes & Interests
 - General Context & Past Decisions
 
-Log all updates you make in the audit log ('skills/audit_log.md'). You can write or edit this file using 'Write' or 'Edit' tools. Each log entry must include:
+Log all updates you make in the audit log ('skills/audit_log.md'). You can write or edit this file using 'write_file' or 'edit_file' tools. Each log entry must include:
 - Date/time
 - Chat Session ID(s) analyzed
 - Issue or user preferences detected

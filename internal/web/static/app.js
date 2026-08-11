@@ -3500,11 +3500,11 @@ function getToolDisplayName(name, parsedArgs) {
       case "read_file":
         if (parsedArgs.path) return `read_file("${parsedArgs.path}")`;
         break;
-      case "Write":
-        if (parsedArgs.file_path) return `Write("${parsedArgs.file_path}")`;
+      case "write_file":
+        if (parsedArgs.file_path) return `write_file("${parsedArgs.file_path}")`;
         break;
-      case "Edit":
-        if (parsedArgs.file_path) return `Edit("${parsedArgs.file_path}")`;
+      case "edit_file":
+        if (parsedArgs.file_path) return `edit_file("${parsedArgs.file_path}")`;
         break;
       case "execute_command":
         if (parsedArgs.command) {

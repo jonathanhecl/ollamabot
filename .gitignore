@@ -35,8 +35,14 @@ go.work.sum
 /memory/
 /sessions/
 /workspace/
-/agent/
 /skills/
+
+# Runtime agent identity files (generated relative to CWD; must not be committed)
+/agent/
+**/agent/SOUL.md
+**/agent/USER_PROFILE.md
+**/agent/backups/
+**/agent/backups/*
 
 # Frontend/Playwright test artifacts
 /tests/browser/node_modules/
@@ -51,3 +57,6 @@ go.work.sum
 /tests/browser/playwright-report/
 /playwright-report/
 /test-results/
+
+# Go test-generated export artifact
+/internal/tools/exports/test_export.md

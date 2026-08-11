@@ -1350,7 +1350,7 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 				Summary: fmt.Sprintf("Executing MCP tool %q from third-party server.", name),
 			}
 		}
-	} else if name == "Write" || name == "Edit" || name == "execute_command" {
+	} else if name == "write_file" || name == "edit_file" || name == "apply_diff" || name == "execute_command" {
 		needsApprovalCheck = true
 		assessment = ClassifyToolRisk(name, args, r.workspace)
 	} else if name == "mcp_add_server" {

@@ -264,7 +264,7 @@ func TestAgentRunStopsRepeatedToolLoop(t *testing.T) {
 					ToolCalls: []ollama.ToolCall{{
 						Type: "function",
 						Function: ollama.ToolFunction{
-							Name:      "TodoWrite",
+							Name:      "todo_write",
 							Arguments: toolArgs,
 						},
 					}},
