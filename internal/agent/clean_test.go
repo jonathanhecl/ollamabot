@@ -81,3 +81,33 @@ func TestStreamThinkingFilter_UnterminatedBlock(t *testing.T) {
 		t.Fatalf("got %q, want %q", out, "visible ")
 	}
 }
+
+func TestStripToolCallEnvelopes(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", ""},
+		{"no tags", "Hello world", "Hello world"},
+		{"invoke envelope", `<invoke name="write_file">{"file_path":"a.txt","contents":"hello"}</invoke>`, ""},
+		{"invoke with leading text", "Let me write that.\n\n<invoke name=\"write_file\">{\"file_path\":\"a.txt\"}</invoke>", "Let me write that."},
+		{"tool_call envelope", `<tool_call name="edit_file">{"file_path":"b.go"}</tool_call>`, ""},
+		{"custom tag envelope", `<write>{"file_path":"a.txt","contents":"hi"}</write>`, ""},
+		{"custom tag case-insensitive", `<WRITE>{"file_path":"a.txt","contents":"hi"}</WRITE>`, ""},
+		{"custom tag edit", `<edit>{"file_path":"b.go"}</edit>`, ""},
+		{"mixed with text", "Before <invoke name=\"read_file\">{\"path\":\"x.go\"}</invoke> After", "Before  After"},
+		{"unmapped custom tag preserved", "<div class=\"x\">content</div>", "<div class=\"x\">content</div>"},
+		{"unmapped invoke-style preserved", "<invoke not a tool call>", "<invoke not a tool call>"},
+		{"full tool tag not mapped to raw envelope", "<write_file>{\"file_path\":\"a.txt\"}</write_file>", "<write_file>{\"file_path\":\"a.txt\"}</write_file>"},
+		{"multiple envelopes", "<invoke name=\"read_file\">{\"path\":\"a\"}</invoke>\n<invoke name=\"list_files\">{}</invoke>", ""},
+		{"whitespace only", "   ", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := StripToolCallEnvelopes(c.in); got != c.want {
+				t.Fatalf("StripToolCallEnvelopes(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}

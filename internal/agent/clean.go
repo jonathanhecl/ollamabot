@@ -31,6 +31,66 @@ func CleanThinkingTokens(text string) string {
 	return strings.TrimSpace(cleaned)
 }
 
+// toolCallEnvelopePatterns match the XML tool-call envelopes that some models
+// emit instead of (or in addition to) native tool_calls. When the agent recovers
+// a tool call via the XML fallback, these envelopes must be removed from the
+// stored assistant content; otherwise the model sees its own <invoke>...</invoke>
+// in the conversation history on the next iteration and repeats the same call,
+// producing an infinite same-tool/same-argument loop.
+var (
+	invokeEnvelopePattern   = regexp.MustCompile(`(?is)<invoke[^>]*>.*?</invoke\s*>`)
+	toolCallEnvelopePattern = regexp.MustCompile(`(?is)<tool_call[^>]*>.*?</tool_call\s*>`)
+	customTagOpenPattern    = regexp.MustCompile(`(?is)<([A-Za-z_][A-Za-z0-9_]*)[^>]*>`)
+)
+
+// StripToolCallEnvelopes removes XML tool-call envelopes (<invoke>...</invoke>,
+// <tool_call>...</tool_call>, and <TOOLNAME>...</TOOLNAME> for known tool tags)
+// from assistant text. It is applied to the stored assistant content whenever a
+// tool call was recovered through the XML fallback, so the conversation history
+// the model sees on the next iteration is clean and does not prompt it to
+// re-issue the call. Only the named <invoke>/<tool_call> envelopes and custom
+// tags that normalize to a known tool name are removed; other markup (e.g. HTML)
+// is left untouched.
+func StripToolCallEnvelopes(text string) string {
+	if text == "" {
+		return text
+	}
+	cleaned := invokeEnvelopePattern.ReplaceAllString(text, "")
+	cleaned = toolCallEnvelopePattern.ReplaceAllString(cleaned, "")
+
+	// Remove custom <TOOLNAME>...</TOOLNAME> envelopes, but only for tags that
+	// normalize to a known tool name. Other markup is left untouched.
+	var kept strings.Builder
+	rest := cleaned
+	for {
+		loc := customTagOpenPattern.FindStringSubmatchIndex(rest)
+		if loc == nil {
+			kept.WriteString(rest)
+			break
+		}
+		// Keep everything before the opening tag.
+		kept.WriteString(rest[:loc[0]])
+		tag := rest[loc[2]:loc[3]]
+		norm := strings.ReplaceAll(strings.ToLower(tag), "_", "")
+		if _, ok := toolNameMapping[norm]; !ok {
+			// Not a tool envelope: keep the opening tag and continue after it.
+			kept.WriteString(rest[:loc[1]])
+			rest = rest[loc[1]:]
+			continue
+		}
+		closeTag := "</" + tag + ">"
+		idx := strings.Index(strings.ToLower(rest[loc[1]:]), strings.ToLower(closeTag))
+		if idx < 0 {
+			// Unclosed tool envelope: keep the rest verbatim.
+			kept.WriteString(rest[loc[1]:])
+			break
+		}
+		end := loc[1] + idx + len(closeTag)
+		rest = rest[end:]
+	}
+	return strings.TrimSpace(kept.String())
+}
+
 // StreamThinkingFilter incrementally strips residual thinking tags from streamed
 // content. Because tags may be split across multiple deltas, the filter holds back
 // any trailing text that could be the beginning of a thinking tag until it can

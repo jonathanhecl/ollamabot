@@ -496,6 +496,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 						Arguments: argsJSON,
 					},
 				})
+				// Strip the XML envelope from the stored assistant content. Keeping
+				// <invoke>...</invoke> in the history makes the model see its own
+				// tool call on the next iteration and re-issue it endlessly.
+				assistantText = StripToolCallEnvelopes(assistantText)
 			} else if errMsg, malformed := detectMalformedXMLFallback(assistantText); malformed {
 				messages = append(messages, ollama.Message{
 					Role:    "system",
@@ -769,11 +773,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				var repetitiveLoopErr error
 
 				// Determine abort threshold dynamically based on call health.
-				// Errored, denied/timed out, or schema-invalid calls abort much earlier (2-3 retries)
+				// Errored, denied/timed out, or schema-invalid calls abort much earlier (2 retries)
 				// to prevent wasting time in multi-minute prompt evaluation loops.
 				isNoOpCall := isNoOpToolCall(toolName, params)
 				isNetworkTool := isNetworkFetchTool(toolName)
-				abortThreshold := 5
+				abortThreshold := 3
 				if isDeniedOrTimeout || isMCPValidationError || isError {
 					abortThreshold = 2
 				} else if isNoOpCall || isNetworkTool {
@@ -796,7 +800,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if repetitiveLoopErr == nil && ((repeatCount >= 2 && isNoOpCall) || repeatCount >= 3 || (repeatCount >= 2 && isError)) {
+				} else if repetitiveLoopErr == nil && repeatCount >= 2 {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called tool '%s' with the identical arguments %d times. %s]", result, toolName, repeatCount, repetitiveLoopHint(toolName, a.registry))
 				}
 
