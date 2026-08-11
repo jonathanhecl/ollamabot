@@ -290,6 +290,23 @@ func (sm *SleepManager) processNextQueuedTask(ctx context.Context) {
 	}
 }
 
+// requeueSessions puts session IDs back at the front of the task queue so they
+// are retried on a later tick. It is used when a learning cycle cannot start
+// (already learning, or the shared background slot is busy), preventing queued
+// sessions from being silently dropped.
+func (sm *SleepManager) requeueSessions(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	prepend := make([]Subtask, 0, len(ids))
+	for _, id := range ids {
+		prepend = append(prepend, Subtask{Type: "analyze_session", TargetID: id})
+	}
+	sm.taskQueue = append(prepend, sm.taskQueue...)
+}
+
 func (sm *SleepManager) LoadState() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -384,6 +401,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 	sm.mu.Lock()
 	if sm.isLearning {
 		sm.mu.Unlock()
+		sm.requeueSessions(sessionsToAnalyze)
 		return
 	}
 	sm.isLearning = true
@@ -399,12 +417,18 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 			sm.learnCancel = nil
 		}
 		sm.mu.Unlock()
+		cancel()
+		// Put the sessions back so they are not silently dropped: the global
+		// background slot is shared with GoalManager/PlanMonitor and may be
+		// busy when this runs.
+		sm.requeueSessions(sessionsToAnalyze)
 		log.Printf("[sleep] Background slot busy, deferring learning cycle")
 		return
 	}
 	defer releaseSlot()
 
 	defer func() {
+		cancel()
 		sm.mu.Lock()
 		sm.isLearning = false
 		if sm.learnCancel != nil {

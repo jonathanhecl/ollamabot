@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 const DefaultSoulContent = `_You are not a simple chatbot. You are an autonomous AI companion. You operate with absolute sincerity, clarity, and competence to achieve the user's goals._
@@ -146,11 +147,17 @@ func UpdateSoulFromPrompt(prompt string) error {
 	}
 
 	mood := ""
-	l := strings.ToLower(trimmed)
-	if strings.Contains(l, "muy feliz") || strings.Contains(l, "feliz") || strings.Contains(l, "happy") || strings.Contains(l, "cheerful") || strings.Contains(l, "alegre") {
-		mood = "cheerful and positive"
-	} else if strings.Contains(l, "profesional") || strings.Contains(l, "serio") || strings.Contains(l, "professional") || strings.Contains(l, "serious") {
-		mood = "professional and pragmatic"
+	// Mood detection must only fire on short, directive instructions about the
+	// assistant's tone (e.g. "se feliz", "be professional"). A conversational
+	// message that merely mentions a mood keyword (e.g. "estoy feliz con el
+	// resultado") must not silently rewrite the assistant's persistent identity.
+	if utf8.RuneCountInString(trimmed) <= 80 && isMoodDirective(trimmed) {
+		l := strings.ToLower(trimmed)
+		if strings.Contains(l, "muy feliz") || strings.Contains(l, "feliz") || strings.Contains(l, "happy") || strings.Contains(l, "cheerful") || strings.Contains(l, "alegre") {
+			mood = "cheerful and positive"
+		} else if strings.Contains(l, "profesional") || strings.Contains(l, "serio") || strings.Contains(l, "professional") || strings.Contains(l, "serious") {
+			mood = "professional and pragmatic"
+		}
 	}
 
 	if newName == "" && mood == "" {
@@ -279,4 +286,30 @@ func SaveUserProfile(content string) error {
 		fmt.Printf("Warning: failed to backup user profile: %v\n", err)
 	}
 	return os.WriteFile(filePath, []byte(content), 0644)
+}
+
+// isMoodDirective reports whether the user message is a short, directive
+// instruction about the assistant's tone, as opposed to a conversational
+// message that merely mentions a mood keyword.
+func isMoodDirective(text string) bool {
+	l := strings.ToLower(strings.TrimSpace(text))
+	if l == "" {
+		return false
+	}
+	directives := []string{
+		"se feliz", "se alegre", "se profesional", "se serio", "se amable",
+		"be happy", "be cheerful", "be professional", "be serious", "be friendly",
+		"actua feliz", "actua alegre", "actua profesional", "actua serio",
+		"act cheerful", "act professional", "act serious",
+		"ponte feliz", "ponte alegre", "eres profesional", "eres serio",
+		"you are happy", "you are cheerful", "you are professional", "you are serious",
+		"tu tono", "tono feliz", "tono profesional", "tono serio",
+		"mood: happy", "mood: cheerful", "mood: professional", "mood: serious",
+	}
+	for _, d := range directives {
+		if strings.Contains(l, d) {
+			return true
+		}
+	}
+	return false
 }

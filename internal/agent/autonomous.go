@@ -547,8 +547,9 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 
 	// Create registry scoped inside this project directory
 	registry := tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
-		Providers:   am.config().SearchProviders,
-		BraveAPIKey: am.config().BraveSearchAPIKey,
+		Providers:    am.config().SearchProviders,
+		BraveAPIKey:  am.config().BraveSearchAPIKey,
+		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 
@@ -634,8 +635,9 @@ Task Description: %s
 			}
 			// Re-create registry and agent to start fresh
 			registry = tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
-				Providers:   am.config().SearchProviders,
-				BraveAPIKey: am.config().BraveSearchAPIKey,
+				Providers:    am.config().SearchProviders,
+				BraveAPIKey:  am.config().BraveSearchAPIKey,
+				TavilyAPIKey: am.config().TavilyAPIKey,
 			})
 			registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 			a = NewAgent(am.cfgMgr, am.client, registry)
@@ -820,8 +822,9 @@ func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task 
 
 	// Scoped registry so the verifier can read files in the project dir.
 	registry := tools.NewRegistry(am.config().WebSearchEnabled, projectWorkspaceDir, am.memoryStore, am.client, am.config().OllamaModelEmbed, tools.SearchConfig{
-		Providers:   am.config().SearchProviders,
-		BraveAPIKey: am.config().BraveSearchAPIKey,
+		Providers:    am.config().SearchProviders,
+		BraveAPIKey:  am.config().BraveSearchAPIKey,
+		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 	a := NewAgent(am.cfgMgr, am.client, registry)

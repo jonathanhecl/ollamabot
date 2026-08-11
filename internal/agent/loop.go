@@ -291,7 +291,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		totalTokens := estimateTokens(formattedActiveMessages)
-		threshold := int(float64(limit) * 0.9)
+		threshold := int(float64(numCtx) * 0.9)
 
 		if limit > 0 && totalTokens >= threshold && !contextOptimizationFailed {
 			// Find the last user message in 'messages' to split history
@@ -306,7 +306,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			if lastUserIndex > 0 {
 				startTime := time.Now()
 				tokensBefore := totalTokens
-				percentBefore := (float64(tokensBefore) / float64(limit)) * 100
+				percentBefore := (float64(tokensBefore) / float64(numCtx)) * 100
 
 				if handler != nil {
 					handler.OnContextOptimizationStart(tokensBefore, percentBefore)
@@ -373,7 +373,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 						}
 					}
 					tokensAfter := estimateTokens(newFormattedActive)
-					percentAfter := (float64(tokensAfter) / float64(limit)) * 100
+					percentAfter := (float64(tokensAfter) / float64(numCtx)) * 100
 					durationSeconds := time.Since(startTime).Seconds()
 
 					if handler != nil {
