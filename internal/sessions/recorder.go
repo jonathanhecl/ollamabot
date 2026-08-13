@@ -703,13 +703,17 @@ func (r *Recorder) FinalizeAndSave(finalHistory []ollama.Message) ([]json.RawMes
 	messages := r.mergeFinalHistoryLocked(finalHistory)
 	r.mu.Unlock()
 
+	unlock := lockSession(r.sessionID)
 	sess, err := r.store.Get(r.sessionID)
 	if err != nil {
+		unlock()
 		return messages, err
 	}
 	sess.Messages = messages
-	if err := r.store.Save(sess); err != nil {
-		return messages, err
+	saveErr := r.store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return messages, saveErr
 	}
 	NotifyUpdate(r.sessionID)
 	return messages, nil
@@ -724,13 +728,17 @@ func (r *Recorder) SnapshotAndSave() ([]json.RawMessage, error) {
 	messages := r.snapshotMessagesLocked()
 	r.mu.Unlock()
 
+	unlock := lockSession(r.sessionID)
 	sess, err := r.store.Get(r.sessionID)
 	if err != nil {
+		unlock()
 		return messages, err
 	}
 	sess.Messages = messages
-	if err := r.store.Save(sess); err != nil {
-		return messages, err
+	saveErr := r.store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return messages, saveErr
 	}
 	NotifyUpdate(r.sessionID)
 	return messages, nil
@@ -744,12 +752,16 @@ func (r *Recorder) saveSnapshot(gen uint64, messages []json.RawMessage) {
 	}
 	r.mu.Unlock()
 
+	unlock := lockSession(r.sessionID)
 	sess, err := r.store.Get(r.sessionID)
 	if err != nil {
+		unlock()
 		return
 	}
 	sess.Messages = messages
-	if err := r.store.Save(sess); err == nil {
+	saveErr := r.store.Save(sess)
+	unlock()
+	if saveErr == nil {
 		NotifyUpdate(r.sessionID)
 	}
 }

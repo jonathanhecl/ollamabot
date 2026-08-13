@@ -305,6 +305,26 @@ type Store struct {
 	dir string
 }
 
+var (
+	sessionLocksMu sync.Mutex
+	sessionLocks   = make(map[string]*sync.Mutex)
+)
+
+// lockSession serializes read-modify-write operations on a single session
+// (e.g. Messages vs ActivePlan/approval state), preventing lost updates when
+// the Recorder's background snapshot races with a plan/approval mutation.
+func lockSession(id string) func() {
+	sessionLocksMu.Lock()
+	m := sessionLocks[id]
+	if m == nil {
+		m = &sync.Mutex{}
+		sessionLocks[id] = m
+	}
+	sessionLocksMu.Unlock()
+	m.Lock()
+	return m.Unlock
+}
+
 func NewStore(sessionsPath string) *Store {
 	_ = os.MkdirAll(sessionsPath, 0o755)
 	s := &Store{dir: sessionsPath}

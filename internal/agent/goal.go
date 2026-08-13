@@ -408,22 +408,20 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 
 		a := NewAgent(g.cfgMgr, g.client, registry)
-		handler := &goalStreamHandler{
-			sessionStore: g.sessionStore,
-			sessionID:    sessionID,
-			baseMessages: sess.Messages,
-		}
 
 		// Run execution turn with smart retry
 		var finalHistory []ollama.Message
 		var runErr error
+		var recorder *sessions.Recorder
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
-		runCtx, runCancel := SubagentContext(ctx, g.config())
-		sessions.RegisterCancel(sessionID, runCancel)
-		finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
-		runCancel()
-		sessions.UnregisterCancel(sessionID)
+			recorder = sessions.NewRecorder(g.sessionStore, sessionID, rawToRawMsgs(sess.Messages), g.config().OllamaDefaultModel, "goal")
+			handler := &goalStreamHandler{recorder: recorder}
+			runCtx, runCancel := SubagentContext(ctx, g.config())
+			sessions.RegisterCancel(sessionID, runCancel)
+			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
+			runCancel()
+			sessions.UnregisterCancel(sessionID)
 			if runErr == nil {
 				break
 			}
@@ -486,28 +484,15 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			}
 		}
 
-		// Sync final history with session
-		var newRawMessages []json.RawMessage
-		for _, m := range finalHistory {
-			var tcRaw []json.RawMessage
-			for _, tc := range m.ToolCalls {
-				tcBytes, _ := json.Marshal(tc)
-				tcRaw = append(tcRaw, tcBytes)
+		// Sync final history with session (including tool steps in the timeline).
+		if recorder != nil {
+			saved, saveErr := recorder.FinalizeAndSave(finalHistory)
+			if saveErr != nil {
+				log.Printf("[GoalManager] Failed to persist goal cycle history for %s: %v", sessionID, saveErr)
+			} else {
+				sess.Messages = saved
 			}
-			rm := sessions.RawMsg{
-				Role:      m.Role,
-				Content:   m.Content,
-				Thinking:  m.Thinking,
-				Name:      m.Name,
-				ToolCalls: tcRaw,
-				Timestamp: time.Now().Format(time.RFC3339),
-			}
-			rawBytes, _ := json.Marshal(rm)
-			newRawMessages = append(newRawMessages, rawBytes)
 		}
-
-		sess.Messages = newRawMessages
-		_ = g.sessionStore.Save(sess)
 
 		// Run evaluation turn
 		log.Printf("[GoalManager] Evaluating goal status after cycle %d...", cycle)
@@ -672,114 +657,50 @@ Respond with a JSON object conforming to the schema.`, objective)
 	return ev.Achieved, ev.Reasoning, nil
 }
 
+// goalStreamHandler routes background goal/plan agent streams into a session
+// Recorder so tool steps (and other decisions) appear in the session timeline
+// exactly like a normal web/Telegram turn.
 type goalStreamHandler struct {
-	mu           sync.Mutex
-	sessionStore *sessions.Store
-	sessionID    string
-	baseMessages []json.RawMessage
-	currentTurn  []sessions.RawMsg
-	inAssistant  bool
+	recorder *sessions.Recorder
 }
 
-func (h *goalStreamHandler) OnThinking(delta string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.inAssistant || len(h.currentTurn) == 0 {
-		h.currentTurn = append(h.currentTurn, sessions.RawMsg{Role: "assistant", Timestamp: time.Now().Format(time.RFC3339)})
-		h.inAssistant = true
-	}
-	idx := len(h.currentTurn) - 1
-	h.currentTurn[idx].Thinking += delta
-	h.syncSession()
-}
-
-func (h *goalStreamHandler) OnContent(delta string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.inAssistant || len(h.currentTurn) == 0 {
-		h.currentTurn = append(h.currentTurn, sessions.RawMsg{Role: "assistant", Timestamp: time.Now().Format(time.RFC3339)})
-		h.inAssistant = true
-	}
-	idx := len(h.currentTurn) - 1
-	h.currentTurn[idx].Content += delta
-	h.syncSession()
-}
-
+func (h *goalStreamHandler) OnThinking(delta string) { h.recorder.OnThinking(delta) }
+func (h *goalStreamHandler) OnContent(delta string)  { h.recorder.OnContent(delta) }
 func (h *goalStreamHandler) OnToolCall(call ollama.ToolCall) {
-	// Reconstructed tool starts handles this dynamically
+	h.recorder.OnToolCall(call)
 }
-
 func (h *goalStreamHandler) OnToolStart(name string, args any, source string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if !h.inAssistant || len(h.currentTurn) == 0 {
-		h.currentTurn = append(h.currentTurn, sessions.RawMsg{Role: "assistant", Timestamp: time.Now().Format(time.RFC3339)})
-		h.inAssistant = true
-	}
-	idx := len(h.currentTurn) - 1
-	tc := ollama.ToolCall{
-		Type: "function",
-		Function: ollama.ToolFunction{
-			Name: name,
-		},
-	}
-	if argsBytes, err := json.Marshal(args); err == nil {
-		tc.Function.Arguments = argsBytes
-	}
-	tcRaw, _ := json.Marshal(tc)
-	h.currentTurn[idx].ToolCalls = append(h.currentTurn[idx].ToolCalls, tcRaw)
-	h.syncSession()
+	h.recorder.OnToolStart(name, args, source)
 }
-
 func (h *goalStreamHandler) OnToolResult(name string, result string, source string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.inAssistant = false
-	h.currentTurn = append(h.currentTurn, sessions.RawMsg{
-		Role:      "tool",
-		Name:      name,
-		Content:   result,
-		Timestamp: time.Now().Format(time.RFC3339),
-	})
-	h.syncSession()
+	h.recorder.OnToolResult(name, result, source)
 }
-
-func (h *goalStreamHandler) OnMediaPreProcessing(content string) {}
-func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     {}
-func (h *goalStreamHandler) OnEvent(kind string, data any)       {}
-
-func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
+func (h *goalStreamHandler) OnMediaPreProcessing(content string) { h.recorder.OnMediaPreProcessing(content) }
+func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     { h.recorder.OnDone(resp) }
+func (h *goalStreamHandler) OnEvent(kind string, data any) {
+	h.recorder.RecordEvent(kind, sessions.EventContent(kind, data), data)
+}
+func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	h.recorder.OnContextOptimizationStart(tokensBefore, percentBefore)
+}
 func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	h.recorder.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
 }
 func (h *goalStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	summaryRawMsg := sessions.RawMsg{
-		Role:      "system",
-		Content:   summary,
-		Timestamp: time.Now().Format(time.RFC3339),
-	}
-	rawSummary, _ := json.Marshal(summaryRawMsg)
-	h.baseMessages = []json.RawMessage{rawSummary}
+	h.recorder.UpdateHistory(optimizedMessages, summary, numKept)
 }
 
-func (h *goalStreamHandler) syncSession() {
-	sess, err := h.sessionStore.Get(h.sessionID)
-	if err != nil {
-		return
-	}
-
-	var newRawMessages []json.RawMessage
-	newRawMessages = append(newRawMessages, h.baseMessages...)
-	for _, m := range h.currentTurn {
-		raw, err := json.Marshal(m)
-		if err == nil {
-			newRawMessages = append(newRawMessages, raw)
+// rawToRawMsgs decodes persisted session messages into RawMsg so they can be
+// used as the base history for a Recorder (background goal/plan turns).
+func rawToRawMsgs(raw []json.RawMessage) []sessions.RawMsg {
+	out := make([]sessions.RawMsg, 0, len(raw))
+	for _, r := range raw {
+		var m sessions.RawMsg
+		if err := json.Unmarshal(r, &m); err == nil {
+			out = append(out, m)
 		}
 	}
-	sess.Messages = newRawMessages
-	_ = h.sessionStore.Save(sess)
+	return out
 }
 
 func truncate(s string, max int) string {

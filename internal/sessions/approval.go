@@ -212,6 +212,8 @@ func (s *ApprovalService) RespondApproval(id string, decision ApprovalDecision) 
 }
 
 func (s *ApprovalService) savePending(sessionID string, approval *PendingApproval) error {
+	unlock := lockSession(sessionID)
+	defer unlock()
 	sess, err := s.store.Get(sessionID)
 	if err != nil {
 		return err
@@ -221,8 +223,10 @@ func (s *ApprovalService) savePending(sessionID string, approval *PendingApprova
 }
 
 func (s *ApprovalService) resolvePending(sessionID string, approval PendingApproval, decision ApprovalDecision) error {
+	unlock := lockSession(sessionID)
 	sess, err := s.store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return err
 	}
 	if sess.PendingApproval != nil && sess.PendingApproval.ID == approval.ID {
@@ -245,8 +249,10 @@ func (s *ApprovalService) resolvePending(sessionID string, approval PendingAppro
 			})
 		}
 	}
-	if err := s.store.Save(sess); err != nil {
-		return err
+	saveErr := s.store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return saveErr
 	}
 	NotifyUpdate(sessionID)
 	return nil

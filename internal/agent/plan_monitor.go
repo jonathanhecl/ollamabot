@@ -274,16 +274,13 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		pm.notify(id, plan, sessions.FormatPlanProgressShort(plan))
 	})
 
-	handler := &goalStreamHandler{
-		sessionStore: pm.sessionStore,
-		sessionID:    sessionID,
-		baseMessages: sess.Messages,
-	}
 	a := NewAgent(pm.cfgMgr, pm.client, registry)
 	model := config.ResolveModel(pm.config(), config.ModelRoleMain)
 	if strings.TrimSpace(model) == "" {
 		model = pm.config().OllamaDefaultModel
 	}
+	recorder := sessions.NewRecorder(pm.sessionStore, sessionID, rawToRawMsgs(sess.Messages), model, "plan_monitor")
+	handler := &goalStreamHandler{recorder: recorder}
 	runCtx, runCancel := SubagentContext(ctx, pm.config())
 	sessions.RegisterCancel(sessionID, runCancel)
 	finalHistory, err := a.Run(runCtx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
@@ -299,7 +296,7 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		}
 		return
 	}
-	if err := saveOllamaHistory(pm.sessionStore, sessionID, finalHistory); err != nil {
+	if _, err := recorder.FinalizeAndSave(finalHistory); err != nil {
 		log.Printf("[PlanMonitor] save final history for %s: %v", sessionID, err)
 	}
 }
@@ -329,32 +326,3 @@ func rawMessagesToOllama(rawMessages []json.RawMessage) []ollama.Message {
 	return out
 }
 
-func saveOllamaHistory(store *sessions.Store, sessionID string, history []ollama.Message) error {
-	sess, err := store.Get(sessionID)
-	if err != nil {
-		return err
-	}
-	rawMessages := make([]json.RawMessage, 0, len(history))
-	for _, m := range history {
-		if m.Role == "system" && sessions.IsInternalTimelineMessage(m.Content) {
-			continue
-		}
-		var tcRaw []json.RawMessage
-		for _, tc := range m.ToolCalls {
-			tcBytes, _ := json.Marshal(tc)
-			tcRaw = append(tcRaw, tcBytes)
-		}
-		rm := sessions.RawMsg{
-			Role:      m.Role,
-			Content:   m.Content,
-			Thinking:  m.Thinking,
-			Name:      m.Name,
-			ToolCalls: tcRaw,
-			Timestamp: time.Now().Format(time.RFC3339),
-		}
-		raw, _ := json.Marshal(rm)
-		rawMessages = append(rawMessages, raw)
-	}
-	sess.Messages = rawMessages
-	return store.Save(sess)
-}

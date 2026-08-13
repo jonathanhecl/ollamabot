@@ -64,8 +64,10 @@ func ActivatePlan(store *Store, sessionID string, summary string, steps []string
 		return SessionPlan{}, fmt.Errorf("plan requires at least 1 step")
 	}
 
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return SessionPlan{}, err
 	}
 	plan := SessionPlan{
@@ -76,8 +78,10 @@ func ActivatePlan(store *Store, sessionID string, summary string, steps []string
 		LastProgressAt: time.Now(),
 	}
 	sess.ActivePlan = &plan
-	if err := store.Save(sess); err != nil {
-		return SessionPlan{}, err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return SessionPlan{}, saveErr
 	}
 	NotifyUpdate(sessionID)
 	return plan, nil
@@ -92,11 +96,14 @@ func CompletePlanStep(store *Store, sessionID string, note string) (SessionPlan,
 	if sessionID == "" {
 		return SessionPlan{}, "", fmt.Errorf("session ID is required")
 	}
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return SessionPlan{}, "", err
 	}
 	if sess.ActivePlan == nil || sess.ActivePlan.Status != PlanStatusActive {
+		unlock()
 		return SessionPlan{}, "", fmt.Errorf("no active plan for this session")
 	}
 	plan := cloneSessionPlan(sess.ActivePlan)
@@ -121,8 +128,10 @@ func CompletePlanStep(store *Store, sessionID string, note string) (SessionPlan,
 	}
 
 	sess.ActivePlan = plan
-	if err := store.Save(sess); err != nil {
-		return SessionPlan{}, "", err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return SessionPlan{}, "", saveErr
 	}
 	NotifyUpdate(sessionID)
 	return *plan, message, nil
@@ -144,11 +153,14 @@ func DeferPlanContinuation(store *Store, sessionID string, reason string, resume
 	if resumeAt.IsZero() {
 		return SessionPlan{}, "", fmt.Errorf("resume time is required")
 	}
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return SessionPlan{}, "", err
 	}
 	if sess.ActivePlan == nil || sess.ActivePlan.Status != PlanStatusActive {
+		unlock()
 		return SessionPlan{}, "", fmt.Errorf("no active plan for this session")
 	}
 	plan := cloneSessionPlan(sess.ActivePlan)
@@ -158,8 +170,10 @@ func DeferPlanContinuation(store *Store, sessionID string, reason string, resume
 	plan.DeferredUntil = &resumeAt
 	plan.LastProgressAt = time.Now()
 	sess.ActivePlan = plan
-	if err := store.Save(sess); err != nil {
-		return SessionPlan{}, "", err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return SessionPlan{}, "", saveErr
 	}
 	NotifyUpdate(sessionID)
 	message := fmt.Sprintf("Plan deferred until %s. Reason: %s", resumeAt.Format(time.RFC3339), reason)
@@ -180,11 +194,14 @@ func PauseActivePlan(store *Store, sessionID string, reason string) (SessionPlan
 	if sessionID == "" {
 		return SessionPlan{}, fmt.Errorf("session ID is required")
 	}
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return SessionPlan{}, err
 	}
 	if sess.ActivePlan == nil || sess.ActivePlan.Status != PlanStatusActive {
+		unlock()
 		return SessionPlan{}, fmt.Errorf("no active plan for this session")
 	}
 	plan := cloneSessionPlan(sess.ActivePlan)
@@ -193,8 +210,10 @@ func PauseActivePlan(store *Store, sessionID string, reason string) (SessionPlan
 	plan.DeferredUntil = nil
 	plan.LastProgressAt = time.Now()
 	sess.ActivePlan = plan
-	if err := store.Save(sess); err != nil {
-		return SessionPlan{}, err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return SessionPlan{}, saveErr
 	}
 	NotifyUpdate(sessionID)
 	return *plan, nil
@@ -209,11 +228,14 @@ func ResumeDeferredPlan(store *Store, sessionID string) (SessionPlan, error) {
 	if sessionID == "" {
 		return SessionPlan{}, fmt.Errorf("session ID is required")
 	}
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return SessionPlan{}, err
 	}
 	if sess.ActivePlan == nil || sess.ActivePlan.Status != PlanStatusDeferred {
+		unlock()
 		return SessionPlan{}, fmt.Errorf("no deferred plan for this session")
 	}
 	plan := cloneSessionPlan(sess.ActivePlan)
@@ -222,8 +244,10 @@ func ResumeDeferredPlan(store *Store, sessionID string) (SessionPlan, error) {
 	plan.DeferredReason = ""
 	plan.LastProgressAt = time.Now()
 	sess.ActivePlan = plan
-	if err := store.Save(sess); err != nil {
-		return SessionPlan{}, err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return SessionPlan{}, saveErr
 	}
 	NotifyUpdate(sessionID)
 	return *plan, nil
@@ -238,13 +262,17 @@ func ClearActivePlan(store *Store, sessionID string) error {
 	if sessionID == "" {
 		return fmt.Errorf("session ID is required")
 	}
+	unlock := lockSession(sessionID)
 	sess, err := store.Get(sessionID)
 	if err != nil {
+		unlock()
 		return err
 	}
 	sess.ActivePlan = nil
-	if err := store.Save(sess); err != nil {
-		return err
+	saveErr := store.Save(sess)
+	unlock()
+	if saveErr != nil {
+		return saveErr
 	}
 	NotifyUpdate(sessionID)
 	return nil
