@@ -332,12 +332,23 @@ func (r *Recorder) OnToolResult(name string, result string, source string) {
 		if r.currentTurn.Steps[i].Type == "tool_exec" && r.currentTurn.Steps[i].Name == name && r.currentTurn.Steps[i].Status == "running" {
 			r.currentTurn.Steps[i].Result = result
 			r.currentTurn.Steps[i].Status = "done"
+			if isToolErrorResult(result) {
+				r.currentTurn.Steps[i].Status = "error"
+			}
 			r.currentTurn.Steps[i].DurationMs = elapsedMs(r.currentTurn.Steps[i].Timestamp)
 			break
 		}
 	}
 	r.mu.Unlock()
 	r.NotifyUpdate(true)
+}
+
+// isToolErrorResult reports whether a tool result string represents a failure,
+// mirroring the agent loop's own error heuristic (prefix "Error"). Denied
+// actions also surface as "Error: Execution denied by user.", which is treated
+// as a non-successful outcome for filtering purposes.
+func isToolErrorResult(result string) bool {
+	return strings.HasPrefix(strings.TrimSpace(result), "Error")
 }
 
 func (r *Recorder) OnApprovalPending(tool string, args any, label string) {

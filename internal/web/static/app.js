@@ -3603,8 +3603,9 @@ function renderStep(step, isLive = false, isLastStep = false) {
     }
     case "tool_exec": {
       const showRunning = isLive && step.status === "running";
-      const statusLabel = showRunning ? "running..." : "";
-      const statusClass = showRunning ? "running" : "";
+      const isError = step.status === "error";
+      const statusLabel = showRunning ? "running..." : (isError ? "error" : "");
+      const statusClass = showRunning ? "running" : (isError ? "error" : "");
       let argsText = "";
       let parsedArgs = null;
       if (step.arguments) {

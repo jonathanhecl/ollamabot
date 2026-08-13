@@ -102,6 +102,40 @@ func TestRecorderToolDuration(t *testing.T) {
 	}
 }
 
+func TestRecorderMarksFailedToolAsError(t *testing.T) {
+	rec := &Recorder{}
+	rec.OnToolStart("execute_command", map[string]any{"command": "go"}, "internal")
+	rec.OnToolResult("execute_command", "Error: command failed: exit status 1", "internal")
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one step, got %d", len(rec.currentTurn.Steps))
+	}
+	if rec.currentTurn.Steps[0].Status != "error" {
+		t.Fatalf("expected error status, got %#v", rec.currentTurn.Steps[0])
+	}
+
+	// A successful result stays "done".
+	rec2 := &Recorder{}
+	rec2.OnToolStart("execute_command", map[string]any{"command": "go"}, "internal")
+	rec2.OnToolResult("execute_command", "go version go1.22", "internal")
+	if rec2.currentTurn.Steps[0].Status != "done" {
+		t.Fatalf("expected done status for success, got %#v", rec2.currentTurn.Steps[0])
+	}
+}
+
+func TestIsToolErrorResult(t *testing.T) {
+	for _, s := range []string{"Error: something", "Error: Execution denied by user.", "  Error: x"} {
+		if !isToolErrorResult(s) {
+			t.Fatalf("expected %q to be classified as error", s)
+		}
+	}
+	for _, s := range []string{"", "ok", "go version go1.22", "results"} {
+		if isToolErrorResult(s) {
+			t.Fatalf("expected %q to not be classified as error", s)
+		}
+	}
+}
+
 func TestRecorderUpdatesExistingPlanStep(t *testing.T) {
 	rec := &Recorder{}
 	rec.OnToolStart("present_plan", map[string]any{

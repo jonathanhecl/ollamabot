@@ -740,6 +740,16 @@ h2 {
   border: 1px solid rgba(214, 255, 95, 0.25);
 }
 
+.step-tool-status.error {
+  background: rgba(255, 74, 74, 0.12);
+  color: #ff6e6e;
+  border: 1px solid rgba(255, 74, 74, 0.3);
+}
+
+.step-tool-exec.error summary {
+  color: #ff9d9d;
+}
+
 /* --- Image generation progress step (Premium Style) --- */
 .step-image-progress {
   margin: 12px 0;
