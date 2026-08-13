@@ -499,6 +499,118 @@ func (d *dummyStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAf
 func (d *dummyStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
 }
 
+// autonomousStepCollector captures tool execution steps (and decision events)
+// for an autonomous project task so they can be persisted into the heartbeat
+// log in a structured, debug-friendly form.
+type autonomousStepCollector struct {
+	mu    sync.Mutex
+	steps []sessions.Step
+}
+
+func newAutonomousStepCollector() *autonomousStepCollector {
+	return &autonomousStepCollector{}
+}
+
+func (c *autonomousStepCollector) OnThinking(delta string) {}
+func (c *autonomousStepCollector) OnContent(delta string)  {}
+func (c *autonomousStepCollector) OnToolCall(call ollama.ToolCall) {}
+
+func (c *autonomousStepCollector) OnToolStart(name string, args any, source string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.steps = append(c.steps, sessions.Step{
+		Type:      "tool_exec",
+		Name:      name,
+		Source:    source,
+		Arguments: args,
+		Status:    "running",
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+func (c *autonomousStepCollector) OnToolResult(name string, result string, source string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i := len(c.steps) - 1; i >= 0; i-- {
+		if c.steps[i].Type == "tool_exec" && c.steps[i].Name == name && c.steps[i].Status == "running" {
+			c.steps[i].Result = result
+			c.steps[i].Status = "done"
+			if strings.HasPrefix(strings.TrimSpace(result), "Error") {
+				c.steps[i].Status = "error"
+			}
+			c.steps[i].DurationMs = sessions.StepDurationMs(c.steps[i].Timestamp)
+			break
+		}
+	}
+}
+
+func (c *autonomousStepCollector) OnMediaPreProcessing(content string) {}
+func (c *autonomousStepCollector) OnDone(resp ollama.ChatResponse)     {}
+
+func (c *autonomousStepCollector) OnEvent(kind string, data any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.steps = append(c.steps, sessions.Step{
+		Type:      "system_event",
+		Name:      kind,
+		Content:   sessions.EventContent(kind, data),
+		Arguments: data,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	})
+}
+
+func (c *autonomousStepCollector) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	c.OnEvent("context_optimization_start", map[string]any{"tokens_before": tokensBefore, "percent_before": percentBefore})
+}
+
+func (c *autonomousStepCollector) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	c.OnEvent("context_optimization_end", map[string]any{"tokens_after": tokensAfter, "percent_after": percentAfter, "duration_seconds": durationSeconds})
+}
+
+func (c *autonomousStepCollector) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
+}
+
+func (c *autonomousStepCollector) snapshot() []sessions.Step {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]sessions.Step(nil), c.steps...)
+}
+
+// writeAutonomousStep appends a single structured step to a heartbeat log in a
+// readable, debug-friendly markdown form (name, source, status, timing, args, result).
+func writeAutonomousStep(sb *strings.Builder, idx int, step sessions.Step) {
+	status := step.Status
+	if status == "" {
+		status = "done"
+	}
+	icon := "⚙️"
+	if step.Type == "system_event" {
+		icon = "ℹ️"
+	}
+	fmt.Fprintf(sb, "### %d. %s `%s` — %s", idx, icon, step.Name, status)
+	if step.Source != "" && step.Source != "internal" {
+		fmt.Fprintf(sb, " (source: %s)", step.Source)
+	}
+	if step.DurationMs > 0 {
+		fmt.Fprintf(sb, " (%dms)", step.DurationMs)
+	}
+	fmt.Fprintf(sb, "\n\n")
+
+	if step.Type == "system_event" {
+		if strings.TrimSpace(step.Content) != "" {
+			fmt.Fprintf(sb, "%s\n\n", step.Content)
+		}
+		return
+	}
+
+	if argsJSON, err := json.MarshalIndent(step.Arguments, "", "  "); err == nil && string(argsJSON) != "null" {
+		fmt.Fprintf(sb, "<details>\n<summary>Arguments</summary>\n\n```json\n%s\n```\n</details>\n\n", string(argsJSON))
+	}
+	if step.Result != "" {
+		fmt.Fprintf(sb, "<details>\n<summary>Result</summary>\n\n```\n%s\n```\n</details>\n\n", step.Result)
+	}
+}
+
 // ExecuteTask runs a single step for the project
 func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, taskIdx int) error {
 	am.mu.Lock()
@@ -626,10 +738,12 @@ Task Description: %s
 	startTime := time.Now()
 	var finalHistory []ollama.Message
 	var runErr error
+	var collector *autonomousStepCollector
 	maxRunRetries := 3
 	for retry := 0; retry < maxRunRetries; retry++ {
+		collector = newAutonomousStepCollector()
 		runCtx, runCancel := SubagentContext(ctx, am.config())
-		finalHistory, runErr = a.Run(runCtx, model, messages, true, &dummyStreamHandler{})
+		finalHistory, runErr = a.Run(runCtx, model, messages, true, collector)
 		runCancel()
 		if runErr == nil {
 			break
@@ -736,6 +850,18 @@ Task Description: %s
 	fmt.Fprintf(&logContent, "- **Duration:** %v\n", elapsed)
 	fmt.Fprintf(&logContent, "- **Status:** %s\n\n", task.Status)
 	fmt.Fprintf(&logContent, "## Execution Result Summary\n\n%s\n\n", resultText)
+
+	// Structured tool execution steps for debugging (name, source, status, timing).
+	fmt.Fprintf(&logContent, "## Tool Execution Steps\n\n")
+	steps := collector.snapshot()
+	if len(steps) == 0 {
+		fmt.Fprintf(&logContent, "_(no tool steps recorded)_\n\n")
+	} else {
+		for i, step := range steps {
+			writeAutonomousStep(&logContent, i+1, step)
+		}
+	}
+
 	fmt.Fprintf(&logContent, "--- \n## Raw Conversation Turns\n\n")
 
 	for _, msg := range finalHistory {

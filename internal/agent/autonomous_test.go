@@ -13,6 +13,7 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func TestAutonomousManager_GenerateInitialTodos(t *testing.T) {
@@ -318,4 +319,59 @@ func trimFencesForTest(raw string) string {
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
 	return strings.TrimSpace(raw)
+}
+
+func TestAutonomousStepCollector(t *testing.T) {
+	c := newAutonomousStepCollector()
+	c.OnToolStart("write_file", map[string]any{"file_path": "index.html"}, "internal")
+	time.Sleep(2 * time.Millisecond)
+	c.OnToolResult("write_file", "ok", "internal")
+	c.OnToolStart("execute_command", map[string]any{"command": "go"}, "internal")
+	c.OnToolResult("execute_command", "Error: command failed", "internal")
+	c.OnEvent("plan_mode", map[string]any{"mode": "smart"})
+
+	steps := c.snapshot()
+	if len(steps) != 3 {
+		t.Fatalf("expected 3 steps, got %d", len(steps))
+	}
+	if steps[0].Name != "write_file" || steps[0].Status != "done" {
+		t.Fatalf("unexpected step 0: %#v", steps[0])
+	}
+	if steps[0].DurationMs <= 0 {
+		t.Fatalf("expected positive duration for step 0, got %d", steps[0].DurationMs)
+	}
+	if steps[1].Status != "error" {
+		t.Fatalf("expected error status for step 1, got %#v", steps[1])
+	}
+	if steps[2].Type != "system_event" || steps[2].Name != "plan_mode" {
+		t.Fatalf("unexpected step 2: %#v", steps[2])
+	}
+}
+
+func TestWriteAutonomousStep(t *testing.T) {
+	var sb strings.Builder
+	writeAutonomousStep(&sb, 1, sessions.Step{
+		Type:       "tool_exec",
+		Name:       "read_file",
+		Arguments:  map[string]any{"path": "a.txt"},
+		Result:     "hello",
+		Status:     "done",
+		DurationMs: 12,
+	})
+	out := sb.String()
+	for _, want := range []string{"`read_file`", "done", "12ms", "hello", "a.txt"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected %q in structured step output, got:\n%s", want, out)
+		}
+	}
+
+	var eventSB strings.Builder
+	writeAutonomousStep(&eventSB, 1, sessions.Step{
+		Type:    "system_event",
+		Name:    "plan_mode",
+		Content: "Plan confirmation mode: smart",
+	})
+	if !strings.Contains(eventSB.String(), "Plan confirmation mode: smart") {
+		t.Fatalf("expected event content, got:\n%s", eventSB.String())
+	}
 }

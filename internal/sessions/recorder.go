@@ -335,7 +335,7 @@ func (r *Recorder) OnToolResult(name string, result string, source string) {
 			if isToolErrorResult(result) {
 				r.currentTurn.Steps[i].Status = "error"
 			}
-			r.currentTurn.Steps[i].DurationMs = elapsedMs(r.currentTurn.Steps[i].Timestamp)
+			r.currentTurn.Steps[i].DurationMs = StepDurationMs(r.currentTurn.Steps[i].Timestamp)
 			break
 		}
 	}
@@ -470,8 +470,9 @@ func (r *Recorder) OnContextOptimizationEnd(tokensAfter int, percentAfter float6
 		map[string]any{"tokens_after": tokensAfter, "percent_after": percentAfter, "duration_seconds": durationSeconds})
 }
 
-// elapsedMs returns the number of milliseconds elapsed since the given RFC3339Nano timestamp.
-func elapsedMs(start string) int64 {
+// StepDurationMs returns the number of milliseconds elapsed since the given
+// RFC3339Nano step timestamp. Returns 0 when the timestamp is empty/unparseable.
+func StepDurationMs(start string) int64 {
 	if start == "" {
 		return 0
 	}
