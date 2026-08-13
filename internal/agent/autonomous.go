@@ -492,6 +492,7 @@ func (d *dummyStreamHandler) OnToolStart(name string, args any, source string)  
 func (d *dummyStreamHandler) OnToolResult(name string, result string, source string)             {}
 func (d *dummyStreamHandler) OnMediaPreProcessing(content string)                                {}
 func (d *dummyStreamHandler) OnDone(resp ollama.ChatResponse)                                    {}
+func (d *dummyStreamHandler) OnEvent(kind string, data any)                                      {}
 func (d *dummyStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
 func (d *dummyStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
 }

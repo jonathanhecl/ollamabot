@@ -149,6 +149,7 @@ const state = {
   pendingApproval: null,
   bootstrapReady: false,
   ollamaConnected: false,
+  showDebugEvents: localStorage.getItem("ollamabot.showDebugEvents") === "true",
 };
 
 let bootstrapPromise = null;
@@ -351,6 +352,7 @@ const els = {
   logReaderTitle: document.querySelector("#logReaderTitle"),
   logReaderContent: document.querySelector("#logReaderContent"),
   openFeedback: document.querySelector("#openFeedback"),
+  debugEventsToggle: document.querySelector("#debugEventsToggle"),
   feedbackDialog: document.querySelector("#feedbackDialog"),
   feedbackCategory: document.querySelector("#feedbackCategory"),
   feedbackText: document.querySelector("#feedbackText"),
@@ -381,6 +383,18 @@ els.openFeedback.addEventListener("click", () => {
   els.feedbackCategory.value = "correction";
   els.feedbackDialog.showModal();
 });
+if (els.debugEventsToggle) {
+  const syncDebugLabel = () => {
+    els.debugEventsToggle.textContent = `🔍 Debug events: ${state.showDebugEvents ? "On" : "Off"}`;
+  };
+  syncDebugLabel();
+  els.debugEventsToggle.addEventListener("click", () => {
+    state.showDebugEvents = !state.showDebugEvents;
+    localStorage.setItem("ollamabot.showDebugEvents", state.showDebugEvents ? "true" : "false");
+    syncDebugLabel();
+    renderMessages();
+  });
+}
 els.feedbackSubmitBtn.addEventListener("click", async () => {
   const text = els.feedbackText.value.trim();
   if (!text) return;
@@ -3227,7 +3241,11 @@ function renderMessages() {
     const steps = message.steps || [];
     const hasSteps = steps.length > 0;
     const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && isPlanPinned(state.activePlan);
-    const visibleSteps = steps.filter((s) => !(hideInlinePlanSteps && s.type === "plan"));
+    const visibleSteps = steps.filter((s) => {
+      if (hideInlinePlanSteps && s.type === "plan") return false;
+      if (s.type === "system_event" && !state.showDebugEvents) return false;
+      return true;
+    });
     const activePlanHtml = message.role === "assistant" && isLastMsg && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
       ? renderPlanChecklist(state.activePlan, "progress")
       : "";
@@ -3616,7 +3634,8 @@ function renderStep(step, isLive = false, isLastStep = false) {
         </details>
       ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
-      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${sourceLabel}${statusBadge}</summary>${argsHtml}${resultHtml}</details>`;
+      const durBadge = step.duration_ms ? ` <span class="step-tool-status">${step.duration_ms}ms</span>` : "";
+      return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${sourceLabel}${statusBadge}${durBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "plan": {
       return renderPlanChecklist({
@@ -3642,6 +3661,23 @@ function renderStep(step, isLive = false, isLastStep = false) {
       const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
       const resultHtml = step.result ? `<p class="approval-step-result">${escapeHtml(String(step.result))}</p>` : "";
       return `<details class="step step-approval ${escapeHtml(status)}" open><summary><span class="step-tool-icon">🛡️</span> ${escapeHtml(label)} <span class="step-tool-status ${escapeHtml(status)}">${escapeHtml(statusText)}</span></summary>${argsHtml}${resultHtml}</details>`;
+    }
+    case "system_event": {
+      const label = step.content || step.name || "event";
+      const dur = step.duration_ms ? ` <span class="step-tool-status">${step.duration_ms}ms</span>` : "";
+      let dataHtml = "";
+      if (step.arguments) {
+        let dataText = "";
+        try {
+          dataText = JSON.stringify(typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments, null, 2);
+        } catch {
+          dataText = String(step.arguments || "");
+        }
+        if (dataText) {
+          dataHtml = `<pre class="step-tool-args">${escapeHtml(dataText)}</pre>`;
+        }
+      }
+      return `<details class="step step-event"><summary><span class="step-tool-icon">ℹ️</span> ${escapeHtml(label)}${dur}</summary>${dataHtml}</details>`;
     }
     case "image_progress": {
       let status = step.status;

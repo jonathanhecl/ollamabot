@@ -2009,11 +2009,17 @@ func (h *telegramStreamAdapter) OnDone(resp ollama.ChatResponse) {
 	h.recorder.OnDone(resp)
 }
 
+func (h *telegramStreamAdapter) OnEvent(kind string, data any) {
+	h.recorder.RecordEvent(kind, sessions.EventContent(kind, data), data)
+}
+
 func (h *telegramStreamAdapter) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	h.recorder.OnContextOptimizationStart(tokensBefore, percentBefore)
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("🔄 *Optimizing context...*\nCurrently using %d tokens (%.1f%% of model capacity). Synthesizing previous history to free up space...", tokensBefore, percentBefore), 0, "Markdown")
 }
 
 func (h *telegramStreamAdapter) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	h.recorder.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
 	_, _ = h.bot.sendMessage(h.chatID, fmt.Sprintf("✅ *Context optimized!*\nNew context size: %d tokens (%.1f%% of capacity).\nOptimization took: %.2fs.", tokensAfter, percentAfter, durationSeconds), 0, "Markdown")
 }
 

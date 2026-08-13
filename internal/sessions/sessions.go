@@ -122,22 +122,24 @@ func sessionSortTime(sess Session) time.Time {
 	return sess.CreatedAt
 }
 
-// Step represents a single step inside an assistant turn (thinking, tool call, tool result, image progress).
+// Step represents a single step inside an assistant turn (thinking, tool call, tool result, image progress, or a recorded system event).
 type Step struct {
-	Type      string   `json:"type"`
-	Name      string   `json:"name,omitempty"`
-	GenID     string   `json:"genID,omitempty"`
-	Content   string   `json:"content,omitempty"`
-	PlanSteps []string `json:"plan_steps,omitempty"`
-	Completed int      `json:"completed,omitempty"`
-	ImageURL  string   `json:"imageURL,omitempty"`
-	Source    string   `json:"source,omitempty"` // tool source, e.g. "mcp:obsidian"
-	Arguments any      `json:"arguments,omitempty"`
-	Result    string   `json:"result,omitempty"`
-	Status    string   `json:"status,omitempty"`
-	Call      any      `json:"call,omitempty"` // for tool_call steps with full call object
-	Width     int      `json:"width,omitempty"`
-	Height    int      `json:"height,omitempty"`
+	Type       string   `json:"type"`
+	Name       string   `json:"name,omitempty"`
+	GenID      string   `json:"genID,omitempty"`
+	Content    string   `json:"content,omitempty"`
+	PlanSteps  []string `json:"plan_steps,omitempty"`
+	Completed  int      `json:"completed,omitempty"`
+	ImageURL   string   `json:"imageURL,omitempty"`
+	Source     string   `json:"source,omitempty"` // tool source, e.g. "mcp:obsidian"
+	Arguments  any      `json:"arguments,omitempty"`
+	Result     string   `json:"result,omitempty"`
+	Status     string   `json:"status,omitempty"`
+	Call       any      `json:"call,omitempty"` // for tool_call steps with full call object
+	Width      int      `json:"width,omitempty"`
+	Height     int      `json:"height,omitempty"`
+	Timestamp  string   `json:"timestamp,omitempty"`   // RFC3339 start time of the step
+	DurationMs int64    `json:"duration_ms,omitempty"` // elapsed time for tool_exec / system_event steps
 }
 
 // Metrics mirrors Ollama performance metrics stored per assistant turn.

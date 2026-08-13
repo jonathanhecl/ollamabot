@@ -20,6 +20,7 @@ func (d *discardHandler) OnToolStart(string, any, string)                  {}
 func (d *discardHandler) OnToolResult(string, string, string)              {}
 func (d *discardHandler) OnMediaPreProcessing(string)                      {}
 func (d *discardHandler) OnDone(ollama.ChatResponse)                       {}
+func (d *discardHandler) OnEvent(string, any)                              {}
 func (d *discardHandler) OnContextOptimizationStart(int, float64)          {}
 func (d *discardHandler) OnContextOptimizationEnd(int, float64, float64)   {}
 func (d *discardHandler) OnContextOptimized([]ollama.Message, string, int) {}

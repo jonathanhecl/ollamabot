@@ -746,6 +746,7 @@ func (h *goalStreamHandler) OnToolResult(name string, result string, source stri
 
 func (h *goalStreamHandler) OnMediaPreProcessing(content string) {}
 func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     {}
+func (h *goalStreamHandler) OnEvent(kind string, data any)       {}
 
 func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
 func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {

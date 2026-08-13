@@ -39,6 +39,7 @@ type StreamHandler interface {
 	OnToolResult(name string, result string, source string)
 	OnMediaPreProcessing(content string)
 	OnDone(resp ollama.ChatResponse)
+	OnEvent(kind string, data any)
 	OnContextOptimizationStart(tokensBefore int, percentBefore float64)
 	OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64)
 	OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int)
@@ -195,6 +196,26 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	// These messages don't change between loop iterations, so we build them
 	// once before the loop instead of re-reading files from disk every turn.
 	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, skillsBlock, pastSessionsBlock)
+
+	// Record the context-injection decisions for debugging: what long-term
+	// memory / past sessions / skills were injected, and which plan mode is
+	// active. These surface in the session timeline as "system_event" steps.
+	if handler != nil {
+		injection := map[string]any{
+			"past_sessions_len": len(pastSessionsBlock),
+			"skills_len":        len(skillsBlock),
+		}
+		if recalledMemoriesBlock != "" {
+			injection["memories"] = recalledMemoriesBlock
+		}
+		handler.OnEvent("context_injection", injection)
+
+		planMode := a.config().PlanConfirmation
+		if planMode == "" {
+			planMode = "smart"
+		}
+		handler.OnEvent("plan_mode", map[string]any{"mode": planMode})
+	}
 
 	for i := 0; i < MaxIterations; i++ {
 		// --- DYNAMIC SYSTEM PREFIX (rebuilt each iteration) ---

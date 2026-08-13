@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -308,7 +309,7 @@ func (r *Recorder) OnToolStart(name string, args any, source string) {
 		r.NotifyUpdate(false)
 		return
 	}
-	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{Type: "tool_exec", Name: name, Source: source, Arguments: args, Status: "running"})
+	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{Type: "tool_exec", Name: name, Source: source, Arguments: args, Status: "running", Timestamp: time.Now().Format(time.RFC3339Nano)})
 	r.mu.Unlock()
 	r.NotifyUpdate(false)
 }
@@ -331,6 +332,7 @@ func (r *Recorder) OnToolResult(name string, result string, source string) {
 		if r.currentTurn.Steps[i].Type == "tool_exec" && r.currentTurn.Steps[i].Name == name && r.currentTurn.Steps[i].Status == "running" {
 			r.currentTurn.Steps[i].Result = result
 			r.currentTurn.Steps[i].Status = "done"
+			r.currentTurn.Steps[i].DurationMs = elapsedMs(r.currentTurn.Steps[i].Timestamp)
 			break
 		}
 	}
@@ -424,6 +426,96 @@ func (r *Recorder) UpdatePlanProgress(plan SessionPlan) {
 }
 
 func (r *Recorder) OnMediaPreProcessing(content string) {}
+
+// RecordEvent appends a generic, human-readable decision/event to the current
+// turn timeline (e.g. model selection, memory recall, context optimization).
+// These "system_event" steps help debug why the agent took certain decisions.
+func (r *Recorder) RecordEvent(kind string, content string, data any) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.getOrCreateCurrentAssistantMsg()
+	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+		Type:      "system_event",
+		Name:      kind,
+		Content:   content,
+		Arguments: data,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	})
+	r.mu.Unlock()
+	r.NotifyUpdate(false)
+}
+
+func (r *Recorder) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	r.RecordEvent("context_optimization_start",
+		fmt.Sprintf("Context optimization started: %d tokens (%.1f%% of capacity).", tokensBefore, percentBefore),
+		map[string]any{"tokens_before": tokensBefore, "percent_before": percentBefore})
+}
+
+func (r *Recorder) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	r.RecordEvent("context_optimization_end",
+		fmt.Sprintf("Context optimization finished: %d tokens (%.1f%% of capacity) in %.2fs.", tokensAfter, percentAfter, durationSeconds),
+		map[string]any{"tokens_after": tokensAfter, "percent_after": percentAfter, "duration_seconds": durationSeconds})
+}
+
+// elapsedMs returns the number of milliseconds elapsed since the given RFC3339Nano timestamp.
+func elapsedMs(start string) int64 {
+	if start == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339Nano, start)
+	if err != nil {
+		return 0
+	}
+	return time.Since(t).Milliseconds()
+}
+
+// EventContent produces a short human-readable summary for an event kind,
+// used to label "system_event" steps in the session timeline.
+func EventContent(kind string, data any) string {
+	switch kind {
+	case "context_injection":
+		m, _ := data.(map[string]any)
+		if m != nil {
+			var parts []string
+			if v, ok := m["memories"].(string); ok && strings.TrimSpace(v) != "" {
+				parts = append(parts, "long-term memory")
+			}
+			if n, ok := m["past_sessions_len"].(int); ok && n > 0 {
+				parts = append(parts, "past session context")
+			}
+			if n, ok := m["skills_len"].(int); ok && n > 0 {
+				parts = append(parts, "custom skills")
+			}
+			if len(parts) > 0 {
+				return "Injected context: " + strings.Join(parts, ", ") + "."
+			}
+		}
+		return "Context injection"
+	case "plan_mode":
+		m, _ := data.(map[string]any)
+		if m != nil {
+			if mode, ok := m["mode"].(string); ok {
+				return fmt.Sprintf("Plan confirmation mode: %s", mode)
+			}
+		}
+	case "memory_recall":
+		return "Recalled relevant long-term memory."
+	case "past_sessions":
+		return "Injected past session context."
+	case "skills_loaded":
+		return "Loaded custom skills."
+	case "model_resolved":
+		m, _ := data.(map[string]any)
+		if m != nil {
+			if model, ok := m["model"].(string); ok {
+				return fmt.Sprintf("Resolved model: %s", model)
+			}
+		}
+	}
+	return kind
+}
 
 func (r *Recorder) OnDone(resp ollama.ChatResponse) {
 	r.mu.Lock()

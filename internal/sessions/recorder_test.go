@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
@@ -61,6 +62,43 @@ func TestRecorderStoresPresentPlanAsPlanStep(t *testing.T) {
 	}
 	if len(step.PlanSteps) != 2 || step.PlanSteps[0] != "One" || step.PlanSteps[1] != "Two" {
 		t.Fatalf("unexpected plan steps: %#v", step.PlanSteps)
+	}
+}
+
+func TestRecorderRecordEvent(t *testing.T) {
+	rec := &Recorder{}
+	rec.RecordEvent("model_resolved", "Resolved model: llama3.1", map[string]any{"model": "llama3.1"})
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one step, got %d", len(rec.currentTurn.Steps))
+	}
+	step := rec.currentTurn.Steps[0]
+	if step.Type != "system_event" || step.Name != "model_resolved" {
+		t.Fatalf("unexpected event step: %#v", step)
+	}
+	if step.Content != "Resolved model: llama3.1" {
+		t.Fatalf("unexpected event content: %#v", step)
+	}
+	if step.Timestamp == "" {
+		t.Fatal("expected event step to have a timestamp")
+	}
+}
+
+func TestRecorderToolDuration(t *testing.T) {
+	rec := &Recorder{}
+	rec.OnToolStart("web_search", map[string]any{"query": "weather"}, "internal")
+	time.Sleep(5 * time.Millisecond)
+	rec.OnToolResult("web_search", "results", "internal")
+
+	if len(rec.currentTurn.Steps) != 1 {
+		t.Fatalf("expected one step, got %d", len(rec.currentTurn.Steps))
+	}
+	step := rec.currentTurn.Steps[0]
+	if step.Status != "done" {
+		t.Fatalf("expected tool step done, got %#v", step)
+	}
+	if step.DurationMs <= 0 {
+		t.Fatalf("expected positive duration, got %d", step.DurationMs)
 	}
 }
 

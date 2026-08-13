@@ -383,6 +383,7 @@ func (d *sleepStreamHandler) OnToolStart(name string, args any, source string)  
 func (d *sleepStreamHandler) OnToolResult(name string, result string, source string)             {}
 func (d *sleepStreamHandler) OnMediaPreProcessing(content string)                                {}
 func (d *sleepStreamHandler) OnDone(resp ollama.ChatResponse)                                    {}
+func (d *sleepStreamHandler) OnEvent(kind string, data any)                                      {}
 func (d *sleepStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {}
 func (d *sleepStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
 }

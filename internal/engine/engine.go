@@ -116,6 +116,20 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 
 	think := agent.ShouldThink(model, cfg.OllamaThinkEnabled, SnapshotPath(deps.CachePath))
 	log.Printf("[Engine] Running turn channel=%q model=%q think=%v messages=%d", req.Channel, model, think, len(ollamaMessages))
+
+	// Record turn-level decisions into the session timeline for debugging.
+	recorder.RecordEvent("model_resolved", "", map[string]any{
+		"model":     model,
+		"channel":   req.Channel,
+		"think":     think,
+		"messages":  len(ollamaMessages),
+	})
+	if len(mediaRes.Attachments) > 0 {
+		recorder.RecordEvent("media_pre_processing", "", map[string]any{
+			"attachments": len(mediaRes.Attachments),
+			"note":        mediaRes.ContextNote,
+		})
+	}
 	a := agent.NewAgent(deps.ConfigMgr, deps.Client, registry)
 	finalHistory, runErr := a.Run(ctx, model, ollamaMessages, think, handler)
 	result.FinalHistory = finalHistory
@@ -346,6 +360,7 @@ func (noopStreamHandler) OnToolStart(string, any, string)                  {}
 func (noopStreamHandler) OnToolResult(string, string, string)              {}
 func (noopStreamHandler) OnMediaPreProcessing(string)                      {}
 func (noopStreamHandler) OnDone(ollama.ChatResponse)                       {}
+func (noopStreamHandler) OnEvent(string, any)                              {}
 func (noopStreamHandler) OnContextOptimizationStart(int, float64)          {}
 func (noopStreamHandler) OnContextOptimizationEnd(int, float64, float64)   {}
 func (noopStreamHandler) OnContextOptimized([]ollama.Message, string, int) {}

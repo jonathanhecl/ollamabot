@@ -955,7 +955,16 @@ func (h *sseStreamHandler) OnDone(resp ollama.ChatResponse) {
 	h.turnEnded = true
 }
 
+func (h *sseStreamHandler) OnEvent(kind string, data any) {
+	if h.recorder != nil {
+		h.recorder.RecordEvent(kind, sessions.EventContent(kind, data), data)
+	}
+}
+
 func (h *sseStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
+	if h.recorder != nil {
+		h.recorder.OnContextOptimizationStart(tokensBefore, percentBefore)
+	}
 	writeSSE(h.w, "context_optimization_start", map[string]any{
 		"tokens":  tokensBefore,
 		"percent": percentBefore,
@@ -966,6 +975,9 @@ func (h *sseStreamHandler) OnContextOptimizationStart(tokensBefore int, percentB
 }
 
 func (h *sseStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
+	if h.recorder != nil {
+		h.recorder.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
+	}
 	writeSSE(h.w, "context_optimization_end", map[string]any{
 		"tokens":   tokensAfter,
 		"percent":  percentAfter,

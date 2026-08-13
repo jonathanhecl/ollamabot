@@ -30,6 +30,7 @@ func (h *testOptStreamHandler) OnToolStart(string, any, string)     {}
 func (h *testOptStreamHandler) OnToolResult(string, string, string) {}
 func (h *testOptStreamHandler) OnMediaPreProcessing(string)         {}
 func (h *testOptStreamHandler) OnDone(ollama.ChatResponse)          {}
+func (h *testOptStreamHandler) OnEvent(kind string, data any)       {}
 
 func (h *testOptStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
 	h.optStarted = true
