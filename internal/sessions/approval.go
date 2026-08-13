@@ -293,7 +293,16 @@ func FormatApprovalSignature(tool string, args map[string]any, workspace string)
 		argv := normalizeCommandArgs(command, stringSlice(args["args"]), workspace)
 		parts := append([]string{command}, argv...)
 		label = strings.Join(parts, " ")
-		return "execute_command:" + strings.Join(parts, "\x00"), label
+		// Coarse grant key: command + operation (subcommand for git/npm/yarn,
+		// first arg otherwise). "Remember for session" then covers the same
+		// operation regardless of exact arguments (e.g. `git push origin main`
+		// and `git push origin dev` share one grant), without granting the whole
+		// tool.
+		sig := []string{command}
+		if len(argv) > 0 {
+			sig = append(sig, argv[0])
+		}
+		return "execute_command:" + strings.Join(sig, "\x00"), label
 	case "write_file", "edit_file", "apply_diff":
 		filePath, _ := args["file_path"].(string)
 		abs := normalizeApprovalPath(filePath, workspace)
@@ -305,7 +314,9 @@ func FormatApprovalSignature(tool string, args map[string]any, workspace string)
 		if len(b) > 0 {
 			label += " " + string(b)
 		}
-		return tool + ":" + string(b), label
+		// Grant the whole tool for the session (covers unsafe MCP tools and
+		// server add/remove operations with any arguments).
+		return tool + ":" + "*", label
 	}
 }
 

@@ -126,6 +126,29 @@ func TestApprovalSignatureNormalizesDuplicateCommand(t *testing.T) {
 	}
 }
 
+func TestApprovalSignatureCoarseOperationGrant(t *testing.T) {
+	workspace := t.TempDir()
+	pushMain, _ := sessions.FormatApprovalSignature("execute_command", map[string]any{
+		"command": "git",
+		"args":    []any{"push", "origin", "main"},
+	}, workspace)
+	pushDev, _ := sessions.FormatApprovalSignature("execute_command", map[string]any{
+		"command": "git",
+		"args":    []any{"push", "origin", "dev"},
+	}, workspace)
+	reset, _ := sessions.FormatApprovalSignature("execute_command", map[string]any{
+		"command": "git",
+		"args":    []any{"reset", "--hard"},
+	}, workspace)
+
+	if pushMain != pushDev {
+		t.Fatalf("expected same-operation signatures to match, got %q vs %q", pushMain, pushDev)
+	}
+	if pushMain == reset {
+		t.Fatalf("expected different operations to have distinct signatures, both %q", pushMain)
+	}
+}
+
 func TestApprovalServiceSessionGrant(t *testing.T) {
 	store := sessions.NewStore(t.TempDir())
 	sess := sessions.Session{ID: "approval-session", Title: "Approval", CreatedAt: time.Now(), UpdatedAt: time.Now()}

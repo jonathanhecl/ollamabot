@@ -2429,12 +2429,7 @@ func (h *telegramClarificationHandler) RequestClarification(ctx context.Context,
 	case <-ctx.Done():
 		chosen := selectDefaultOption(options)
 		_ = h.bot.editMessageText(h.chatID, msgID, text+fmt.Sprintf("\n\n⚠️ *Cancelled:* proceeding with default option: %s", chosen), "", nil)
-		return fmt.Sprintf("Clarification was cancelled or timed out. Proceeding with default option: %s", chosen), nil
-	case <-time.After(5 * time.Minute):
-		chosen := selectDefaultOption(options)
-		statusText := fmt.Sprintf("⚠️ *Timed out:* auto-selected option: %s", chosen)
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
-		return chosen, nil
+		return fmt.Sprintf("Clarification was cancelled. Proceeding with default option: %s", chosen), nil
 	}
 }
 
@@ -2511,16 +2506,6 @@ func (h *telegramPlanConfirmationHandler) RequestPlanApproval(ctx context.Contex
 	case <-ctx.Done():
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* plan proposal cancelled.", "Markdown", nil)
 		return false, ctx.Err()
-	case <-time.After(5 * time.Minute):
-		plan, err := sessions.ActivatePlan(h.bot.sessions, h.sessionID, summary, steps)
-		if err != nil {
-			return false, err
-		}
-		h.bot.rememberPlanMessage(h.sessionID, h.chatID, msgID)
-		text = sessions.FormatPlanChecklist(plan.Summary, plan.Steps, plan.Completed)
-		statusText := "⚠️ *Timed out:* auto-approving plan."
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "Markdown", nil)
-		return true, nil
 	}
 }
 

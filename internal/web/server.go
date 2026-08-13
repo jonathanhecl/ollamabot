@@ -2472,8 +2472,6 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(5 * time.Minute)
-
 	for {
 		select {
 		case chosen := <-ch:
@@ -2487,11 +2485,7 @@ func (h *webClarificationHandler) RequestClarification(ctx context.Context, ques
 		case <-ctx.Done():
 			chosen := selectDefaultOption(options)
 			log.Printf("[Web] Clarification cancelled. Proceeding with default option: %q", chosen)
-			return fmt.Sprintf("Clarification was cancelled or timed out. Proceeding with default option: %s", chosen), nil
-		case <-timeout:
-			chosen := selectDefaultOption(options)
-			log.Printf("[Web] Clarification timed out. Auto-selected default option: %q", chosen)
-			return chosen, nil
+			return fmt.Sprintf("Clarification was cancelled. Proceeding with default option: %s", chosen), nil
 		}
 	}
 }
@@ -2587,8 +2581,6 @@ func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, su
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(5 * time.Minute)
-
 	for {
 		select {
 		case approved := <-ch:
@@ -2602,11 +2594,8 @@ func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, su
 		case <-ctx.Done():
 			// Keep waiting for the user's card response when possible. The SSE
 			// request may be interrupted while the UI still has the approval card.
-			log.Printf("[Web] Plan confirmation request context closed; continuing until response or timeout.")
+			log.Printf("[Web] Plan confirmation request context closed; continuing until response.")
 			ctx = context.Background()
-		case <-timeout:
-			log.Printf("[Web] Plan confirmation timed out. Auto-approving.")
-			return true, nil
 		}
 	}
 }

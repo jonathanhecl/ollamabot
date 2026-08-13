@@ -267,7 +267,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				Content: planReinforce,
 			})
 		} else if planMode == "smart" {
-			planReinforce := "For complex tasks requiring multiple steps, file modifications, or tool sequences, you SHOULD call the 'present_plan' tool to present your plan to the user for approval before calling other tools. DO NOT call present_plan for simple tasks, simple questions, weather retrieval, or when you only need to run a single tool call (e.g., calling web_search to find the weather or read_file to read a document). In those cases, call the tool directly without presenting a plan first."
+			planReinforce := "Present a plan with 'present_plan' ONLY for genuinely complex or risky work: modifying several files, running commands that change state, or a sequence of 3+ distinct tool actions whose order matters. Present a plan if the user explicitly asks for one. Otherwise, just execute directly — do NOT present a plan for simple questions, quick lookups, or anything you can finish in 1-2 tool calls (e.g. web_search for weather, read_file of one document, a single write_file/edit_file)."
 			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
