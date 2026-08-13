@@ -15,6 +15,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -512,6 +513,15 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		am.isWorking[projectID] = false
 		am.mu.Unlock()
 	}()
+
+	// Respect the single global background agent slot shared with GoalManager,
+	// PlanMonitor, and SleepManager so autonomous tasks never run concurrently
+	// with another background loop (which would thrash Ollama/VRAM).
+	releaseSlot := sessions.TryAcquireBackgroundSlot()
+	if releaseSlot == nil {
+		return fmt.Errorf("background slot busy, deferring autonomous task execution")
+	}
+	defer releaseSlot()
 
 	proj, err := am.LoadProject(projectID)
 	if err != nil {

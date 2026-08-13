@@ -12,8 +12,6 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 )
 
-const ApprovalTimeout = 5 * time.Minute
-
 // PendingApproval is the persisted reason a session is paused for a security decision.
 type PendingApproval struct {
 	ID          string         `json:"id"`
@@ -141,7 +139,7 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 		Label:       label,
 		RiskSummary: strings.TrimSpace(riskSummary),
 		CreatedAt:   now,
-		ExpiresAt:   now.Add(ApprovalTimeout),
+		ExpiresAt:   time.Time{}, // no expiry: approvals wait until the user responds or the turn is aborted
 	}
 	waiter := make(chan ApprovalDecision, 1)
 
@@ -161,8 +159,6 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 	NotifyUpdate(sessionID)
 	s.notify(sessionID, approval)
 
-	timeout := time.NewTimer(ApprovalTimeout)
-	defer timeout.Stop()
 	defer func() {
 		s.mu.Lock()
 		delete(s.waiters, approval.ID)
@@ -183,9 +179,6 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 		return decision.Approved, nil
 	case <-ctx.Done():
 		return false, ctx.Err()
-	case <-timeout.C:
-		_ = s.resolvePending(sessionID, approval, ApprovalDecision{Approved: false})
-		return false, fmt.Errorf("approval timeout")
 	}
 }
 

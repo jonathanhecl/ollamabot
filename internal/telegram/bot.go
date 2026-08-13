@@ -2730,11 +2730,8 @@ func (h *telegramApprovalHandler) RequestApproval(ctx context.Context, toolName 
 		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n"+statusText, "", nil)
 		return approved, nil
 	case <-ctx.Done():
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request timed out or was aborted.", "", nil)
+		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Cancelled:* request was aborted.", "", nil)
 		return false, ctx.Err()
-	case <-time.After(5 * time.Minute):
-		_ = h.bot.editMessageText(h.chatID, msgID, text+"\n\n⚠️ *Timed out:* auto-denied after 5 minutes.", "", nil)
-		return false, fmt.Errorf("approval timeout")
 	}
 }
 

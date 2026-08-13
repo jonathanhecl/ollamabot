@@ -64,7 +64,8 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 	handler.called = false
 	handler.response = false
 
-	execArgs := map[string]any{"command": "python3", "args": []any{"-V"}}
+	// A risky command (git push) must still request approval and be denied.
+	execArgs := map[string]any{"command": "git", "args": []any{"push"}}
 	execArgsBytes, _ := json.Marshal(execArgs)
 	execCall := ollama.ToolCall{
 		Type: "function",
@@ -85,6 +86,24 @@ func TestApprovalHandlerRiskyTools(t *testing.T) {
 	}
 	if handler.lastTool != "execute_command" {
 		t.Errorf("expected tool to be 'execute_command', got %q", handler.lastTool)
+	}
+
+	// A safe command (go version) must NOT request approval in interactive mode.
+	handler.called = false
+	safeArgs := map[string]any{"command": "go", "args": []any{"version"}}
+	safeArgsBytes, _ := json.Marshal(safeArgs)
+	safeCall := ollama.ToolCall{
+		Type: "function",
+		Function: ollama.ToolFunction{
+			Name:      "execute_command",
+			Arguments: safeArgsBytes,
+		},
+	}
+	if _, err := registry.Execute(context.Background(), safeCall); err != nil {
+		t.Fatalf("safe execute failed: %v", err)
+	}
+	if handler.called {
+		t.Error("expected safe interactive command to bypass approval")
 	}
 }
 

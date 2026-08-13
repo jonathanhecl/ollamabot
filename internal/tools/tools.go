@@ -1296,7 +1296,9 @@ func toInt(v any) int {
 
 // Definitions returns the Ollama tool definitions to expose to the model.
 func (r *Registry) Definitions() []ollama.Tool {
-	if r.planConfirmMode == "auto" {
+	// "auto" and "never" both disable plan confirmation: present_plan is removed
+	// so the model cannot trigger a plan approval flow at all.
+	if r.planConfirmMode == "auto" || r.planConfirmMode == "never" {
 		var filtered []ollama.Tool
 		for _, d := range r.defs {
 			if d.Function.Name != "present_plan" {
@@ -1387,13 +1389,10 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		if assessment.Level == RiskBlocked {
 			return "", fmt.Errorf("tool %q blocked: %s", name, assessment.Summary)
 		}
+		// Interactive mode trusts the smart risk classification: safe commands
+		// (allowed executable, scoped to the workspace, no shell operators) run
+		// without prompting; only genuinely risky actions request approval.
 		needsApproval := assessment.Level == RiskNeedsApproval
-		if r.approvalPolicy == ApprovalPolicyInteractive && name == "execute_command" {
-			needsApproval = true
-			if assessment.Summary == "" || assessment.Level == RiskSafe {
-				assessment.Summary = "Shell commands can execute local code or modify files, so interactive chat requires explicit approval before running them."
-			}
-		}
 
 		if needsApproval {
 			if r.approvalService != nil && strings.TrimSpace(r.sessionID) != "" {

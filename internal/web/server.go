@@ -2387,8 +2387,6 @@ func (h *webApprovalHandler) RequestApproval(ctx context.Context, toolName strin
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 
-	timeout := time.After(5 * time.Minute)
-
 	for {
 		select {
 		case approved := <-ch:
@@ -2401,8 +2399,6 @@ func (h *webApprovalHandler) RequestApproval(ctx context.Context, toolName strin
 			}
 		case <-ctx.Done():
 			return false, ctx.Err()
-		case <-timeout:
-			return false, fmt.Errorf("approval timeout")
 		}
 	}
 }

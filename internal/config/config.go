@@ -223,6 +223,7 @@ func Load(path string) (Config, error) {
 	} else if value := apply("PLAN_CONFIRMATION"); value != "" {
 		cfg.PlanConfirmation = value
 	}
+	cfg.PlanConfirmation = normalizePlanConfirmation(cfg.PlanConfirmation)
 	if value := apply("SUBAGENT_TIMEOUT_MINUTES"); value != "" {
 		if val, err := strconv.Atoi(value); err == nil && val > 0 {
 			cfg.SubagentTimeoutMinutes = val
@@ -704,6 +705,21 @@ func parseBool(raw string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// normalizePlanConfirmation maps a plan confirmation mode to a canonical value.
+// Valid modes are "smart", "always", and "never". "auto" and other off-like
+// values are normalized to "never" (plan confirmation disabled). Unknown values
+// fall back to "smart".
+func normalizePlanConfirmation(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "always", "smart":
+		return strings.ToLower(strings.TrimSpace(mode))
+	case "auto", "never", "off", "none", "disabled", "false", "0":
+		return "never"
+	default:
+		return "smart"
 	}
 }
 

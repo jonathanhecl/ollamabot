@@ -48,6 +48,9 @@ type SleepManager struct {
 	state        LearningState
 	statePath    string
 	taskQueue    []Subtask
+	inFlight     []string  // sessions currently being analyzed (requeued on pause)
+	pendingWork  bool      // non-subagent mode: whether unanalyzed sessions remain
+	resumeNotBefore time.Time // don't re-enter sleep before this (resume delay)
 }
 
 func (sm *SleepManager) config() config.Config {
@@ -66,8 +69,18 @@ func NewSleepManager(cfg *config.Manager, client *ollama.Client, memoryStore *me
 }
 
 func (sm *SleepManager) NotifyUserActivity() {
+	resumeDelay := time.Duration(0)
+	if d, err := time.ParseDuration(sm.config().SleepModeResumeDelay); err == nil && d > 0 {
+		resumeDelay = d
+	}
+
 	sm.mu.Lock()
 	sm.lastActivity = time.Now()
+	if resumeDelay > 0 {
+		sm.resumeNotBefore = sm.lastActivity.Add(resumeDelay)
+	} else {
+		sm.resumeNotBefore = sm.lastActivity
+	}
 	wasSleeping := sm.isSleeping
 	wasLearning := sm.isLearning
 	sm.mu.Unlock()
@@ -107,15 +120,17 @@ func (sm *SleepManager) Start(ctx context.Context) {
 			case <-ticker.C:
 				sm.mu.RLock()
 				lastAct := sm.lastActivity
+				resumeNotBefore := sm.resumeNotBefore
 				isSleeping := sm.isSleeping
 				isLearning := sm.isLearning
 				sm.mu.RUnlock()
 
 				now := time.Now()
-				if now.Sub(lastAct) >= inactivityThreshold {
+				if now.Sub(lastAct) >= inactivityThreshold && !now.Before(resumeNotBefore) {
 					if !isSleeping && !isLearning {
 						sm.mu.Lock()
 						sm.isSleeping = true
+						sm.pendingWork = true
 						subagentsEnabled := sm.config().SleepModeSubagentsEnabled
 						var queue []Subtask
 						if subagentsEnabled {
@@ -149,11 +164,16 @@ func (sm *SleepManager) Start(ctx context.Context) {
 						sm.mu.Lock()
 						subagentsEnabled := sm.config().SleepModeSubagentsEnabled
 						queueLen := len(sm.taskQueue)
+						pendingWork := sm.pendingWork
 						sm.mu.Unlock()
 
 						if subagentsEnabled && queueLen > 0 {
 							log.Printf("[sleep] Processing next subagent task sequentially (remaining in queue: %d)...", queueLen)
 							sm.processNextQueuedTask(ctx)
+						} else if !subagentsEnabled && pendingWork {
+							// Non-subagent mode: retry a previously deferred cycle
+							// (e.g. VRAM busy) so pending sessions are not dropped.
+							go sm.runLearningCycle(ctx)
 						}
 					}
 				}
@@ -170,9 +190,22 @@ func (sm *SleepManager) Pause() {
 		sm.learnCancel()
 		sm.learnCancel = nil
 	}
+
+	// Preserve pending learning work: requeue any in-flight sessions so the
+	// analysis is resumed later instead of being dropped when the user speaks.
+	if len(sm.inFlight) > 0 {
+		prepend := make([]Subtask, 0, len(sm.inFlight))
+		for _, id := range sm.inFlight {
+			prepend = append(prepend, Subtask{Type: "analyze_session", TargetID: id})
+		}
+		sm.taskQueue = append(prepend, sm.taskQueue...)
+		sm.inFlight = nil
+	}
 	sm.isLearning = false
 	sm.isSleeping = false
-	sm.taskQueue = nil
+	sm.pendingWork = false
+	// NOTE: taskQueue is intentionally preserved so pending subtasks survive
+	// the pause and are resumed on the next sleep cycle.
 
 	if sm.client != nil {
 		go func() {
@@ -387,6 +420,9 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 	}
 
 	if len(sessionsToAnalyze) == 0 {
+		sm.mu.Lock()
+		sm.pendingWork = false
+		sm.mu.Unlock()
 		log.Println("[sleep] No new sessions to analyze.")
 		return
 	}
@@ -405,6 +441,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 		return
 	}
 	sm.isLearning = true
+	sm.inFlight = append([]string(nil), sessionsToAnalyze...)
 	ctx, cancel := context.WithCancel(parentCtx)
 	sm.learnCancel = cancel
 	sm.mu.Unlock()
@@ -413,6 +450,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 	if releaseSlot == nil {
 		sm.mu.Lock()
 		sm.isLearning = false
+		sm.inFlight = nil
 		if sm.learnCancel != nil {
 			sm.learnCancel = nil
 		}
@@ -431,6 +469,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 		cancel()
 		sm.mu.Lock()
 		sm.isLearning = false
+		sm.inFlight = nil
 		if sm.learnCancel != nil {
 			sm.learnCancel = nil
 		}
