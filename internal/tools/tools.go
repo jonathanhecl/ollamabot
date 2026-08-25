@@ -69,7 +69,18 @@ type Registry struct {
 	approvalProgressHandler ApprovalProgressHandler
 	mcpManager              *mcp.Manager
 	mcpToolNames            map[string]bool
+	safetyPolicy            SafetyPolicy
+	dryRun                  bool
 }
+
+// SafetyPolicy defines the enforcement level for tool operations.
+type SafetyPolicy int
+
+const (
+	SafetyPolicyStandard SafetyPolicy = iota
+	SafetyPolicyWorkspaceSafe
+	SafetyPolicyReadOnly
+)
 
 // ImageProgressHandler is called during image generation with progress updates
 type ImageProgressHandler interface {
@@ -1326,6 +1337,26 @@ func (r *Registry) EmbedModel() string {
 	return r.embedModel
 }
 
+// SetDryRun enables or disables dry-run simulation mode.
+func (r *Registry) SetDryRun(dryRun bool) {
+	r.dryRun = dryRun
+}
+
+// DryRun reports whether dry-run simulation mode is active.
+func (r *Registry) DryRun() bool {
+	return r.dryRun
+}
+
+// SetSafetyPolicy configures the execution safety level.
+func (r *Registry) SetSafetyPolicy(policy SafetyPolicy) {
+	r.safetyPolicy = policy
+}
+
+// SafetyPolicy returns the current safety policy.
+func (r *Registry) SafetyPolicy() SafetyPolicy {
+	return r.safetyPolicy
+}
+
 // Execute runs a tool call and returns the result string.
 func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, error) {
 	name := call.Function.Name
@@ -1336,6 +1367,18 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	var args map[string]any
 	if err := json.Unmarshal(call.Function.Arguments, &args); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	// 1. Enforce ReadOnly safety policy
+	if r.safetyPolicy == SafetyPolicyReadOnly && isModifyingTool(name) {
+		telemetry.Global.RecordSecurityBlock(name, "Blocked by ReadOnly safety policy")
+		return "", fmt.Errorf("tool %q is blocked by ReadOnly safety policy", name)
+	}
+
+	// 2. Handle DryRun simulation mode
+	if r.dryRun && isModifyingTool(name) {
+		telemetry.Global.RecordDryRun(name)
+		return simulateTool(name, args, r.workspace)
 	}
 
 	// Risk check: interactive chat asks for shell commands; autonomous runs safe commands
@@ -2818,4 +2861,81 @@ func maskSensitiveMap(in map[string]string) map[string]string {
 		}
 	}
 	return out
+}
+
+func isModifyingTool(name string) bool {
+	switch name {
+	case "write_file", "edit_file", "apply_diff", "execute_command", "memory_add", "memory_delete", "mcp_add_server", "mcp_delete_server":
+		return true
+	default:
+		return false
+	}
+}
+
+func simulateTool(name string, args map[string]any, workspace string) (string, error) {
+	switch name {
+	case "write_file":
+		filePath, _ := args["file_path"].(string)
+		content, _ := args["contents"].(string)
+		if filePath == "" {
+			return "", fmt.Errorf("missing file_path")
+		}
+		if _, err := ResolveAndValidatePath(workspace, filePath); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[DRY-RUN SIMULATION] File write to %q simulated (%d bytes). No changes were written to disk.", filePath, len(content)), nil
+
+	case "edit_file":
+		filePath, _ := args["file_path"].(string)
+		target, _ := args["target"].(string)
+		replacement, _ := args["replacement"].(string)
+		if filePath == "" || target == "" {
+			return "", fmt.Errorf("missing file_path or target")
+		}
+		abs, err := ResolveAndValidatePath(workspace, filePath)
+		if err != nil {
+			return "", err
+		}
+		raw, err := os.ReadFile(abs)
+		if err != nil {
+			return "", fmt.Errorf("cannot read file for simulation: %w", err)
+		}
+		if !strings.Contains(string(raw), target) {
+			return "", fmt.Errorf("target string not found in %q", filePath)
+		}
+		return fmt.Sprintf("[DRY-RUN SIMULATION] File edit on %q simulated (target matched, replacement %d bytes). No changes were written to disk.", filePath, len(replacement)), nil
+
+	case "apply_diff":
+		filePath, _ := args["file_path"].(string)
+		if filePath == "" {
+			return "", fmt.Errorf("missing file_path")
+		}
+		if _, err := ResolveAndValidatePath(workspace, filePath); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("[DRY-RUN SIMULATION] Diff application to %q simulated. No changes were written to disk.", filePath), nil
+
+	case "execute_command":
+		cmd, _ := args["command"].(string)
+		cmdArgs, _ := args["args"].([]any)
+		if cmd == "" {
+			return "", fmt.Errorf("missing command")
+		}
+		assessment := ClassifyToolRisk("execute_command", args, workspace)
+		if assessment.Level == RiskBlocked {
+			return "", fmt.Errorf("command blocked by security policy: %s", assessment.Summary)
+		}
+		return fmt.Sprintf("[DRY-RUN SIMULATION] Command execution simulated: %s %v. Process was not spawned.", cmd, cmdArgs), nil
+
+	case "memory_add":
+		text, _ := args["text"].(string)
+		return fmt.Sprintf("[DRY-RUN SIMULATION] Memory entry simulated (%d bytes). Store was not modified.", len(text)), nil
+
+	case "memory_delete":
+		id, _ := args["id"].(string)
+		return fmt.Sprintf("[DRY-RUN SIMULATION] Memory deletion for ID %s simulated. Store was not modified.", id), nil
+
+	default:
+		return fmt.Sprintf("[DRY-RUN SIMULATION] Tool %q execution simulated.", name), nil
+	}
 }

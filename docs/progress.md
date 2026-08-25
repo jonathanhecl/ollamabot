@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-08-25 — Safety Policies, Dry-Run Simulation Mode & Sensitive Credential Sandboxing
+
+Implemented enhanced tool execution sandboxing, dry-run simulation mode, and sensitive path guardrails (`internal/tools`, `internal/telemetry`):
+
+### 1. Dry-Run Simulation Mode (`internal/tools/tools.go`)
+- **`SetDryRun(bool)`**: When enabled, modifying tools (`write_file`, `edit_file`, `apply_diff`, `execute_command`, `memory_add`, `memory_delete`) validate parameters and simulate outcomes with clear `[DRY-RUN SIMULATION]` output messages without modifying disk or spawning OS processes.
+
+### 2. Granular Safety Policy Levels (`internal/tools/tools.go`)
+- **`SafetyPolicy`**: Configurable enforcement levels (`SafetyPolicyStandard`, `SafetyPolicyWorkspaceSafe`, `SafetyPolicyReadOnly`).
+- **`SafetyPolicyReadOnly`**: Disallows state-modifying actions while allowing non-destructive tools (`read_file`, `list_files`, `search_files`, `memory_search`, `sessions_search`).
+
+### 3. Sensitive Path & Credential Protection (`internal/tools/write.go`, `internal/tools/readfile.go`)
+- Rejects reading/writing sensitive files (`.env`, `.env.*`, `id_rsa`, `id_ed25519`, `id_ecdsa`, `id_dsa`, `*.pem`, `*.key`, `.git/`, `.ssh/`).
+
+### 4. Telemetry Integration & Tests (`internal/telemetry`, `internal/tools/safety_test.go`)
+- Tracks security blocks and dry-run executions in `telemetry.Collector`.
+- Comprehensive unit tests covering dry-run simulation, sensitive file rejection, and ReadOnly safety policy.
+
 ## 2026-08-25 — Observability, Real-Time Telemetry & Tool Profiling System
 
 Implemented comprehensive runtime observability, inference performance tracking, tool profiling, and GPU VRAM monitoring (`internal/telemetry`, `internal/tools`, `internal/engine`, `internal/web`):

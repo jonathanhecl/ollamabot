@@ -67,9 +67,16 @@ type Snapshot struct {
 	Models               []ModelStats       `json:"models"`
 	Tools                []ToolStats        `json:"tools"`
 	ContextOptimizations OptimizationStats  `json:"context_optimizations"`
+	Security             SecurityStats      `json:"security"`
 	ActiveVRAMModels     []VRAMModelInfo    `json:"active_vram_models"`
 	TotalVRAMUsedMB      int64              `json:"total_vram_used_mb"`
 	RecentTurns          []TurnRecord       `json:"recent_turns"`
+}
+
+// SecurityStats tracks blocked operations and dry-run executions.
+type SecurityStats struct {
+	BlockedCount int64 `json:"blocked_count"`
+	DryRunCount  int64 `json:"dry_run_count"`
 }
 
 // Collector manages in-memory performance telemetry for the agent system.
@@ -81,11 +88,12 @@ type Collector struct {
 	evalTokens   int64
 	evalDuration int64 // nanoseconds
 
-	models      map[string]*ModelStats
-	tools       map[string]*ToolStats
+	models        map[string]*ModelStats
+	tools         map[string]*ToolStats
 	optimizations OptimizationStats
-	recentTurns []TurnRecord
-	maxRecent   int
+	security      SecurityStats
+	recentTurns   []TurnRecord
+	maxRecent     int
 }
 
 // Global is the default global telemetry collector instance.
@@ -200,6 +208,26 @@ func (c *Collector) RecordOptimization(tokensSaved int) {
 	c.optimizations.LastOptimizationSec = time.Now().Unix()
 }
 
+// RecordSecurityBlock records a blocked tool action due to security policies.
+func (c *Collector) RecordSecurityBlock(toolName string, reason string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.security.BlockedCount++
+}
+
+// RecordDryRun records a simulated tool execution in dry-run mode.
+func (c *Collector) RecordDryRun(toolName string) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.security.DryRunCount++
+}
+
 // Snapshot returns a comprehensive point-in-time metrics summary, including active VRAM from Ollama.
 func (c *Collector) Snapshot(ctx context.Context, client *ollama.Client) Snapshot {
 	if c == nil {
@@ -212,6 +240,7 @@ func (c *Collector) Snapshot(ctx context.Context, client *ollama.Client) Snapsho
 		TotalPromptTokens:    c.promptTokens,
 		TotalEvalTokens:      c.evalTokens,
 		ContextOptimizations: c.optimizations,
+		Security:             c.security,
 		Models:               make([]ModelStats, 0, len(c.models)),
 		Tools:                make([]ToolStats, 0, len(c.tools)),
 		RecentTurns:          make([]TurnRecord, len(c.recentTurns)),
@@ -268,5 +297,6 @@ func (c *Collector) Reset() {
 	c.models = make(map[string]*ModelStats)
 	c.tools = make(map[string]*ToolStats)
 	c.optimizations = OptimizationStats{}
+	c.security = SecurityStats{}
 	c.recentTurns = make([]TurnRecord, 0, c.maxRecent)
 }

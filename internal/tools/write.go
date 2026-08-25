@@ -46,10 +46,19 @@ func ResolveAndValidatePath(workspace, rawPath string) (string, error) {
 		return "", fmt.Errorf("path escapes workspace")
 	}
 
-	// Safety: protect system folders or specific hidden files
+	// Safety: protect system folders or specific hidden/sensitive files
 	lower := strings.ToLower(absReal)
-	if strings.Contains(lower, ".git"+string(filepath.Separator)) {
-		return "", fmt.Errorf("writing inside .git directory is not allowed")
+	base := strings.ToLower(filepath.Base(absReal))
+	if strings.Contains(lower, ".git"+string(filepath.Separator)) || base == ".git" {
+		return "", fmt.Errorf("accessing .git directory is not allowed")
+	}
+	if strings.Contains(lower, ".ssh"+string(filepath.Separator)) || base == ".ssh" {
+		return "", fmt.Errorf("accessing .ssh directory is not allowed")
+	}
+	if base == "id_rsa" || base == "id_ed25519" || base == "id_ecdsa" || base == "id_dsa" ||
+		strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") ||
+		base == ".env" || strings.HasPrefix(base, ".env.") {
+		return "", fmt.Errorf("accessing sensitive file %q is blocked for security", filepath.Base(absReal))
 	}
 
 	return absReal, nil
