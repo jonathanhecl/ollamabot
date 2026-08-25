@@ -1,5 +1,25 @@
 # Progress
 
+## 2026-08-25 — Hybrid Memory Search (BM25 + Vector), Lexical Fallback & Intra-Turn Context Compaction
+
+Implemented comprehensive long-term memory intelligence and intra-turn context resilience (`internal/memory`, `internal/tools`, `internal/agent`):
+
+### 1. Hybrid & Lexical Memory Search with Graceful Fallback (`internal/memory/memory.go`)
+- **`SearchText(query, k)`**: Token-based lexical keyword matching with normalized phrase matching and term-frequency scoring.
+- **`SearchHybrid(queryText, queryEmbedding, k, alpha)`**: Combines semantic vector similarity and lexical matching using configurable alpha weighting (default 0.70 vector / 0.30 lexical).
+- **Graceful Embeddings Fallback**: If an embedding model (`OLLAMA_MODEL_EMBED`) is not configured or embedding fails, memory search seamlessly falls back to keyword matching without throwing runtime errors.
+- **Categorization & Metadata**: Added support for optional `Category` and `Tags` metadata fields in memory entries.
+
+### 2. Proactive Auto-RAG Hybrid Recall (`internal/agent/loop.go`)
+- System prompt Auto-RAG pre-fetch now uses `SearchHybrid`, ensuring long-term memories are retrieved even when running lightweight models without embedding support.
+
+### 3. Intra-Turn Tool Output Compaction (`internal/agent/loop.go`)
+- **Context Budget Protection**: When single-turn executions with extensive tool loops (large file reads, multi-step commands) reach $\ge 90\%$ of the context window limit (`numCtx`), `compactToolOutputs` compresses bulky intermediate tool outputs while keeping the initial user prompt and the 2 most recent tool results intact.
+- Emits standard `OnContextOptimizationStart` and `OnContextOptimizationEnd` stream events to telemetry.
+
+### 4. Tests (`internal/memory/memory_test.go`, `internal/agent/context_opt_test.go`)
+- Added unit tests for `SearchText`, `SearchHybrid`, lexical fallback, and `compactToolOutputs`. All repository tests pass cleanly.
+
 ## 2026-08-03 — Automatic Session Context Pre-fetch, Smart VRAM Auto-Unload, Goal Progress Bar & Milestones
 
 Implemented 3 high-impact intelligence, VRAM management, and goal tracking capabilities (`internal/agent`, `internal/ollama`, `internal/sessions`, `internal/learning`):

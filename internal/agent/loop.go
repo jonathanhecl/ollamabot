@@ -132,34 +132,46 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		_ = UpdateSoulFromPrompt(goal)
 	}
 
-	// Proactive Auto-RAG context pre-fetching
+	// Proactive Auto-RAG context pre-fetching (Hybrid: Vector + Keyword)
 	var recalledMemoriesBlock string
-	if a.registry != nil && a.registry.MemoryStore() != nil && a.config().OllamaModelEmbed != "" && goal != "" {
-		embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
-			Model: a.config().OllamaModelEmbed,
-			Input: goal,
-		})
-		if err == nil && len(embedResp.Embeddings) > 0 {
-			results := a.registry.MemoryStore().Search(embedResp.Embeddings[0], 3)
-			if len(results) > 0 {
-				var sb strings.Builder
-				hasMatchingMemories := false
-				for _, res := range results {
-					if res.Score >= 0.70 {
-						if !hasMatchingMemories {
-							sb.WriteString("# Recalled Context (Long-term Memory)\n")
-							sb.WriteString("The following relevant information was retrieved from your long-term memory:\n")
-							hasMatchingMemories = true
-						}
-						fmt.Fprintf(&sb, "- %s (Source: %s, Relevance: %.2f)\n", res.Text, res.Source, res.Score)
+	if a.registry != nil && a.registry.MemoryStore() != nil && goal != "" {
+		var queryEmbedding []float64
+		if a.config().OllamaModelEmbed != "" && a.client != nil {
+			embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
+				Model: a.config().OllamaModelEmbed,
+				Input: goal,
+			})
+			if err == nil && len(embedResp.Embeddings) > 0 {
+				queryEmbedding = embedResp.Embeddings[0]
+			} else if err != nil {
+				log.Printf("[Agent Run] Memory pre-fetch embedding error: %v (falling back to keyword matching)", err)
+			}
+		}
+
+		results := a.registry.MemoryStore().SearchHybrid(goal, queryEmbedding, 3, 0.70)
+		if len(results) > 0 {
+			var sb strings.Builder
+			hasMatchingMemories := false
+			for _, res := range results {
+				if res.Score >= 0.50 {
+					if !hasMatchingMemories {
+						sb.WriteString("# Recalled Context (Long-term Memory)\n")
+						sb.WriteString("The following relevant information was retrieved from your long-term memory:\n")
+						hasMatchingMemories = true
 					}
-				}
-				if hasMatchingMemories {
-					recalledMemoriesBlock = sb.String()
+					sourceMeta := ""
+					if res.Source != "" {
+						sourceMeta = fmt.Sprintf("Source: %s, ", res.Source)
+					}
+					if res.Category != "" {
+						sourceMeta += fmt.Sprintf("Category: %s, ", res.Category)
+					}
+					fmt.Fprintf(&sb, "- %s (%sRelevance: %.2f)\n", res.Text, sourceMeta, res.Score)
 				}
 			}
-		} else if err != nil {
-			log.Printf("[Agent Run] Memory pre-fetch embedding error: %v (gracefully continuing)", err)
+			if hasMatchingMemories {
+				recalledMemoriesBlock = sb.String()
+			}
 		}
 	}
 
@@ -402,6 +414,45 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 				} else if err != nil {
 					log.Printf("[Agent Run] Context optimization failed: %v", err)
+					contextOptimizationFailed = true
+				}
+			} else {
+				// Intra-turn context compaction: prune bulky older tool outputs during long single-turn tool loops
+				startTime := time.Now()
+				tokensBefore := totalTokens
+				percentBefore := (float64(tokensBefore) / float64(numCtx)) * 100
+
+				compactedMessages, modifiedCount := compactToolOutputs(messages)
+				if modifiedCount > 0 {
+					if handler != nil {
+						handler.OnContextOptimizationStart(tokensBefore, percentBefore)
+					}
+					messages = compactedMessages
+
+					// Rebuild activeMessages
+					activeMessages = make([]ollama.Message, 0, len(staticPrefix)+len(dynamicPrefix)+len(messages))
+					activeMessages = append(activeMessages, staticPrefix...)
+					activeMessages = append(activeMessages, dynamicPrefix...)
+					activeMessages = append(activeMessages, messages...)
+
+					newFormattedActive := make([]ollama.Message, len(activeMessages))
+					for idx, msg := range activeMessages {
+						newFormattedActive[idx] = msg
+						if msg.Role == "assistant" && msg.Thinking != "" && !strings.Contains(msg.Content, "<think>") {
+							newFormattedActive[idx].Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
+						}
+					}
+					tokensAfter := estimateTokens(newFormattedActive)
+					percentAfter := (float64(tokensAfter) / float64(numCtx)) * 100
+					durationSeconds := time.Since(startTime).Seconds()
+
+					log.Printf("[Agent Run] Intra-turn tool output compaction pruned %d tool results: tokens %d -> %d (%.1f%% of context)",
+						modifiedCount, tokensBefore, tokensAfter, percentAfter)
+
+					if handler != nil {
+						handler.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
+					}
+				} else {
 					contextOptimizationFailed = true
 				}
 			}
@@ -1512,4 +1563,42 @@ func matchMCPReturnedName(toolName string, params map[string]any, mcpNames map[s
 		return base
 	}
 	return ""
+}
+
+// compactToolOutputs reduces the token footprint of older tool results in messages during long single-turn executions,
+// preserving the first user prompt and the last 2 tool interactions intact.
+func compactToolOutputs(messages []ollama.Message) ([]ollama.Message, int) {
+	if len(messages) == 0 {
+		return messages, 0
+	}
+
+	toolIndices := make([]int, 0, len(messages))
+	for idx, m := range messages {
+		if m.Role == "tool" {
+			toolIndices = append(toolIndices, idx)
+		}
+	}
+
+	// Keep at least the last 2 tool results uncompressed
+	if len(toolIndices) < 3 {
+		return messages, 0
+	}
+
+	indicesToCompact := toolIndices[:len(toolIndices)-2]
+	compacted := make([]ollama.Message, len(messages))
+	copy(compacted, messages)
+	modifiedCount := 0
+
+	for _, idx := range indicesToCompact {
+		content := compacted[idx].Content
+		if len(content) > 300 {
+			head := content[:120]
+			tail := content[len(content)-120:]
+			omittedBytes := len(content) - 240
+			compacted[idx].Content = fmt.Sprintf("%s\n... [Tool output truncated for context budget: %d bytes omitted] ...\n%s", head, omittedBytes, tail)
+			modifiedCount++
+		}
+	}
+
+	return compacted, modifiedCount
 }

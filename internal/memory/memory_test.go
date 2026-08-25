@@ -48,6 +48,64 @@ func TestAddAndSearch(t *testing.T) {
 	}
 }
 
+func TestSearchText(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	_ = store.Add(&Entry{Text: "PostgreSQL database credentials and host config"})
+	_ = store.Add(&Entry{Text: "Docker container deployment instructions"})
+	_ = store.Add(&Entry{Text: "User prefers dark mode and concise answers"})
+
+	// Search with keywords
+	results := store.SearchText("postgres credentials", 2)
+	if len(results) == 0 {
+		t.Fatalf("expected results for 'postgres credentials', got 0")
+	}
+	if results[0].Text != "PostgreSQL database credentials and host config" {
+		t.Fatalf("expected postgres entry, got %q", results[0].Text)
+	}
+
+	// Search user preferences
+	results2 := store.SearchText("dark mode answers", 2)
+	if len(results2) == 0 {
+		t.Fatalf("expected results for user preference, got 0")
+	}
+	if results2[0].Text != "User prefers dark mode and concise answers" {
+		t.Fatalf("expected dark mode entry, got %q", results2[0].Text)
+	}
+}
+
+func TestSearchHybrid(t *testing.T) {
+	dir := t.TempDir()
+	store := NewStore(dir)
+
+	e1 := Entry{Text: "PostgreSQL database credentials", Embedding: []float64{1, 0, 0}}
+	e2 := Entry{Text: "MySQL database configuration", Embedding: []float64{0, 1, 0}}
+	e3 := Entry{Text: "Frontend react components", Embedding: []float64{0, 0, 1}}
+
+	_ = store.Add(&e1)
+	_ = store.Add(&e2)
+	_ = store.Add(&e3)
+
+	// 1. Hybrid with both vector and keyword matching
+	results := store.SearchHybrid("postgresql credentials", []float64{1, 0, 0}, 2, 0.70)
+	if len(results) == 0 {
+		t.Fatalf("expected hybrid results, got 0")
+	}
+	if results[0].Text != "PostgreSQL database credentials" {
+		t.Fatalf("expected e1 as top hybrid match, got %q", results[0].Text)
+	}
+
+	// 2. Hybrid fallback when embedding is empty
+	resultsFallback := store.SearchHybrid("react components", nil, 2, 0.70)
+	if len(resultsFallback) == 0 {
+		t.Fatalf("expected fallback results, got 0")
+	}
+	if resultsFallback[0].Text != "Frontend react components" {
+		t.Fatalf("expected e3 as top match in fallback, got %q", resultsFallback[0].Text)
+	}
+}
+
 func TestDeleteRemovesEntry(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
@@ -110,7 +168,7 @@ func TestPersistence(t *testing.T) {
 	dir := t.TempDir()
 	store := NewStore(dir)
 
-	e := Entry{Text: "persistent data", Embedding: []float64{1, 2, 3}}
+	e := Entry{Text: "persistent data", Embedding: []float64{1, 2, 3}, Category: "notes", Tags: []string{"test"}}
 	if err := store.Add(&e); err != nil {
 		t.Fatalf("Add: %v", err)
 	}
@@ -129,6 +187,9 @@ func TestPersistence(t *testing.T) {
 	entries := store2.List()
 	if entries[0].Text != "persistent data" {
 		t.Fatalf("expected 'persistent data', got %q", entries[0].Text)
+	}
+	if entries[0].Category != "notes" {
+		t.Fatalf("expected category 'notes', got %q", entries[0].Category)
 	}
 }
 

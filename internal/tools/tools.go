@@ -603,13 +603,13 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 		},
 	})
 
-	if r.memoryStore != nil && r.embedModel != "" {
+	if r.memoryStore != nil {
 		r.enabled["memory_search"] = true
 		r.defs = append(r.defs, ollama.Tool{
 			Type: "function",
 			Function: ollama.ToolDefinition{
 				Name:        "memory_search",
-				Description: "Search the long-term memory store using semantic similarity. Use this when the user asks about past conversations, previously discussed topics, or stored knowledge that may not be in the current conversation history.",
+				Description: "Search the long-term memory store using semantic and keyword search. Use this when the user asks about past conversations, previously discussed topics, preferences, or stored knowledge.",
 				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1587,14 +1587,14 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 				topK = int(n)
 			}
 		}
-		resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: query})
-		if err != nil {
-			return "", fmt.Errorf("embed failed: %w", err)
+		var queryEmbedding []float64
+		if r.embedModel != "" && r.client != nil {
+			resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: query})
+			if err == nil && len(resp.Embeddings) > 0 {
+				queryEmbedding = resp.Embeddings[0]
+			}
 		}
-		if len(resp.Embeddings) == 0 {
-			return "", fmt.Errorf("empty embedding response")
-		}
-		results := r.memoryStore.Search(resp.Embeddings[0], topK)
+		results := r.memoryStore.SearchHybrid(query, queryEmbedding, topK, 0.70)
 		if len(results) == 0 {
 			return "No relevant memories found.", nil
 		}
@@ -1609,14 +1609,20 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			return "", fmt.Errorf("missing text")
 		}
 		source, _ := args["source"].(string)
-		resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: text})
-		if err != nil {
-			return "", fmt.Errorf("embed failed: %w", err)
+		category, _ := args["category"].(string)
+		var embedding []float64
+		if r.embedModel != "" && r.client != nil {
+			resp, err := r.client.Embed(ctx, ollama.EmbedRequest{Model: r.embedModel, Input: text})
+			if err == nil && len(resp.Embeddings) > 0 {
+				embedding = resp.Embeddings[0]
+			}
 		}
-		if len(resp.Embeddings) == 0 {
-			return "", fmt.Errorf("empty embedding response")
+		entry := memory.Entry{
+			Text:      text,
+			Source:    source,
+			Category:  category,
+			Embedding: embedding,
 		}
-		entry := memory.Entry{Text: text, Source: source, Embedding: resp.Embeddings[0]}
 		if err := r.memoryStore.Add(&entry); err != nil {
 			return "", fmt.Errorf("store failed: %w", err)
 		}

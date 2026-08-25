@@ -150,3 +150,52 @@ func TestContextOptimizationFlow(t *testing.T) {
 		t.Errorf("expected second message to be last user prompt, got role=%s, content=%s", secondMsg.Role, secondMsg.Content)
 	}
 }
+
+func TestCompactToolOutputs(t *testing.T) {
+	// Case 1: Less than 3 tool results -> no compaction
+	msgs1 := []ollama.Message{
+		{Role: "user", Content: "initial prompt"},
+		{Role: "assistant", Content: "calling tool"},
+		{Role: "tool", Content: strings.Repeat("A", 500)},
+		{Role: "assistant", Content: "calling tool 2"},
+		{Role: "tool", Content: strings.Repeat("B", 500)},
+	}
+	_, count1 := compactToolOutputs(msgs1)
+	if count1 != 0 {
+		t.Errorf("expected 0 compacted messages for <3 tool outputs, got %d", count1)
+	}
+
+	// Case 2: 4 tool results -> compact the first 2, keep the last 2 intact
+	msgs2 := []ollama.Message{
+		{Role: "user", Content: "initial prompt"},
+		{Role: "assistant", Content: "calling tool 1"},
+		{Role: "tool", Content: "PREFIX1_" + strings.Repeat("X", 500) + "_SUFFIX1"},
+		{Role: "assistant", Content: "calling tool 2"},
+		{Role: "tool", Content: "PREFIX2_" + strings.Repeat("Y", 500) + "_SUFFIX2"},
+		{Role: "assistant", Content: "calling tool 3"},
+		{Role: "tool", Content: "TOOL_3_RECENT_OUTPUT"},
+		{Role: "assistant", Content: "calling tool 4"},
+		{Role: "tool", Content: "TOOL_4_RECENT_OUTPUT"},
+	}
+
+	compacted, count2 := compactToolOutputs(msgs2)
+	if count2 != 2 {
+		t.Errorf("expected 2 compacted messages, got %d", count2)
+	}
+
+	// Verify older tool 1 was compacted
+	if !strings.Contains(compacted[2].Content, "Tool output truncated for context budget") {
+		t.Errorf("expected tool 1 to be truncated, got: %s", compacted[2].Content)
+	}
+	if !strings.Contains(compacted[2].Content, "PREFIX1_") || !strings.Contains(compacted[2].Content, "_SUFFIX1") {
+		t.Errorf("expected tool 1 to keep prefix and suffix")
+	}
+
+	// Verify recent tool 3 and 4 remain untouched
+	if compacted[6].Content != "TOOL_3_RECENT_OUTPUT" {
+		t.Errorf("expected recent tool 3 untouched, got: %s", compacted[6].Content)
+	}
+	if compacted[8].Content != "TOOL_4_RECENT_OUTPUT" {
+		t.Errorf("expected recent tool 4 untouched, got: %s", compacted[8].Content)
+	}
+}

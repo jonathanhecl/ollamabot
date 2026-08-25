@@ -13,21 +13,23 @@ import (
 	"time"
 )
 
-// Entry is a single memory chunk with its embedding vector.
+// Entry is a single memory chunk with optional embedding vector and metadata.
 type Entry struct {
 	ID        string    `json:"id"`
 	Text      string    `json:"text"`
-	Embedding []float64 `json:"embedding"`
+	Embedding []float64 `json:"embedding,omitempty"`
 	Source    string    `json:"source,omitempty"`
+	Category  string    `json:"category,omitempty"`
+	Tags      []string  `json:"tags,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
 // Store keeps memory entries in memory and persists them as JSONL.
 type Store struct {
-	mu       sync.RWMutex
-	entries  []Entry
-	path     string
-	dirty    bool
+	mu      sync.RWMutex
+	entries []Entry
+	path    string
+	dirty   bool
 }
 
 // NewStore creates or loads a memory store from the given directory.
@@ -110,6 +112,107 @@ func (s *Store) Search(queryEmbedding []float64, k int) []Result {
 			Entry: e,
 			Score: score,
 		})
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if k > 0 && k < len(results) {
+		results = results[:k]
+	}
+	return results
+}
+
+// SearchText performs token-based lexical keyword matching on memory texts.
+// Returns results with scores in [0.0, 1.0] sorted by relevance descending.
+func (s *Store) SearchText(query string, k int) []Result {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.entries) == 0 {
+		return nil
+	}
+
+	tokens := tokenize(query)
+	phrase := strings.TrimSpace(strings.ToLower(query))
+	if len(tokens) == 0 && len(phrase) == 0 {
+		return nil
+	}
+
+	results := make([]Result, 0, len(s.entries))
+	for _, e := range s.entries {
+		score := computeTextMatchScore(tokens, phrase, e.Text)
+		if score > 0.05 {
+			results = append(results, Result{
+				Entry: e,
+				Score: score,
+			})
+		}
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Score > results[j].Score
+	})
+
+	if k > 0 && k < len(results) {
+		results = results[:k]
+	}
+	return results
+}
+
+// SearchHybrid combines semantic vector similarity and lexical token matching.
+// alpha (0.0 - 1.0) controls the vector weight (default 0.70 if <= 0 or > 1.0).
+// If queryEmbedding is empty or missing, it falls back seamlessly to SearchText.
+func (s *Store) SearchHybrid(queryText string, queryEmbedding []float64, k int, alpha float64) []Result {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if len(s.entries) == 0 {
+		return nil
+	}
+
+	if len(queryEmbedding) == 0 {
+		// Pure lexical fallback
+		s.mu.RUnlock()
+		res := s.SearchText(queryText, k)
+		s.mu.RLock()
+		return res
+	}
+
+	if alpha <= 0 || alpha > 1.0 {
+		alpha = 0.70
+	}
+
+	tokens := tokenize(queryText)
+	phrase := strings.TrimSpace(strings.ToLower(queryText))
+
+	results := make([]Result, 0, len(s.entries))
+	for _, e := range s.entries {
+		var vecScore float64
+		hasVector := len(e.Embedding) > 0
+		if hasVector {
+			vecScore = cosineSimilarity(queryEmbedding, e.Embedding)
+			if vecScore < 0 {
+				vecScore = 0
+			}
+		}
+
+		textScore := computeTextMatchScore(tokens, phrase, e.Text)
+
+		var combinedScore float64
+		if !hasVector && len(tokens) > 0 {
+			combinedScore = textScore
+		} else if len(tokens) == 0 && hasVector {
+			combinedScore = vecScore
+		} else {
+			combinedScore = (alpha * vecScore) + ((1.0 - alpha) * textScore)
+		}
+
+		if combinedScore > 0.05 {
+			results = append(results, Result{
+				Entry: e,
+				Score: combinedScore,
+			})
+		}
 	}
 
 	sort.Slice(results, func(i, j int) bool {
@@ -245,4 +348,82 @@ func cosineSimilarity(a, b []float64) float64 {
 		return 0
 	}
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+var commonStopwords = map[string]bool{
+	"the": true, "and": true, "for": true, "with": true, "this": true, "that": true,
+	"from": true, "about": true, "what": true, "how": true, "para": true, "como": true,
+	"sobre": true, "esta": true, "este": true, "esto": true, "con": true, "que": true,
+	"del": true, "los": true, "las": true, "una": true, "uno": true, "por": true,
+	"donde": true, "cual": true, "cuando": true, "hola": true, "help": true, "ayuda": true,
+}
+
+func tokenize(s string) []string {
+	fields := strings.Fields(strings.ToLower(s))
+	var tokens []string
+	seen := make(map[string]bool)
+	for _, f := range fields {
+		f = strings.TrimFunc(f, func(r rune) bool {
+			return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' || r == '-')
+		})
+		if len(f) >= 2 && !commonStopwords[f] && !seen[f] {
+			tokens = append(tokens, f)
+			seen[f] = true
+		}
+	}
+	return tokens
+}
+
+func computeTextMatchScore(queryTokens []string, queryPhrase string, targetText string) float64 {
+	if len(targetText) == 0 {
+		return 0
+	}
+	lowerTarget := strings.ToLower(targetText)
+
+	// Phrase match bonus
+	var score float64
+	if len(queryPhrase) >= 4 && strings.Contains(lowerTarget, queryPhrase) {
+		score += 0.50
+	}
+
+	if len(queryTokens) == 0 {
+		return score
+	}
+
+	targetTokens := tokenize(targetText)
+	if len(targetTokens) == 0 {
+		return score
+	}
+
+	targetMap := make(map[string]int)
+	for _, t := range targetTokens {
+		targetMap[t]++
+	}
+
+	matchedTokens := 0
+	for _, q := range queryTokens {
+		if count, exists := targetMap[q]; exists {
+			matchedTokens++
+			if count > 1 {
+				score += 0.05
+			}
+		} else {
+			// Substring check for compound words (e.g. postgresql vs postgres)
+			for tt := range targetMap {
+				if len(q) >= 4 && len(tt) >= 4 && (strings.Contains(tt, q) || strings.Contains(q, tt)) {
+					score += 0.15
+					matchedTokens++
+					break
+				}
+			}
+		}
+	}
+
+	overlapRatio := float64(matchedTokens) / float64(len(queryTokens))
+	score += overlapRatio * 0.50
+
+	if score > 1.0 {
+		score = 1.0
+	}
+	return score
 }
