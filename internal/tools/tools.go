@@ -15,6 +15,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
+	"github.com/jonathanhecl/ollamabot/internal/telemetry"
 )
 
 // ApprovalHandler is implemented by clients wishing to approve or deny execution of risky tools.
@@ -1457,6 +1458,7 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		result, err = r.execute(ctx, name, args)
 	}
 	duration := time.Since(start)
+	telemetry.Global.RecordTool(name, duration.Milliseconds(), err != nil)
 	if err != nil {
 		log.Printf("[tool] %s error (%v): %v", name, duration, err)
 		return "", err

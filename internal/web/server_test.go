@@ -675,3 +675,33 @@ Weather helper
 		}
 	})
 }
+
+func TestTelemetryEndpoints(t *testing.T) {
+	cfgMgr := config.NewManager(config.Config{})
+	s := &Server{
+		cfgMgr: cfgMgr,
+	}
+
+	// 1. GET /api/telemetry
+	req := httptest.NewRequest("GET", "/api/telemetry", nil)
+	w := httptest.NewRecorder()
+	s.handleGetTelemetry(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/telemetry, got %d", w.Result().StatusCode)
+	}
+	var snap map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &snap); err != nil {
+		t.Fatalf("failed to decode telemetry json: %v", err)
+	}
+	if snap["uptime_seconds"] == nil {
+		t.Errorf("expected uptime_seconds in telemetry snapshot")
+	}
+
+	// 2. POST /api/telemetry/reset
+	resetReq := httptest.NewRequest("POST", "/api/telemetry/reset", nil)
+	resetW := httptest.NewRecorder()
+	s.handleResetTelemetry(resetW, resetReq)
+	if resetW.Result().StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK from /api/telemetry/reset, got %d", resetW.Result().StatusCode)
+	}
+}

@@ -1,5 +1,23 @@
 # Progress
 
+## 2026-08-25 — Observability, Real-Time Telemetry & Tool Profiling System
+
+Implemented comprehensive runtime observability, inference performance tracking, tool profiling, and GPU VRAM monitoring (`internal/telemetry`, `internal/tools`, `internal/engine`, `internal/web`):
+
+### 1. Centralized Telemetry Collector (`internal/telemetry/telemetry.go`)
+- **Real-Time Performance Metrics**: Computes average Tokens Per Second (TPS), Time To First Token (TTFT in ms), total prompt eval tokens, and turn durations across models and channels.
+- **Tool Profiling**: Measures execution latency (ms), total calls, and error rates per tool (`read_file`, `execute_command`, MCP tools, etc.).
+- **VRAM & Model GPU Monitoring**: Integrates with `ollama.Client.Ps()` to report active loaded models and exact VRAM usage in MB in real time.
+- **Ring Buffer History**: Stores recent turn records with timestamps, token counts, and TPS rates.
+
+### 2. Pipeline Integration & API Endpoints (`internal/engine`, `internal/tools`, `internal/web`)
+- `internal/tools/tools.go`: Automatic tool execution latency and error recording in `registry.Execute`.
+- `internal/engine/engine.go`: End-of-turn metrics recorded in `ProcessTurn`.
+- `internal/web/server.go`: Exposes `GET /api/telemetry` (full snapshot) and `POST /api/telemetry/reset` (metrics reset).
+
+### 3. Tests (`internal/telemetry/telemetry_test.go`, `internal/web/server_test.go`)
+- Unit tests covering turn recording, tool profiling, VRAM queries, reset functionality, and HTTP endpoints. All passing cleanly.
+
 ## 2026-08-25 — Hybrid Memory Search (BM25 + Vector), Lexical Fallback & Intra-Turn Context Compaction
 
 Implemented comprehensive long-term memory intelligence and intra-turn context resilience (`internal/memory`, `internal/tools`, `internal/agent`):

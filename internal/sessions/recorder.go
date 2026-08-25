@@ -544,6 +544,13 @@ func (r *Recorder) OnDone(resp ollama.ChatResponse) {
 	r.NotifyUpdate(true)
 }
 
+// Metrics returns the aggregated metrics for the current turn.
+func (r *Recorder) Metrics() Metrics {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.currentTurn.Metrics
+}
+
 // AddAttachmentRef appends an attachment reference to the current assistant message.
 // AddAttachmentRef appends an attachment reference to the current assistant message.
 func (r *Recorder) AddAttachmentRef(ref string, mime string, path string) {

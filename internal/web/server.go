@@ -29,6 +29,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
+	"github.com/jonathanhecl/ollamabot/internal/telemetry"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -241,6 +242,8 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/mcp/{name}", s.handleUpdateMCPServer)
 	mux.HandleFunc("DELETE /api/mcp/{name}", s.handleDeleteMCPServer)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
+	mux.HandleFunc("GET /api/telemetry", s.handleGetTelemetry)
+	mux.HandleFunc("POST /api/telemetry/reset", s.handleResetTelemetry)
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
 	mux.HandleFunc("POST /api/tools/plan-confirm", s.handlePlanConfirm)
@@ -336,6 +339,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "ollama_version": version.Version})
+}
+
+func (s *Server) handleGetTelemetry(w http.ResponseWriter, r *http.Request) {
+	_, client, _, _ := s.deps()
+	snap := telemetry.Global.Snapshot(r.Context(), client)
+	writeJSON(w, http.StatusOK, snap)
+}
+
+func (s *Server) handleResetTelemetry(w http.ResponseWriter, r *http.Request) {
+	telemetry.Global.Reset()
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "message": "Telemetry metrics reset"})
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {

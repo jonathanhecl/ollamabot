@@ -18,6 +18,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
+	"github.com/jonathanhecl/ollamabot/internal/telemetry"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -64,6 +65,7 @@ type TurnResult struct {
 }
 
 func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, error) {
+	turnStart := time.Now()
 	cfg := deps.ConfigMgr.Get()
 	model := config.ResolveModel(cfg, config.ModelRoleMain)
 	if strings.TrimSpace(model) == "" {
@@ -146,6 +148,9 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	} else {
 		result.SavedMessages = savedMessages
 	}
+
+	turnDurationMs := time.Since(turnStart).Milliseconds()
+	telemetry.Global.RecordTurn(model, req.Channel, recorder.Metrics(), turnDurationMs)
 
 	result.FinalAnswer = agent.CleanThinkingTokens(LastAssistantContent(finalHistory))
 	if strings.TrimSpace(req.SessionID) != "" && cfg.SessionAutoName && result.FinalAnswer != "" {
