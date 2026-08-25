@@ -60,3 +60,4 @@ go.work.sum
 
 # Go test-generated export artifact
 /internal/tools/exports/test_export.md
+internal/tools/exports/test_export.md
