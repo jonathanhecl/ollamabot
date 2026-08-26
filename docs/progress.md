@@ -1,5 +1,22 @@
 # Progress
 
+## 2026-08-25 — Planning Unification, Anti-Stalling Loop Resolution & Conversational Agility
+
+Resolved conflicts between parallel planning systems (`present_plan` and `todo_write`), eliminated aggressive retry loops, and optimized conversational behavior (`internal/agent`):
+
+### 1. Graceful TODO Auto-Completion (`internal/agent/loop.go`)
+- Eliminated the 5-retry stalling failure when models produce complete textual answers while TODOs remain pending. The system now auto-completes pending scratchpad items gracefully without blocking turn delivery.
+
+### 2. Planning Source of Truth & Redundancy Suppression (`internal/agent/loop.go`)
+- When a formal execution plan is active via `present_plan`, redundant `todo_write` notes are suppressed to avoid conflicting the model.
+
+### 3. Adaptive Prompt Reinforcement & Soul Rules (`internal/agent/agent.go`, `internal/agent/loop.go`)
+- Explicitly instructed the model in `DefaultSoulContent` to answer questions, explanations, greetings, and single-step tasks directly in natural language without planning tools.
+- `planReinforce` in `smart` mode is conditionally suppressed on short or conversational user prompts.
+
+### 4. Tests (`internal/agent/plan_loop_test.go`)
+- Unit tests verify clean turn completion and graceful plan step execution across the agent loop. All tests passing.
+
 ## 2026-08-25 — Safety Policies, Dry-Run Simulation Mode & Sensitive Credential Sandboxing
 
 Implemented enhanced tool execution sandboxing, dry-run simulation mode, and sensitive path guardrails (`internal/tools`, `internal/telemetry`):

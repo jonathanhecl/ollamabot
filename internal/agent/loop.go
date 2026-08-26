@@ -250,11 +250,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			Content: fmt.Sprintf("Current date and time: %s (%s)", timeStr, utcOffset),
 		})
 
-		// 1. Check Todo list status
+		// 1. Check Todo list status (only when no formal active execution plan is already running)
 		todoStore := a.registry.TodoStore()
 		var todoNote string
 		hasPending := false
-		if todoStore != nil {
+		activePlan, _ := a.registry.ActiveSessionPlan()
+		hasActivePlan := activePlan != nil && activePlan.Status == "active"
+
+		if todoStore != nil && !hasActivePlan {
 			snap := todoStore.Snapshot()
 			if len(snap) > 0 {
 				todoNote = buildTodoProgressNote(snap)
@@ -279,8 +282,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			planMode = "smart"
 		}
 		hasActivePlanSteps := false
-		activePlan, _ := a.registry.ActiveSessionPlan()
-		if activePlan != nil && activePlan.Status == "active" {
+		if hasActivePlan {
 			hasActivePlanSteps = activePlan.Completed < len(activePlan.Steps)
 			currentIdx := activePlan.Completed
 			if currentIdx >= len(activePlan.Steps) {
@@ -300,11 +302,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				Content: planReinforce,
 			})
 		} else if planMode == "smart" {
-			planReinforce := "Present a plan with 'present_plan' ONLY for genuinely complex or risky work: modifying several files, running commands that change state, or a sequence of 3+ distinct tool actions whose order matters. Present a plan if the user explicitly asks for one. Otherwise, just execute directly — do NOT present a plan for simple questions, quick lookups, or anything you can finish in 1-2 tool calls (e.g. web_search for weather, read_file of one document, a single write_file/edit_file)."
-			dynamicPrefix = append(dynamicPrefix, ollama.Message{
-				Role:    "system",
-				Content: planReinforce,
-			})
+			if isLikelyComplexTask(goal) {
+				planReinforce := "Present a plan with 'present_plan' ONLY for genuinely complex or risky work: modifying several files, running commands that change state, or a sequence of 3+ distinct tool actions whose order matters. Present a plan if the user explicitly asks for one. Otherwise, just execute directly — do NOT present a plan for simple questions, quick lookups, or anything you can finish in 1-2 tool calls (e.g. web_search for weather, read_file of one document, a single write_file/edit_file)."
+				dynamicPrefix = append(dynamicPrefix, ollama.Message{
+					Role:    "system",
+					Content: planReinforce,
+				})
+			}
 		}
 
 		// 2. Build active messages: static prefix + dynamic prefix + conversation
@@ -971,17 +975,27 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			return messages, fmt.Errorf("agent returned empty response after %d retries", emptyChatErrRetries)
 		}
 
-		// 9. Enforce Todo Completion: refuse to end loop if Todos are pending
-		if hasPending {
-			if todoTextOnlyRetries >= 5 {
-				return messages, fmt.Errorf("agent stalled with pending TODO items after %d text-only retries", todoTextOnlyRetries)
+		// 9. Enforce Todo Completion: gently guide the model without stalling loops
+		if hasPending && !hasActivePlan {
+			if todoTextOnlyRetries < 1 && looksLikeIncompletePromise(cleanedText) {
+				todoTextOnlyRetries++
+				messages = append(messages, ollama.Message{
+					Role:    "system",
+					Content: "There are still pending TODO items. Continue executing the remaining steps with tool calls — do not finish the turn with plain text promises.",
+				})
+				continue
 			}
-			todoTextOnlyRetries++
-			messages = append(messages, ollama.Message{
-				Role:    "system",
-				Content: "There are still pending TODO items. Continue executing the remaining steps with tool calls — do not finish the turn with plain text.",
-			})
-			continue
+			// If the model produced a substantive text response, auto-complete the remaining TODOs gracefully.
+			if todoStore != nil {
+				snap := todoStore.Snapshot()
+				for idx := range snap {
+					if snap[idx].Status == tools.TodoStatusPending || snap[idx].Status == tools.TodoStatusInProgress {
+						snap[idx].Status = tools.TodoStatusCompleted
+					}
+				}
+				todoStore.Apply(false, snap)
+				hasPending = false
+			}
 		}
 
 		// 10. Enforce active plan execution: refuse to end loop while plan steps remain.
@@ -1601,4 +1615,37 @@ func compactToolOutputs(messages []ollama.Message) ([]ollama.Message, int) {
 	}
 
 	return compacted, modifiedCount
+}
+
+func looksLikeIncompletePromise(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if len(t) == 0 {
+		return true
+	}
+	if len(t) < 120 {
+		promises := []string{
+			"i will now", "i will proceed", "i will start", "i will check", "i'm going to",
+			"voy a ", "procederé a", "iniciaré", "vamos a ",
+		}
+		for _, p := range promises {
+			if strings.Contains(t, p) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isLikelyComplexTask(goal string) bool {
+	g := strings.ToLower(strings.TrimSpace(goal))
+	if len(g) < 20 {
+		return false
+	}
+	if strings.HasPrefix(g, "hola") || strings.HasPrefix(g, "hello") || strings.HasPrefix(g, "hi ") ||
+		strings.HasPrefix(g, "qué es") || strings.HasPrefix(g, "que es") || strings.HasPrefix(g, "what is") ||
+		strings.HasPrefix(g, "cómo ") || strings.HasPrefix(g, "como ") || strings.HasPrefix(g, "how to") ||
+		strings.HasPrefix(g, "explica") || strings.HasPrefix(g, "explain") {
+		return false
+	}
+	return true
 }
