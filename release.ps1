@@ -116,7 +116,7 @@ function Assert-ReleaseAssets {
             if ($LASTEXITCODE -ne 0) {
                 throw "Archive validation failed for $($asset.Name)."
             }
-            $normalizedEntries = @($entryNames | ForEach-Object { $_.TrimStart([char[]]"./") })
+            $normalizedEntries = @($entryNames | ForEach-Object { $_ -replace '^\./', '' })
             if (($normalizedEntries -notcontains $asset.Binary) -or ($normalizedEntries -notcontains ".env.example")) {
                 throw "Archive '$($asset.Name)' does not contain $($asset.Binary) and .env.example at its root."
             }
