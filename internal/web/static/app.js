@@ -162,6 +162,7 @@ const els = {
   messages: document.querySelector("#messages"),
   form: document.querySelector("#chatForm"),
   prompt: document.querySelector("#prompt"),
+  slashMenu: document.querySelector("#slashMenu"),
   baseUrl: document.querySelector("#baseUrl"),
   version: document.querySelector("#version"),
   cacheState: document.querySelector("#cacheState"),
@@ -638,10 +639,201 @@ document.querySelectorAll(".filter-btn").forEach((btn) => {
   });
 });
 
+// --- Quick Slash Commands Controller ---
+const SLASH_COMMANDS = [
+  {
+    cmd: "/goal",
+    args: "<objective>",
+    icon: "🎯",
+    desc: "Set an active objective or goal for this session",
+    action: () => {
+      els.prompt.value = "/goal ";
+      els.prompt.focus();
+    }
+  },
+  {
+    cmd: "/image",
+    args: "<prompt>",
+    icon: "🎨",
+    desc: "Generate an image using the local image model",
+    action: () => {
+      els.prompt.value = "/image ";
+      els.prompt.focus();
+    }
+  },
+  {
+    cmd: "/export",
+    args: "",
+    icon: "📥",
+    desc: "Export session transcript to a Markdown document",
+    action: () => {
+      els.prompt.value = "Please export the current session transcript to a markdown file using session_export.";
+      hideSlashMenu();
+      els.form.dispatchEvent(new Event("submit", { cancelable: true }));
+    }
+  },
+  {
+    cmd: "/reset",
+    args: "",
+    icon: "🔄",
+    desc: "Start a fresh new conversation session",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.newSessionBtn) els.newSessionBtn.click();
+    }
+  },
+  {
+    cmd: "/memory",
+    args: "",
+    icon: "🧠",
+    desc: "Open Semantic Long-Term Memory Explorer",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openMemory) els.openMemory.click();
+    }
+  },
+  {
+    cmd: "/skills",
+    args: "",
+    icon: "⚡",
+    desc: "Inspect and manage Custom Agent Skills",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openSkills) els.openSkills.click();
+    }
+  },
+  {
+    cmd: "/models",
+    args: "",
+    icon: "🤖",
+    desc: "Manage Ollama models, capabilities, and role assignments",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openModels) els.openModels.click();
+    }
+  },
+  {
+    cmd: "/settings",
+    args: "",
+    icon: "⚙️",
+    desc: "Open server and runtime settings configuration",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openSettings) els.openSettings.click();
+    }
+  }
+];
+
+let activeSlashIndex = 0;
+let filteredSlashCommands = [];
+
+function hideSlashMenu() {
+  if (els.slashMenu) {
+    els.slashMenu.style.display = "none";
+    els.slashMenu.innerHTML = "";
+  }
+  filteredSlashCommands = [];
+}
+
+function showSlashMenu(items) {
+  if (!els.slashMenu) return;
+  filteredSlashCommands = items;
+  activeSlashIndex = 0;
+  renderSlashMenu();
+  els.slashMenu.style.display = "flex";
+}
+
+function renderSlashMenu() {
+  if (!els.slashMenu) return;
+  els.slashMenu.innerHTML = "";
+  filteredSlashCommands.forEach((item, idx) => {
+    const el = document.createElement("div");
+    el.className = "slash-item" + (idx === activeSlashIndex ? " active" : "");
+    el.innerHTML = `
+      <div class="slash-icon">${item.icon}</div>
+      <div class="slash-details">
+        <div class="slash-cmd">${item.cmd} ${item.args ? `<span style="opacity:0.6;font-size:11px;font-weight:normal;">${item.args}</span>` : ""}</div>
+        <div class="slash-desc">${item.desc}</div>
+      </div>
+    `;
+    el.addEventListener("click", () => {
+      executeSlashCommand(item);
+    });
+    els.slashMenu.appendChild(el);
+  });
+}
+
+function executeSlashCommand(item) {
+  hideSlashMenu();
+  if (item && typeof item.action === "function") {
+    item.action();
+  }
+}
+
+function checkSlashTrigger() {
+  const val = els.prompt.value;
+  if (val.startsWith("/")) {
+    const query = val.slice(1).toLowerCase().trim();
+    const matches = SLASH_COMMANDS.filter((sc) => {
+      return sc.cmd.slice(1).toLowerCase().startsWith(query) || sc.desc.toLowerCase().includes(query);
+    });
+    if (matches.length > 0) {
+      showSlashMenu(matches);
+      return;
+    }
+  }
+  hideSlashMenu();
+}
+
+els.prompt.addEventListener("input", () => {
+  checkSlashTrigger();
+});
+
 els.prompt.addEventListener("keydown", (e) => {
+  if (els.slashMenu && els.slashMenu.style.display === "flex" && filteredSlashCommands.length > 0) {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeSlashIndex = (activeSlashIndex + 1) % filteredSlashCommands.length;
+      renderSlashMenu();
+      const activeEl = els.slashMenu.children[activeSlashIndex];
+      if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeSlashIndex = (activeSlashIndex - 1 + filteredSlashCommands.length) % filteredSlashCommands.length;
+      renderSlashMenu();
+      const activeEl = els.slashMenu.children[activeSlashIndex];
+      if (activeEl) activeEl.scrollIntoView({ block: "nearest" });
+      return;
+    }
+    if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      executeSlashCommand(filteredSlashCommands[activeSlashIndex]);
+      return;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      hideSlashMenu();
+      return;
+    }
+  }
+
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
+    hideSlashMenu();
     els.form.dispatchEvent(new Event("submit", { cancelable: true }));
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (els.slashMenu && !els.slashMenu.contains(e.target) && e.target !== els.prompt) {
+    hideSlashMenu();
   }
 });
 

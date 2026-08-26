@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-08-25 — Resilient JSON Tool Call Parser, Sleep Memory Consolidation & Web UI Quick Slash Commands
+
+Implemented 3 high-impact reliability, intelligence, and UX enhancements across the agent pipeline (`internal/tools`, `internal/agent`, `internal/memory`, `internal/learning`, `internal/web`):
+
+### 1. Resilient JSON Tool Call Parser & Auto-Repair (`internal/tools/jsonrepair.go`, `internal/agent/loop.go`, `internal/tools/tools.go`)
+- **`RepairJSON(raw)` & `ParseJSONArgs(raw)`**: Robust JSON heuristic repair utility that automatically handles markdown code fences (` ```json `), single-quoted keys/strings, unquoted keys, Python literals (`True`/`False`/`None`), trailing commas, unclosed brackets/braces from token limits, and surrounding conversational text.
+- Integrated into `tools.Registry.Execute` and `agent.Run` Phase 1 parameter preparation, drastically improving tool calling reliability for smaller local models (7B/8B).
+- Unit tests in `internal/tools/jsonrepair_test.go` covering all syntax anomalies.
+
+### 2. Automatic Memory Consolidation & Pruning in Sleep Mode (`internal/memory/memory.go`, `internal/learning/sleep_manager.go`)
+- **`ConsolidateAndPrune(threshold)`**: Scans long-term memory entries to detect duplicate or near-duplicate facts using cosine embedding similarity and Jaccard token overlap. Merges categories, tags, and sources into the primary entry while pruning empty, corrupted, or obsolete entries.
+- **Sleep Manager Integration**: Automatically executes memory consolidation during sleep reflection cycles and exposes `memory_delete` and `memory_list` tools to the reflector agent prompt for explicit fact pruning.
+- Unit tests in `internal/memory/memory_consolidation_test.go`.
+
+### 3. Quick Slash Commands Autocomplete in Web UI (`internal/web/static`)
+- **Interactive Slash Autocomplete (`#slashMenu`)**: Floating glassmorphic command palette above the chat prompt when typing `/`.
+- Supports `/goal`, `/image`, `/export`, `/reset`, `/memory`, `/skills`, `/models`, and `/settings`.
+- Full keyboard navigation with `ArrowUp`, `ArrowDown`, `Enter`, `Tab`, and `Escape` for rapid execution and seamless desktop experience.
+
 ## 2026-08-25 — Planning Unification, Anti-Stalling Loop Resolution & Conversational Agility
 
 Resolved conflicts between parallel planning systems (`present_plan` and `todo_write`), eliminated aggressive retry loops, and optimized conversational behavior (`internal/agent`):

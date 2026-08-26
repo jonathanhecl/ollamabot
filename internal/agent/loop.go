@@ -641,8 +641,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 			for idx, call := range toolCalls {
 				toolName := call.Function.Name
-				var params map[string]any
-				_ = json.Unmarshal(call.Function.Arguments, &params)
+				params, _ := tools.ParseJSONArgs(call.Function.Arguments)
 				if params == nil {
 					params = map[string]any{}
 				}

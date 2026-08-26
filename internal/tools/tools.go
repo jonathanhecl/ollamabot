@@ -1364,9 +1364,9 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		return "", fmt.Errorf("tool %q is not enabled", name)
 	}
 
-	var args map[string]any
-	if err := json.Unmarshal(call.Function.Arguments, &args); err != nil {
-		return "", fmt.Errorf("invalid arguments: %w", err)
+	args, parseErr := ParseJSONArgs(call.Function.Arguments)
+	if parseErr != nil {
+		return "", fmt.Errorf("invalid arguments: %w", parseErr)
 	}
 
 	// 1. Enforce ReadOnly safety policy

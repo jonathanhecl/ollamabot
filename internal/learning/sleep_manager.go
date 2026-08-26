@@ -602,11 +602,11 @@ Your goal:
 3. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
 4. Identify user preferences, tastes, or durable technical facts/decisions.
    - For general user profile info (name, language, coding styles), update 'agent/USER_PROFILE.md' using 'read_file' and 'write_file' or 'edit_file'.
-   - For specific durable facts, project decisions, or debugging solutions, call 'memory_add' to store them into long-term vector memory for future recall.
+   - For specific durable facts, project decisions, or debugging solutions, call 'memory_add' to store them into long-term vector memory. Use 'memory_list' and 'memory_delete' to remove outdated or contradictory facts.
 5. Call the appropriate tools to make these improvements. You have access to:
    - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent.
    - 'read_file', 'write_file', 'edit_file' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
-   - 'memory_add' to store durable facts, key decisions, or user preferences into long-term memory.
+   - 'memory_add', 'memory_delete', 'memory_list', 'memory_search' to manage long-term memory.
 
 If no changes are needed to skills, memory, or the user profile, respond explaining why, and do not call any tools.
 Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String(), textFeedbackSection)
@@ -626,13 +626,13 @@ Provide a clear final summary of what you did.`, len(validSessions), historyText
 
 	systemPrompt := `You are the OllamaBot Self-Improvement Reflector.
 You operate in the background during sleep mode.
-You have access to tools to modify skills, identity, user profile, and long-term memory ('memory_add').
+You have access to tools to modify skills, identity, user profile, and long-term memory ('memory_add', 'memory_delete', 'memory_list').
 Be precise and constructive. Focus on creating high-quality, actionable, clear skill guidelines and indexing durable knowledge.
 When editing or creating skills, use standard SKILL.md format.
 
 To prevent duplicates, you MUST check existing skills with 'skill_list' before creating a new one.
 
-If you discover durable facts, user preferences, or key technical decisions in the analyzed sessions, call 'memory_add' to store them into long-term memory for future recall.
+If you discover durable facts, user preferences, or key technical decisions in the analyzed sessions, call 'memory_add' to store them into long-term memory for future recall. Call 'memory_delete' to prune obsolete facts.
 
 Keep the user profile ('agent/USER_PROFILE.md') structured:
 - Name
@@ -645,7 +645,7 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 - Date/time
 - Chat Session ID(s) analyzed
 - Issue or user preferences detected
-- Actions executed (skills created, user profile updated, memories stored, etc.)
+- Actions executed (skills created, user profile updated, memories stored/pruned, etc.)
 - Justification/Reasoning`
 
 	messages := []ollama.Message{
@@ -672,9 +672,20 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 			summary = msg.Content
 		}
 		for _, tc := range msg.ToolCalls {
-			if strings.HasPrefix(tc.Function.Name, "skill_") {
+			if strings.HasPrefix(tc.Function.Name, "skill_") || strings.HasPrefix(tc.Function.Name, "memory_") || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
 				actions = append(actions, fmt.Sprintf("Called tool %s with args %s", tc.Function.Name, string(tc.Function.Arguments)))
 			}
+		}
+	}
+
+	// Automatic long-term memory consolidation & pruning
+	if sm.memoryStore != nil {
+		report, consErr := sm.memoryStore.ConsolidateAndPrune(0.82)
+		if consErr != nil {
+			log.Printf("[sleep] Memory consolidation error: %v", consErr)
+		} else if report.MergedCount > 0 || report.PrunedCount > 0 {
+			log.Printf("[sleep] Long-term memory consolidated: %d duplicates merged, %d pruned, %d remaining.", report.MergedCount, report.PrunedCount, report.RemainingCount)
+			actions = append(actions, fmt.Sprintf("Consolidated memory store: merged %d duplicates, pruned %d entries (%d active)", report.MergedCount, report.PrunedCount, report.RemainingCount))
 		}
 	}
 

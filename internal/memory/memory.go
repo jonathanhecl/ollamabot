@@ -237,6 +237,108 @@ func (s *Store) List() []Entry {
 	return out
 }
 
+// ConsolidationReport summarizes the result of memory consolidation and pruning.
+type ConsolidationReport struct {
+	MergedCount    int `json:"merged_count"`
+	PrunedCount    int `json:"pruned_count"`
+	RemainingCount int `json:"remaining_count"`
+}
+
+// ConsolidateAndPrune scans all entries, deduplicates semantically or lexically redundant memories,
+// merges metadata (tags, categories, sources), removes empty or corrupted entries, and flushes the store.
+func (s *Store) ConsolidateAndPrune(similarityThreshold float64) (ConsolidationReport, error) {
+	if similarityThreshold <= 0 {
+		similarityThreshold = 0.82
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var report ConsolidationReport
+	if len(s.entries) == 0 {
+		return report, nil
+	}
+
+	// Sort newest first to keep recent details
+	sortedEntries := make([]Entry, len(s.entries))
+	copy(sortedEntries, s.entries)
+	sort.Slice(sortedEntries, func(i, j int) bool {
+		return sortedEntries[i].CreatedAt.After(sortedEntries[j].CreatedAt)
+	})
+
+	var consolidated []Entry
+
+	for _, e := range sortedEntries {
+		trimmedText := strings.TrimSpace(e.Text)
+		if trimmedText == "" || len(trimmedText) < 4 {
+			report.PrunedCount++
+			continue
+		}
+
+		isDuplicate := false
+		normText := strings.ToLower(trimmedText)
+
+		for i, existing := range consolidated {
+			normExisting := strings.TrimSpace(strings.ToLower(existing.Text))
+
+			// Check exact text or high embedding cosine similarity
+			if normExisting == normText {
+				isDuplicate = true
+			} else if len(e.Embedding) > 0 && len(existing.Embedding) > 0 {
+				sim := cosineSimilarity(e.Embedding, existing.Embedding)
+				if sim >= similarityThreshold {
+					isDuplicate = true
+				}
+			} else {
+				// Fallback lexical token overlap
+				jaccard := computeTokenJaccard(trimmedText, existing.Text)
+				if jaccard >= 0.65 {
+					isDuplicate = true
+				}
+			}
+
+			if isDuplicate {
+				// Merge metadata into existing entry
+				if consolidated[i].Category == "" && e.Category != "" {
+					consolidated[i].Category = e.Category
+				}
+				if consolidated[i].Source == "" && e.Source != "" {
+					consolidated[i].Source = e.Source
+				}
+				if len(e.Tags) > 0 {
+					tagSet := make(map[string]bool)
+					for _, t := range consolidated[i].Tags {
+						tagSet[t] = true
+					}
+					for _, t := range e.Tags {
+						if !tagSet[t] {
+							consolidated[i].Tags = append(consolidated[i].Tags, t)
+							tagSet[t] = true
+						}
+					}
+				}
+				report.MergedCount++
+				break
+			}
+		}
+
+		if !isDuplicate {
+			consolidated = append(consolidated, e)
+		}
+	}
+
+	report.RemainingCount = len(consolidated)
+	if report.MergedCount > 0 || report.PrunedCount > 0 {
+		s.entries = consolidated
+		s.dirty = true
+		if err := s.flush(); err != nil {
+			return report, err
+		}
+	}
+
+	return report, nil
+}
+
 // Delete removes an entry by ID and persists.
 func (s *Store) Delete(id string) error {
 	s.mu.Lock()
@@ -426,4 +528,31 @@ func computeTextMatchScore(queryTokens []string, queryPhrase string, targetText 
 		score = 1.0
 	}
 	return score
+}
+
+func computeTokenJaccard(textA, textB string) float64 {
+	tokensA := tokenize(textA)
+	tokensB := tokenize(textB)
+	if len(tokensA) == 0 || len(tokensB) == 0 {
+		return 0
+	}
+	setA := make(map[string]bool)
+	for _, t := range tokensA {
+		setA[t] = true
+	}
+	setB := make(map[string]bool)
+	for _, t := range tokensB {
+		setB[t] = true
+	}
+	intersection := 0
+	for t := range setA {
+		if setB[t] {
+			intersection++
+		}
+	}
+	union := len(setA) + len(setB) - intersection
+	if union == 0 {
+		return 0
+	}
+	return float64(intersection) / float64(union)
 }
