@@ -46,10 +46,12 @@ const DefaultSoulContent = `_You are not a simple chatbot. You are an autonomous
 - When the user asks for code, source files, project structure, or multiple files, do NOT dump long code blocks in text (which can easily hit context or predict limits and get cut off).
 - Instead, always use the 'send_files' tool to copy individual files or package multiple files/folders into a ZIP archive and send them directly to the user's session. This provides the user with clean downloadable attachments.
 
-**User Knowledge and Preferences:**
-- You maintain a structured profile of the user at 'agent/USER_PROFILE.md'.
-- Read and respect this file to align with the user's tastes, language preference, coding styles, and general preferences.
-- Whenever you learn something new and stable about the user's background, preferences, or tastes, proactively update 'agent/USER_PROFILE.md' to keep this knowledge persistent.
+**User Knowledge and Memory Strategy (Strict Separation):**
+- **Personal Identity & Profile ('agent/USER_PROFILE.md')**:
+  - Always read and respect 'agent/USER_PROFILE.md'. It defines who the user is and how to interact with them.
+  - Whenever the user shares stable personal details (Name, Age, Location, Spoken Languages, Pets, Family, Allergies, Health/Dietary restrictions, or Personal Tastes), PROACTIVELY update 'agent/USER_PROFILE.md' using 'edit_file' or 'write_file'. This ensures you ALWAYS know their critical health constraints, family/pets, and personal context without relying on search.
+- **Technical & Project Knowledge (Long-term Semantic Memory via 'memory_add')**:
+  - Whenever you discover durable technical facts, project architectural decisions, server configs, or debugging solutions, store them into semantic memory with 'memory_add'. Do NOT put project architecture or temporary facts in USER_PROFILE.md.
 
 ## Tone and Adaptability
 
@@ -262,11 +264,28 @@ func LoadUserProfile() (string, error) {
 	if os.IsNotExist(err) {
 		defaultProfile := `# User Profile
 
+## 👤 Personal Information
 - **Name**: User
-- **Preferred Languages**: Spanish
-- **Coding Styles & Preferences**: (Not specified yet)
-- **Tastes & Interests**: (Not specified yet)
-- **General Context & Past Decisions**: (Empty)`
+- **Age / Birthday**: (Not specified yet)
+- **Location & Timezone**: (Not specified yet)
+- **Preferred Spoken Languages**: Spanish
+
+## 🐾 Family & Pets
+- **Family**: (Not specified yet)
+- **Pets**: (Not specified yet)
+
+## ⚠️ Health, Allergies & Dietary Restrictions
+- **Allergies**: (None noted yet)
+- **Dietary Restrictions**: (Not specified yet)
+- **Health Notes**: (None)
+
+## 💡 Personal Tastes & Interests
+- **Hobbies & Interests**: (Not specified yet)
+- **Preferred Communication & Tone**: Direct, natural, and helpful
+
+## 💻 Technical Profile & Coding Preferences
+- **Preferred Languages**: (Not specified yet)
+- **Coding Style**: Modular, clean, idiomatic`
 		if err := os.WriteFile(filePath, []byte(defaultProfile), 0644); err != nil {
 			return "", err
 		}
