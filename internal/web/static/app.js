@@ -3422,13 +3422,15 @@ function renderPreProcessingContent(content) {
 }
 
 function renderMessages() {
-  els.messages.innerHTML = "";
   const grouped = groupMessagesAndTools(state.messages);
 
   if (grouped.length === 0) {
     renderEmptyState();
     return;
   }
+
+  delete els.messages.dataset.emptyStateKey;
+  els.messages.innerHTML = "";
 
   // Detect if the last message is an assistant still in progress (e.g. from Telegram)
   const lastMsg = state.messages[state.messages.length - 1];
@@ -3581,6 +3583,12 @@ function renderEmptyState() {
   const isOffline = els.baseUrl.textContent.includes("Offline");
   const noModels = state.models.length === 0;
   const noDefaultModel = !state.activeModel;
+  const emptyStateKind = isOffline ? "offline" : noModels ? "no-models" : noDefaultModel ? "no-default" : "ready";
+  const emptyStateKey = `${state.activeSessionId || "none"}:${emptyStateKind}`;
+
+  if (els.messages.dataset.emptyStateKey === emptyStateKey && els.messages.firstElementChild) {
+    return;
+  }
 
   let html = "";
 
@@ -3668,13 +3676,14 @@ function renderEmptyState() {
         <div class="onboarding-card" style="border-color: rgba(255,255,255,0.05);">
           <span class="onboarding-icon">💬</span>
           <h3>Start a new conversation</h3>
-          <p>Send a message below to start chatting with <strong>${escapeHtml(state.activeModel)}</strong>. You can ask questions, write code, run workspace goals, or load skills.</p>
+          <p>Send a message below to start chatting. You can ask questions, write code, run workspace goals, or load skills.</p>
         </div>
       </div>
     `;
   }
 
   els.messages.innerHTML = html;
+  els.messages.dataset.emptyStateKey = emptyStateKey;
 
   // Bind event listeners for onboarding actions
   const retryBtn = document.getElementById("retryOllamaBtn");
