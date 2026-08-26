@@ -30,6 +30,13 @@ func GenerateSessionTitle(ctx context.Context, cfg config.Config, client *ollama
 	if strings.TrimSpace(model) == "" {
 		return "", nil
 	}
+	mainModel := config.ResolveModel(cfg, config.ModelRoleMain)
+	if !strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(mainModel)) {
+		safe, err := client.CanUseAuxiliaryModel(ctx, model)
+		if err != nil || !safe {
+			return "", nil
+		}
+	}
 	resp, err := client.Chat(ctx, ollama.ChatRequest{
 		Model: model,
 		Messages: []ollama.Message{

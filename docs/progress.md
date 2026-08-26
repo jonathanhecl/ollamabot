@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-08-26 — VRAM-Safe Interactive and Auxiliary Model Scheduling
+
+Prevented background and auxiliary Ollama workloads from unexpectedly loading alongside a memory-intensive interactive model:
+
+- Added a process-wide coordinator that gives interactive turns priority over sleep learning, goals, plan monitoring, and autonomous project runs. Background work is deferred while any interactive turn is active or waiting.
+- Interactive turns now wait for an already-running background inference to release its slot after sleep activity cancellation, closing the race between `/api/ps` checks and model startup.
+- Session auto-naming skips a distinct subagent model when another model is already resident, and context optimization falls back to the main model instead of loading an additional model.
+- Added concurrency and loaded-model policy tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
+
 ## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
 
 Implemented syntax-highlighted, colored visual diff and terminal command previews for tool approvals and execution steps in the Web UI (`internal/web/static`):

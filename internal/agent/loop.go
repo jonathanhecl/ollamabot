@@ -353,6 +353,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				modelToUse := a.config().OllamaModelSubagent
 				if strings.TrimSpace(modelToUse) == "" {
 					modelToUse = model
+				} else if !strings.EqualFold(strings.TrimSpace(modelToUse), strings.TrimSpace(model)) {
+					safe, err := a.client.CanUseAuxiliaryModel(ctx, modelToUse)
+					if err != nil || !safe {
+						modelToUse = model
+					}
 				}
 
 				summaryPrompt := ollama.Message{
@@ -1208,7 +1213,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 
 	// Adaptive Problem-Solving & Fallback instruction (static)
 	prefix = append(prefix, ollama.Message{
-		Role:    "system",
+		Role: "system",
 		Content: "## Adaptive Problem-Solving & Alternative Execution Strategies\n" +
 			"When a tool call or command fails, times out, or proves insufficient (e.g., trying to download media from a web page using raw `ffmpeg`, missing dependencies, or rejected command syntax):\n" +
 			"1. Do NOT repeatedly retry the exact same failing command.\n" +

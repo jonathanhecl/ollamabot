@@ -10,8 +10,11 @@ var (
 	processingTrackerMu sync.RWMutex
 	processingTracker   = newSessionActivityTracker()
 
-	backgroundWorkMu   sync.Mutex
-	backgroundWorkBusy bool
+	backgroundWorkMu          sync.Mutex
+	backgroundWorkBusy        bool
+	interactiveWorkCount      int
+	interactiveWorkWaiters    int
+	workAvailabilityChangedCh = make(chan struct{})
 
 	sessionCancelsMu sync.Mutex
 	sessionCancels   = make(map[string]context.CancelFunc)
@@ -124,19 +127,66 @@ func TryMarkProcessing(sessionID string) bool {
 // Returns a release function if successful, nil if another background loop is running.
 // This ensures only one background agent loop runs at a time across all managers
 // (GoalManager, PlanMonitor, SleepManager), preventing Ollama overload.
-// User turns (engine.ProcessTurn) are not affected.
+// User turns take priority and prevent new background work from starting.
 func TryAcquireBackgroundSlot() func() {
 	backgroundWorkMu.Lock()
-	if backgroundWorkBusy {
+	if backgroundWorkBusy || interactiveWorkCount > 0 || interactiveWorkWaiters > 0 {
 		backgroundWorkMu.Unlock()
 		return nil
 	}
 	backgroundWorkBusy = true
 	backgroundWorkMu.Unlock()
+	var once sync.Once
 	return func() {
+		once.Do(func() {
+			backgroundWorkMu.Lock()
+			backgroundWorkBusy = false
+			close(workAvailabilityChangedCh)
+			workAvailabilityChangedCh = make(chan struct{})
+			backgroundWorkMu.Unlock()
+		})
+	}
+}
+
+func AcquireInteractiveSlot(ctx context.Context) (func(), error) {
+	backgroundWorkMu.Lock()
+	interactiveWorkWaiters++
+	backgroundWorkMu.Unlock()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			backgroundWorkMu.Lock()
+			interactiveWorkWaiters--
+			backgroundWorkMu.Unlock()
+			return nil, err
+		}
 		backgroundWorkMu.Lock()
-		backgroundWorkBusy = false
+		if !backgroundWorkBusy {
+			interactiveWorkWaiters--
+			interactiveWorkCount++
+			backgroundWorkMu.Unlock()
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					backgroundWorkMu.Lock()
+					interactiveWorkCount--
+					close(workAvailabilityChangedCh)
+					workAvailabilityChangedCh = make(chan struct{})
+					backgroundWorkMu.Unlock()
+				})
+			}, nil
+		}
+		changed := workAvailabilityChangedCh
 		backgroundWorkMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			backgroundWorkMu.Lock()
+			interactiveWorkWaiters--
+			backgroundWorkMu.Unlock()
+			return nil, ctx.Err()
+		case <-changed:
+		}
 	}
 }
 

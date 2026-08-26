@@ -36,6 +36,35 @@ func TestSanitizeMessages(t *testing.T) {
 	}
 }
 
+func TestCanUseAuxiliaryModel(t *testing.T) {
+	tests := []struct {
+		name    string
+		running []RunningModel
+		model   string
+		want    bool
+	}{
+		{name: "nothing loaded", model: "small:latest", want: true},
+		{name: "auxiliary already loaded", running: []RunningModel{{Name: "library/small:latest"}}, model: "small", want: true},
+		{name: "different model loaded", running: []RunningModel{{Name: "large:70b"}}, model: "small:8b", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewEncoder(w).Encode(PsResponse{Models: tt.running})
+			}))
+			defer server.Close()
+			client := NewClient(server.URL)
+			got, err := client.CanUseAuxiliaryModel(context.Background(), tt.model)
+			if err != nil {
+				t.Fatalf("CanUseAuxiliaryModel: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("CanUseAuxiliaryModel = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestClientEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -173,7 +202,7 @@ func TestClientRetries(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL)
-	
+
 	// Speed up backoff for tests
 	// Note: client retry code has:
 	// time.Sleep(backoff)
@@ -217,7 +246,7 @@ func TestClientContextCancellationDuringRetry(t *testing.T) {
 
 	client := NewClient(server.URL)
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// Start a goroutine to cancel the context very quickly
 	go func() {
 		time.Sleep(100 * time.Millisecond)
@@ -456,4 +485,3 @@ func TestClientStreamingAdditionalEdgeCases(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
-

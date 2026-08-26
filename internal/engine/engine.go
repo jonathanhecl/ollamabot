@@ -79,6 +79,12 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		deps.OnSleepActivity()
 	}
 
+	releaseInteractiveSlot, err := sessions.AcquireInteractiveSlot(ctx)
+	if err != nil {
+		return TurnResult{}, err
+	}
+	defer releaseInteractiveSlot()
+
 	if strings.TrimSpace(req.SessionID) != "" {
 		sessions.MarkProcessing(req.SessionID)
 		defer sessions.MarkIdle(req.SessionID)
@@ -121,10 +127,10 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 
 	// Record turn-level decisions into the session timeline for debugging.
 	recorder.RecordEvent("model_resolved", "", map[string]any{
-		"model":     model,
-		"channel":   req.Channel,
-		"think":     think,
-		"messages":  len(ollamaMessages),
+		"model":    model,
+		"channel":  req.Channel,
+		"think":    think,
+		"messages": len(ollamaMessages),
 	})
 	if len(mediaRes.Attachments) > 0 {
 		recorder.RecordEvent("media_pre_processing", "", map[string]any{

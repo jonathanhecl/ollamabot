@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestSessionCancelRegistry(t *testing.T) {
@@ -163,4 +164,53 @@ func TestTryAcquireBackgroundSlot(t *testing.T) {
 		t.Fatal("expected TryAcquireBackgroundSlot to succeed after release")
 	}
 	release2()
+}
+
+func TestInteractiveSlotBlocksBackgroundWork(t *testing.T) {
+	release, err := AcquireInteractiveSlot(context.Background())
+	if err != nil {
+		t.Fatalf("AcquireInteractiveSlot: %v", err)
+	}
+	if TryAcquireBackgroundSlot() != nil {
+		t.Fatal("expected background work to be blocked during an interactive turn")
+	}
+	release()
+
+	backgroundRelease := TryAcquireBackgroundSlot()
+	if backgroundRelease == nil {
+		t.Fatal("expected background work to start after the interactive turn")
+	}
+	backgroundRelease()
+}
+
+func TestInteractiveSlotWaitsForBackgroundWork(t *testing.T) {
+	backgroundRelease := TryAcquireBackgroundSlot()
+	if backgroundRelease == nil {
+		t.Fatal("expected background slot acquisition")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	acquired := make(chan func(), 1)
+	go func() {
+		release, err := AcquireInteractiveSlot(ctx)
+		if err == nil {
+			acquired <- release
+		}
+	}()
+
+	select {
+	case release := <-acquired:
+		release()
+		t.Fatal("interactive slot acquired while background work was active")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	backgroundRelease()
+	select {
+	case release := <-acquired:
+		release()
+	case <-ctx.Done():
+		t.Fatalf("interactive slot was not released: %v", ctx.Err())
+	}
 }

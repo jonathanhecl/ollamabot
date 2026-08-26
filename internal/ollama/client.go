@@ -58,6 +58,34 @@ func (c *Client) Ps(ctx context.Context) (PsResponse, error) {
 	return out, err
 }
 
+func (c *Client) CanUseAuxiliaryModel(ctx context.Context, model string) (bool, error) {
+	model = normalizeModelName(model)
+	if model == "" {
+		return false, nil
+	}
+	ps, err := c.Ps(ctx)
+	if err != nil {
+		return false, err
+	}
+	if len(ps.Models) == 0 {
+		return true, nil
+	}
+	for _, running := range ps.Models {
+		if normalizeModelName(running.Name) == model || normalizeModelName(running.Model) == model {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func normalizeModelName(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	return strings.TrimSuffix(name, ":latest")
+}
+
 func (c *Client) Show(ctx context.Context, model string) (ShowResponse, error) {
 	var out ShowResponse
 	err := c.do(ctx, http.MethodPost, "/api/show", map[string]string{"model": model}, &out)
