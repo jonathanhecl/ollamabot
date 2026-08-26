@@ -1,5 +1,20 @@
 # Progress
 
+## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
+
+Implemented syntax-highlighted, colored visual diff and terminal command previews for tool approvals and execution steps in the Web UI (`internal/web/static`):
+
+### 1. Line-by-Line Visual Diff (`edit_file`, `apply_diff`, `write_file`)
+- **`edit_file`**: Renders modified lines with structured red deletion blocks (`-`) and green insertion blocks (`+`), including filename badge and line counts.
+- **`apply_diff`**: Parses unified diff hunks (`@@`), additions (`+`), deletions (`-`), and context lines with dedicated colored highlighting.
+- **`write_file`**: Previews created file contents with syntax formatting and line counters.
+
+### 2. Terminal Command Prompt Box (`execute_command`)
+- Formats shell execution approvals in a dark monospace terminal box (`$ command`) with distinct green prompt indicator.
+
+### 3. Timeline & Step History Integration
+- Applied `renderApprovalPreviewHTML` to both live approval confirmation cards and persisted message history steps (`step-approval`).
+
 ## 2026-08-25 — Resilient JSON Tool Call Parser, Sleep Memory Consolidation & Web UI Quick Slash Commands
 
 Implemented 3 high-impact reliability, intelligence, and UX enhancements across the agent pipeline (`internal/tools`, `internal/agent`, `internal/memory`, `internal/learning`, `internal/web`):

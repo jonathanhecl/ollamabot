@@ -817,9 +817,9 @@
         <p>The AI agent wants to execute a potentially risky action:</p>
         <div class="approval-info" style="margin: 16px 0; padding: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; font-family: monospace; font-size: 13px;">
           <div><strong>Tool:</strong> <span id="approvalToolName">Write</span></div>
-          <div style="margin-top: 8px; max-height: 200px; overflow-y: auto;">
-            <strong>Arguments:</strong>
-            <pre id="approvalToolArgs" style="margin: 4px 0 0 0; white-space: pre-wrap; word-break: break-all;"></pre>
+          <div style="margin-top: 8px; max-height: 240px; overflow-y: auto;">
+            <strong>Arguments / Changes:</strong>
+            <div id="approvalToolArgs" style="margin: 6px 0 0 0;"></div>
           </div>
         </div>
         <div class="confirm-actions">
@@ -840,7 +840,7 @@
       <h3 id="approvalCardTitle" style="margin: 8px 0; font-size: 0.95rem; font-weight: 500;">Tool approval needed</h3>
       <p id="approvalCardLabel" class="approval-card-label"></p>
       <p id="approvalCardRisk" class="approval-card-risk"></p>
-      <pre id="approvalCardArgs" class="approval-card-args"></pre>
+      <div id="approvalCardArgs" class="approval-card-args"></div>
       <div class="approval-actions">
         <button id="approvalCardDenyBtn" class="danger-button" type="button">Deny</button>
         <button id="approvalCardApproveBtn" class="ghost-button" type="button">Approve once</button>

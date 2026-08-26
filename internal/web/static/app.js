@@ -3862,14 +3862,11 @@ function renderStep(step, isLive = false, isLastStep = false) {
       const label = step.content || step.name || "Tool approval";
       const statusText = status === "running" ? "awaiting approval" : status;
       let argsText = "";
-      if (step.arguments) {
-        try {
-          argsText = JSON.stringify(typeof step.arguments === "string" ? JSON.parse(step.arguments) : step.arguments, null, 2);
-        } catch {
-          argsText = String(step.arguments || "");
-        }
+      let argsObj = step.arguments;
+      if (typeof argsObj === "string") {
+        try { argsObj = JSON.parse(argsObj); } catch { /* keep as string */ }
       }
-      const argsHtml = argsText ? `<pre class="step-tool-args">${escapeHtml(argsText)}</pre>` : "";
+      const argsHtml = argsObj ? `<div style="margin-top:6px;">${renderApprovalPreviewHTML(step.name || label, argsObj)}</div>` : "";
       const resultHtml = step.result ? `<p class="approval-step-result">${escapeHtml(String(step.result))}</p>` : "";
       return `<details class="step step-approval ${escapeHtml(status)}" open><summary><span class="step-tool-icon">🛡️</span> ${escapeHtml(label)} <span class="step-tool-status ${escapeHtml(status)}">${escapeHtml(statusText)}</span></summary>${argsHtml}${resultHtml}</details>`;
     }
@@ -4399,6 +4396,107 @@ function normalizeApprovalPayload(value) {
   };
 }
 
+function renderApprovalPreviewHTML(toolName, args) {
+  if (!args || typeof args !== "object") {
+    return `<pre class="approval-raw-json">${escapeHtml(String(args || ""))}</pre>`;
+  }
+
+  const tool = String(toolName || "").toLowerCase();
+  const filePath = args.file_path || args.path || "";
+
+  // 1. edit_file
+  if (tool === "edit_file" && (args.old_string !== undefined || args.new_string !== undefined)) {
+    const oldLines = String(args.old_string || "").split("\n");
+    const newLines = String(args.new_string || "").split("\n");
+
+    let linesHtml = "";
+    if (args.old_string) {
+      oldLines.forEach((l) => {
+        linesHtml += `<div class="diff-line del"><span class="diff-line-prefix">-</span><span class="diff-line-content">${escapeHtml(l) || "&nbsp;"}</span></div>`;
+      });
+    }
+    if (args.new_string) {
+      newLines.forEach((l) => {
+        linesHtml += `<div class="diff-line add"><span class="diff-line-prefix">+</span><span class="diff-line-content">${escapeHtml(l) || "&nbsp;"}</span></div>`;
+      });
+    }
+
+    return `
+      <div class="approval-diff-container">
+        <div class="approval-diff-header">
+          <span class="approval-diff-file">📝 ${escapeHtml(filePath || "file")}</span>
+          <span class="approval-diff-badge edit">Edit (${args.old_string ? oldLines.length : 0} - / ${args.new_string ? newLines.length : 0} +)</span>
+        </div>
+        <div class="approval-diff-body">${linesHtml}</div>
+      </div>
+    `;
+  }
+
+  // 2. apply_diff
+  if (tool === "apply_diff" && args.diff) {
+    const diffLines = String(args.diff).split("\n");
+    let linesHtml = "";
+    diffLines.forEach((line) => {
+      if (line.startsWith("+") && !line.startsWith("+++")) {
+        linesHtml += `<div class="diff-line add"><span class="diff-line-prefix">+</span><span class="diff-line-content">${escapeHtml(line.slice(1)) || "&nbsp;"}</span></div>`;
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        linesHtml += `<div class="diff-line del"><span class="diff-line-prefix">-</span><span class="diff-line-content">${escapeHtml(line.slice(1)) || "&nbsp;"}</span></div>`;
+      } else if (line.startsWith("@@")) {
+        linesHtml += `<div class="diff-line hunk"><span class="diff-line-prefix">~</span><span class="diff-line-content">${escapeHtml(line)}</span></div>`;
+      } else {
+        linesHtml += `<div class="diff-line normal"><span class="diff-line-prefix">&nbsp;</span><span class="diff-line-content">${escapeHtml(line)}</span></div>`;
+      }
+    });
+
+    return `
+      <div class="approval-diff-container">
+        <div class="approval-diff-header">
+          <span class="approval-diff-file">🔄 ${escapeHtml(filePath || "patch")}</span>
+          <span class="approval-diff-badge patch">Unified Diff</span>
+        </div>
+        <div class="approval-diff-body">${linesHtml}</div>
+      </div>
+    `;
+  }
+
+  // 3. write_file
+  if (tool === "write_file" && (args.contents !== undefined || args.content !== undefined)) {
+    const content = String(args.contents !== undefined ? args.contents : args.content || "");
+    const lines = content.split("\n");
+    const previewLines = lines.slice(0, 80);
+    let linesHtml = "";
+    previewLines.forEach((l) => {
+      linesHtml += `<div class="diff-line add"><span class="diff-line-prefix">+</span><span class="diff-line-content">${escapeHtml(l) || "&nbsp;"}</span></div>`;
+    });
+    if (lines.length > 80) {
+      linesHtml += `<div class="diff-line hunk"><span class="diff-line-prefix">...</span><span class="diff-line-content">[+${lines.length - 80} more lines]</span></div>`;
+    }
+
+    return `
+      <div class="approval-diff-container">
+        <div class="approval-diff-header">
+          <span class="approval-diff-file">📄 ${escapeHtml(filePath || "new file")}</span>
+          <span class="approval-diff-badge write">Write (${lines.length} lines)</span>
+        </div>
+        <div class="approval-diff-body">${linesHtml}</div>
+      </div>
+    `;
+  }
+
+  // 4. execute_command
+  if (tool === "execute_command" && args.command) {
+    return `
+      <div class="terminal-cmd-box">
+        <span class="terminal-cmd-prompt">$</span>
+        <span class="terminal-cmd-text">${escapeHtml(args.command)}</span>
+      </div>
+    `;
+  }
+
+  // Fallback: pretty formatted JSON
+  return `<pre class="approval-raw-json">${escapeHtml(JSON.stringify(args, null, 2))}</pre>`;
+}
+
 function renderApprovalCard() {
   const approval = normalizeApprovalPayload(state.pendingApproval);
   state.pendingApproval = approval;
@@ -4413,10 +4511,8 @@ function renderApprovalCard() {
     els.approvalCardRisk.textContent = approval.risk_summary ? `Risk: ${approval.risk_summary}` : "";
     els.approvalCardRisk.style.display = approval.risk_summary ? "block" : "none";
   }
-  try {
-    els.approvalCardArgs.textContent = JSON.stringify(approval.arguments || {}, null, 2);
-  } catch {
-    els.approvalCardArgs.textContent = String(approval.arguments || "");
+  if (els.approvalCardArgs) {
+    els.approvalCardArgs.innerHTML = renderApprovalPreviewHTML(approval.tool, approval.arguments);
   }
   if (els.approvalCard.parentNode !== els.messages) {
     els.messages.appendChild(els.approvalCard);
@@ -4430,10 +4526,8 @@ function showApprovalDialog(id, toolName, args) {
   }
   state.currentApprovalId = id;
   els.approvalToolName.textContent = toolName;
-  try {
-    els.approvalToolArgs.textContent = JSON.stringify(args, null, 2);
-  } catch {
-    els.approvalToolArgs.textContent = String(args);
+  if (els.approvalToolArgs) {
+    els.approvalToolArgs.innerHTML = renderApprovalPreviewHTML(toolName, args);
   }
   
   const countdownEl = document.querySelector("#approvalCountdown");
