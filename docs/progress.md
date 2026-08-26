@@ -14,6 +14,7 @@ Prevented background and auxiliary Ollama workloads from unexpectedly loading al
 - Added `/stop` to web and Telegram. Interactive turns now register a shared per-session cancellation context, allowing the command to immediately cancel Ollama streaming, tools, OOM retry waits, goals, and active plans without sending `context canceled` as a Telegram error.
 - Stabilized the web empty-session onboarding card by making its DOM render idempotent per session/status, preventing polling and SSE refreshes from replaying its entrance animation. The welcome copy no longer exposes the configured main model name.
 - Added an online repetition guard for visible output and thinking streams. Four consecutive repetitions of a 1–4 line cycle or a substantial text block now terminate the Ollama stream early, preserve the partial answer, record a `generation_repetition_stopped` event, and append a clear truncation note before runaway generation can exhaust memory.
+- Reworked `release.ps1` to show the latest fetched tag before prompting, support replacing an existing same-version GitHub release plus local/remote tags, and defer all destructive/publication operations until six cross-platform packages have been built and their archive contents validated.
 - Added concurrency, loaded-model policy, OOM retry, fallback, cancellation, repetition-loop, and Telegram-formatting tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
 
 ## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
