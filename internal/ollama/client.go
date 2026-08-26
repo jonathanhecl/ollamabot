@@ -248,14 +248,12 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 		}
 		resp.Body.Close()
 
-		if streamErr != nil {
-			if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return streamErr
+		if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
 		}
+		return streamErr
 	}
 	return fmt.Errorf("max retries exceeded")
 }
@@ -342,14 +340,12 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 		}
 		resp.Body.Close()
 
-		if streamErr != nil {
-			if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
-				backoff *= 2
-				continue
-			}
-			return streamErr
+		if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
+			time.Sleep(backoff)
+			backoff *= 2
+			continue
 		}
+		return streamErr
 	}
 	return fmt.Errorf("max retries exceeded")
 }
