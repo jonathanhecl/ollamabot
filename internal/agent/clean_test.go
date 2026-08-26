@@ -82,6 +82,29 @@ func TestStreamThinkingFilter_UnterminatedBlock(t *testing.T) {
 	}
 }
 
+func TestStreamRepetitionGuardDetectsAlternatingRows(t *testing.T) {
+	var guard StreamRepetitionGuard
+	rows := "| ku, tsu, su | tta | kaku → katta |\n| nu, mu, ru, bu, gu | nda | nomu → nonda |\n"
+	for i := 0; i < 3; i++ {
+		if guard.Observe(rows) {
+			t.Fatalf("detected repetition after only %d cycles", i+1)
+		}
+	}
+	if !guard.Observe(rows) {
+		t.Fatal("expected repeated row cycle to be detected")
+	}
+}
+
+func TestStreamRepetitionGuardAllowsNormalTable(t *testing.T) {
+	var guard StreamRepetitionGuard
+	text := "| Group | Dictionary | Negative | Past | Example |\n|---|---|---|---|---|\n| 1 | kaku | kakanai | kaita | I wrote |\n| 2 | taberu | tabenai | tabeta | I ate |\n| 3 | suru | shinai | shita | I did |\n"
+	for _, chunk := range []string{text[:40], text[40:100], text[100:]} {
+		if guard.Observe(chunk) {
+			t.Fatal("normal table was incorrectly detected as repetitive")
+		}
+	}
+}
+
 func TestStripToolCallEnvelopes(t *testing.T) {
 	cases := []struct {
 		name string

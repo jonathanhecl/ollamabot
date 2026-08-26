@@ -203,3 +203,84 @@ func isPrefixFold(s, full string) bool {
 	}
 	return strings.EqualFold(s, full[:len(s)])
 }
+
+type StreamRepetitionGuard struct {
+	content strings.Builder
+}
+
+func (g *StreamRepetitionGuard) Observe(delta string) bool {
+	if delta == "" {
+		return false
+	}
+	g.content.WriteString(delta)
+	var lines []string
+	for _, line := range strings.Split(g.content.String(), "\n") {
+		line = strings.Join(strings.Fields(line), " ")
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	for period := 1; period <= 4 && len(lines) >= period*4; period++ {
+		pattern := lines[len(lines)-period:]
+		matched := true
+		for repeat := 2; repeat <= 4; repeat++ {
+			start := len(lines) - repeat*period
+			if !stringsEqual(lines[start:start+period], pattern) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	normalized := []rune(strings.Join(strings.Fields(g.content.String()), " "))
+	if len(normalized) < 64 {
+		return false
+	}
+	if len(normalized) > 8192 {
+		normalized = normalized[len(normalized)-8192:]
+		g.content.Reset()
+		g.content.WriteString(string(normalized))
+	}
+	maxUnit := min(512, len(normalized)/4)
+	for unit := 16; unit <= maxUnit; unit++ {
+		pattern := normalized[len(normalized)-unit:]
+		matched := true
+		for repeat := 2; repeat <= 4; repeat++ {
+			start := len(normalized) - repeat*unit
+			if !runesEqual(normalized[start:start+unit], pattern) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func runesEqual(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

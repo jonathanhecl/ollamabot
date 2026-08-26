@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -20,6 +21,8 @@ import (
 const (
 	MaxIterations = 50
 )
+
+var errRepeatedGeneration = errors.New("model response entered a repetition loop")
 
 // SubagentContext wraps ctx with a timeout derived from cfg.SubagentTimeoutMinutes.
 // If the value is unset (0) or invalid, it defaults to 10 minutes.
@@ -508,6 +511,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		done := false
 		doneReason := ""
 		var contentFilter StreamThinkingFilter
+		var contentRepetitionGuard StreamRepetitionGuard
+		var thinkingRepetitionGuard StreamRepetitionGuard
 		var lastChunk ollama.ChatResponse
 
 		err := a.client.ChatStream(ctx, req, func(chunk ollama.ChatResponse) error {
@@ -515,6 +520,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				assistantThinking.WriteString(chunk.Message.Thinking)
 				if handler != nil {
 					handler.OnThinking(chunk.Message.Thinking)
+				}
+				if thinkingRepetitionGuard.Observe(chunk.Message.Thinking) {
+					return errRepeatedGeneration
 				}
 			}
 			if chunk.Message.Content != "" {
@@ -525,6 +533,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					if emit := contentFilter.Write(chunk.Message.Content); emit != "" {
 						handler.OnContent(emit)
 					}
+				}
+				if contentRepetitionGuard.Observe(chunk.Message.Content) {
+					return errRepeatedGeneration
 				}
 			}
 			for _, call := range chunk.Message.ToolCalls {
@@ -549,7 +560,21 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 			return nil
 		})
-		if err != nil {
+		if errors.Is(err, errRepeatedGeneration) {
+			const note = "\n\n[Generation stopped because the model began repeating the same content.]"
+			if handler != nil {
+				if emit := contentFilter.Flush(); emit != "" {
+					handler.OnContent(emit)
+				}
+				handler.OnContent(note)
+				handler.OnEvent("generation_repetition_stopped", map[string]any{"model": model})
+			}
+			assistantContent.WriteString(note)
+			done = true
+			doneReason = "repetition"
+			lastChunk = ollama.ChatResponse{Model: model, Done: true, DoneReason: doneReason}
+			log.Printf("[Agent] Stopped repetitive generation from model %q", model)
+		} else if err != nil {
 			return messages, err
 		}
 		if !done {
