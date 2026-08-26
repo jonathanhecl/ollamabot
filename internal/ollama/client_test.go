@@ -65,6 +65,25 @@ func TestCanUseAuxiliaryModel(t *testing.T) {
 	}
 }
 
+func TestChatStreamDoesNotImmediatelyRetryOutOfMemory(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"mlx runner failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)"}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	err := client.ChatStream(context.Background(), ChatRequest{Model: "large"}, func(ChatResponse) error { return nil })
+	if !IsOutOfMemoryError(err) {
+		t.Fatalf("error = %v, want out-of-memory error", err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("requests = %d, want 1", got)
+	}
+}
+
 func TestClientEndpoints(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {

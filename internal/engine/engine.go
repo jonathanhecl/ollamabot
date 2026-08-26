@@ -44,9 +44,11 @@ type Deps struct {
 	ImageProgressFactory    ImageProgressHandlerFactory
 	AttachmentFactory       AttachmentHandlerFactory
 
-	OnSleepActivity func()
-	OnMediaResolved func(router.ResolveResult)
-	OnPlanProgress  func(sessionID string, plan sessions.SessionPlan)
+	OnSleepActivity  func()
+	OnMediaResolved  func(router.ResolveResult)
+	OnPlanProgress   func(sessionID string, plan sessions.SessionPlan)
+	OnRecoveryStatus func(string)
+	OOMRetryDelay    time.Duration
 }
 
 type TurnRequest struct {
@@ -62,6 +64,44 @@ type TurnResult struct {
 	MediaResult   *router.ResolveResult
 	ModelUsed     string
 	FinalAnswer   string
+}
+
+type agentRunFunc func(string) ([]ollama.Message, error)
+
+func runTelegramWithOOMRecovery(ctx context.Context, mainModel, subagentModel string, delay time.Duration, notify func(string), beforeFallback func(), run agentRunFunc) ([]ollama.Message, string, error) {
+	history, err := run(mainModel)
+	if !ollama.IsOutOfMemoryError(err) {
+		return history, mainModel, err
+	}
+	if delay <= 0 {
+		delay = 10 * time.Minute
+	}
+	if notify != nil {
+		notify("The main model ran out of memory. I will retry once in 10 minutes.")
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return history, mainModel, ctx.Err()
+	case <-timer.C:
+	}
+
+	history, err = run(mainModel)
+	if !ollama.IsOutOfMemoryError(err) {
+		return history, mainModel, err
+	}
+	if strings.TrimSpace(subagentModel) == "" || strings.EqualFold(strings.TrimSpace(subagentModel), strings.TrimSpace(mainModel)) {
+		return history, mainModel, err
+	}
+	if notify != nil {
+		notify("The main model is still out of memory. I will try the subagent model now.")
+	}
+	if beforeFallback != nil {
+		beforeFallback()
+	}
+	history, err = run(subagentModel)
+	return history, subagentModel, err
 }
 
 func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, error) {
@@ -138,8 +178,26 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 			"note":        mediaRes.ContextNote,
 		})
 	}
-	a := agent.NewAgent(deps.ConfigMgr, deps.Client, registry)
-	finalHistory, runErr := a.Run(ctx, model, ollamaMessages, think, handler)
+	runAgent := func(runModel string) ([]ollama.Message, error) {
+		runThink := agent.ShouldThink(runModel, cfg.OllamaThinkEnabled, SnapshotPath(deps.CachePath))
+		a := agent.NewAgent(deps.ConfigMgr, deps.Client, registry)
+		return a.Run(ctx, runModel, ollamaMessages, runThink, handler)
+	}
+	var finalHistory []ollama.Message
+	var runErr error
+	if strings.EqualFold(strings.TrimSpace(req.Channel), "telegram") {
+		delay := deps.OOMRetryDelay
+		beforeFallback := func() {
+			unloadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := deps.Client.UnloadModel(unloadCtx, model); err != nil {
+				log.Printf("[Engine] Failed to unload main model %q before subagent fallback: %v", model, err)
+			}
+		}
+		finalHistory, result.ModelUsed, runErr = runTelegramWithOOMRecovery(ctx, model, config.ResolveModel(cfg, config.ModelRoleSubagent), delay, deps.OnRecoveryStatus, beforeFallback, runAgent)
+	} else {
+		finalHistory, runErr = runAgent(model)
+	}
 	result.FinalHistory = finalHistory
 	if runErr != nil {
 		if _, saveErr := recorder.SnapshotAndSave(); saveErr != nil {

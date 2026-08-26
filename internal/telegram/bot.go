@@ -1246,6 +1246,9 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		OnPlanProgress: func(sessionID string, plan sessions.SessionPlan) {
 			b.notifyPlanProgress(sessionID, plan)
 		},
+		OnRecoveryStatus: func(message string) {
+			_, _ = b.sendMessage(chatID, message, 0, "")
+		},
 	}, engine.TurnRequest{
 		SessionID:   sessionID,
 		Channel:     "telegram",

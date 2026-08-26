@@ -7,7 +7,10 @@ Prevented background and auxiliary Ollama workloads from unexpectedly loading al
 - Added a process-wide coordinator that gives interactive turns priority over sleep learning, goals, plan monitoring, and autonomous project runs. Background work is deferred while any interactive turn is active or waiting.
 - Interactive turns now wait for an already-running background inference to release its slot after sleep activity cancellation, closing the race between `/api/ps` checks and model startup.
 - Session auto-naming skips a distinct subagent model when another model is already resident, and context optimization falls back to the main model instead of loading an additional model.
-- Added concurrency and loaded-model policy tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
+- Telegram OOM recovery now waits 10 minutes after the first Metal/MLX memory failure, retries the main model exactly once, then unloads it and falls back once to a distinct configured subagent model if the second attempt is also out of memory.
+- Telegram sends status updates before the delayed retry and subagent fallback; cancellation interrupts the wait cleanly.
+- OOM responses bypass the client's generic immediate HTTP retries so the recovery sequence performs exactly two main-model attempts.
+- Added concurrency, loaded-model policy, OOM retry, and fallback tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
 
 ## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
 

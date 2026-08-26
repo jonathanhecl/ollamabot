@@ -86,6 +86,21 @@ func normalizeModelName(name string) string {
 	return strings.TrimSuffix(name, ":latest")
 }
 
+func IsOutOfMemoryError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return isOutOfMemoryMessage(err.Error())
+}
+
+func isOutOfMemoryMessage(message string) bool {
+	message = strings.ToLower(message)
+	return strings.Contains(message, "insufficient memory") ||
+		strings.Contains(message, "outofmemory") ||
+		strings.Contains(message, "kiogpucommandbuffercallbackerroroutofmemory") ||
+		strings.Contains(message, "00000008")
+}
+
 func (c *Client) Show(ctx context.Context, model string) (ShowResponse, error) {
 	var out ShowResponse
 	err := c.do(ctx, http.MethodPost, "/api/show", map[string]string{"model": model}, &out)
@@ -199,12 +214,13 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
-			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+			bodyText := strings.TrimSpace(string(body))
+			if !isOutOfMemoryMessage(bodyText) && (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
 				time.Sleep(backoff)
 				backoff *= 2
 				continue
 			}
-			return fmt.Errorf("ollama POST /api/chat failed: status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+			return fmt.Errorf("ollama POST /api/chat failed: status %d: %s", resp.StatusCode, bodyText)
 		}
 
 		decoder := json.NewDecoder(resp.Body)
@@ -391,12 +407,13 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+			bodyText := strings.TrimSpace(string(respBody))
+			if !isOutOfMemoryMessage(bodyText) && (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
 				time.Sleep(backoff)
 				backoff *= 2
 				continue
 			}
-			return fmt.Errorf("ollama %s %s failed: status %d: %s", method, path, resp.StatusCode, strings.TrimSpace(string(respBody)))
+			return fmt.Errorf("ollama %s %s failed: status %d: %s", method, path, resp.StatusCode, bodyText)
 		}
 
 		if out == nil {
