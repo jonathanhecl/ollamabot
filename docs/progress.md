@@ -10,7 +10,8 @@ Prevented background and auxiliary Ollama workloads from unexpectedly loading al
 - Telegram OOM recovery now waits 10 minutes after the first Metal/MLX memory failure, retries the main model exactly once, then unloads it and falls back once to a distinct configured subagent model if the second attempt is also out of memory.
 - Telegram sends status updates before the delayed retry and subagent fallback; cancellation interrupts the wait cleanly.
 - OOM responses bypass the client's generic immediate HTTP retries so the recovery sequence performs exactly two main-model attempts.
-- Added concurrency, loaded-model policy, OOM retry, and fallback tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
+- Telegram Markdown tables are rendered as aligned Unicode tables inside monospaced `<pre>` blocks, including display-width correction for Japanese and other wide characters; fenced code remains untouched.
+- Added concurrency, loaded-model policy, OOM retry, fallback, and Telegram table-formatting tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
 
 ## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
 

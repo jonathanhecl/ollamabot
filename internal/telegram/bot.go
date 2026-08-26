@@ -2166,6 +2166,134 @@ func isHorizontalRuleLine(line string) bool {
 	return reHorizontalRule.MatchString(line)
 }
 
+func parseMarkdownTableRow(line string) []string {
+	line = strings.TrimSpace(line)
+	if !strings.Contains(line, "|") {
+		return nil
+	}
+	line = strings.TrimPrefix(line, "|")
+	line = strings.TrimSuffix(line, "|")
+	parts := strings.Split(line, "|")
+	cells := make([]string, len(parts))
+	for i, part := range parts {
+		cells[i] = strings.TrimSpace(part)
+	}
+	return cells
+}
+
+func isMarkdownTableSeparator(cells []string) bool {
+	if len(cells) == 0 {
+		return false
+	}
+	for _, cell := range cells {
+		cell = strings.TrimSpace(cell)
+		cell = strings.TrimPrefix(cell, ":")
+		cell = strings.TrimSuffix(cell, ":")
+		if len(cell) < 3 || strings.Trim(cell, "-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func telegramTableCell(text string) string {
+	text = strings.TrimSpace(text)
+	text = strings.Trim(text, "`")
+	text = strings.ReplaceAll(text, "**", "")
+	text = strings.ReplaceAll(text, "__", "")
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func telegramDisplayWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		if r >= 0x1100 && (r <= 0x115f || r == 0x2329 || r == 0x232a ||
+			(r >= 0x2e80 && r <= 0xa4cf) || (r >= 0xac00 && r <= 0xd7a3) ||
+			(r >= 0xf900 && r <= 0xfaff) || (r >= 0xfe10 && r <= 0xfe6f) ||
+			(r >= 0xff00 && r <= 0xff60) || (r >= 0xffe0 && r <= 0xffe6) ||
+			(r >= 0x1f300 && r <= 0x1faff)) {
+			width += 2
+		} else {
+			width++
+		}
+	}
+	return width
+}
+
+func renderTelegramTable(rows [][]string) string {
+	columns := 0
+	for _, row := range rows {
+		if len(row) > columns {
+			columns = len(row)
+		}
+	}
+	widths := make([]int, columns)
+	for rowIndex := range rows {
+		for column := range rows[rowIndex] {
+			rows[rowIndex][column] = telegramTableCell(rows[rowIndex][column])
+			widths[column] = max(widths[column], telegramDisplayWidth(rows[rowIndex][column]))
+		}
+	}
+	border := func(left, middle, right string) string {
+		parts := make([]string, columns)
+		for i, width := range widths {
+			parts[i] = strings.Repeat("─", width+2)
+		}
+		return left + strings.Join(parts, middle) + right
+	}
+	rowText := func(row []string) string {
+		cells := make([]string, columns)
+		for i := range cells {
+			value := ""
+			if i < len(row) {
+				value = row[i]
+			}
+			cells[i] = " " + value + strings.Repeat(" ", widths[i]-telegramDisplayWidth(value)) + " "
+		}
+		return "│" + strings.Join(cells, "│") + "│"
+	}
+	var rendered []string
+	rendered = append(rendered, border("┌", "┬", "┐"), rowText(rows[0]), border("├", "┼", "┤"))
+	for _, row := range rows[1:] {
+		rendered = append(rendered, rowText(row))
+	}
+	rendered = append(rendered, border("└", "┴", "┘"))
+	return strings.Join(rendered, "\n")
+}
+
+func protectMarkdownTables(text string) (string, []string) {
+	lines := strings.Split(text, "\n")
+	var tables []string
+	var output []string
+	for i := 0; i < len(lines); {
+		header := parseMarkdownTableRow(lines[i])
+		if i+1 >= len(lines) || len(header) == 0 {
+			output = append(output, lines[i])
+			i++
+			continue
+		}
+		separator := parseMarkdownTableRow(lines[i+1])
+		if len(separator) != len(header) || !isMarkdownTableSeparator(separator) {
+			output = append(output, lines[i])
+			i++
+			continue
+		}
+		rows := [][]string{header}
+		i += 2
+		for i < len(lines) {
+			row := parseMarkdownTableRow(lines[i])
+			if len(row) == 0 {
+				break
+			}
+			rows = append(rows, row)
+			i++
+		}
+		tables = append(tables, renderTelegramTable(rows))
+		output = append(output, fmt.Sprintf("\x00TABLE%d\x00", len(tables)-1))
+	}
+	return strings.Join(output, "\n"), tables
+}
+
 // toTelegramHTML converts standard Markdown constructs to Telegram HTML format.
 func toTelegramHTML(text string) string {
 	log.Printf("[Telegram] toTelegramHTML input preview: %s", truncate(text, 120))
@@ -2183,6 +2311,8 @@ func toTelegramHTML(text string) string {
 		}
 		return fmt.Sprintf("\x00CODEBLOCK%d\x00", len(codeBlocks)-1)
 	})
+
+	text, tables := protectMarkdownTables(text)
 
 	// 2. Protect inline code
 	var inlineCodes []string
@@ -2232,6 +2362,13 @@ func toTelegramHTML(text string) string {
 		}
 	}
 	text = strings.Join(lines, "\n")
+
+	for i, table := range tables {
+		escaped := strings.ReplaceAll(table, "&", "&amp;")
+		escaped = strings.ReplaceAll(escaped, "<", "&lt;")
+		escaped = strings.ReplaceAll(escaped, ">", "&gt;")
+		text = strings.ReplaceAll(text, fmt.Sprintf("\x00TABLE%d\x00", i), fmt.Sprintf("<pre>%s</pre>", escaped))
+	}
 
 	// 9. Restore code blocks
 	for i, block := range codeBlocks {

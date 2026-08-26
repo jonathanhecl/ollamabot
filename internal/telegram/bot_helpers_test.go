@@ -129,12 +129,29 @@ func TestToTelegramHTML(t *testing.T) {
 		{"---", telegramHorizontalRule},
 		{"___", telegramHorizontalRule},
 		{"Before\n***\nAfter", "Before\n" + telegramHorizontalRule + "\nAfter"},
+		{"| A | Longer |\n|---|:---:|\n| x | y |", "<pre>┌───┬────────┐\n│ A │ Longer │\n├───┼────────┤\n│ x │ y      │\n└───┴────────┘</pre>"},
+		{"```\n| A | B |\n|---|---|\n```", "<pre><code>| A | B |\n|---|---|\n</code></pre>"},
 	}
 
 	for _, tt := range tests {
 		got := toTelegramHTML(tt.input)
 		if got != tt.expected {
 			t.Errorf("toTelegramHTML(%q) = %q; want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestTelegramTableWideCharacterAlignment(t *testing.T) {
+	got := toTelegramHTML("| 語 | 意味 |\n|---|---|\n| 書く | write |")
+	got = strings.TrimSuffix(strings.TrimPrefix(got, "<pre>"), "</pre>")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("rendered table lines = %d, want 5: %q", len(lines), got)
+	}
+	wantWidth := telegramDisplayWidth(lines[0])
+	for i, line := range lines[1:] {
+		if width := telegramDisplayWidth(line); width != wantWidth {
+			t.Fatalf("line %d width = %d, want %d: %q", i+1, width, wantWidth, line)
 		}
 	}
 }
