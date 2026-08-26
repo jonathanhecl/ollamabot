@@ -11,7 +11,8 @@ Prevented background and auxiliary Ollama workloads from unexpectedly loading al
 - Telegram sends status updates before the delayed retry and subagent fallback; cancellation interrupts the wait cleanly.
 - OOM responses bypass the client's generic immediate HTTP retries so the recovery sequence performs exactly two main-model attempts.
 - Telegram Markdown tables are rendered as aligned Unicode tables inside monospaced `<pre>` blocks, including display-width correction for Japanese and other wide characters; fenced code remains untouched.
-- Added concurrency, loaded-model policy, OOM retry, fallback, and Telegram table-formatting tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
+- Added `/stop` to web and Telegram. Interactive turns now register a shared per-session cancellation context, allowing the command to immediately cancel Ollama streaming, tools, OOM retry waits, goals, and active plans without sending `context canceled` as a Telegram error.
+- Added concurrency, loaded-model policy, OOM retry, fallback, cancellation, and Telegram-formatting tests. Full repository tests pass; race testing was unavailable because the local Go environment has CGO disabled.
 
 ## 2026-08-25 — Interactive Visual Code Diff & Terminal Preview for Web Tool Approvals
 

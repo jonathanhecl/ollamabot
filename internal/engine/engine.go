@@ -115,6 +115,14 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		return TurnResult{}, fmt.Errorf("ollama client is required")
 	}
 
+	turnCtx, turnCancel := context.WithCancel(ctx)
+	defer turnCancel()
+	ctx = turnCtx
+	if strings.TrimSpace(req.SessionID) != "" {
+		sessions.RegisterCancel(req.SessionID, turnCancel)
+		defer sessions.UnregisterCancel(req.SessionID)
+	}
+
 	if deps.OnSleepActivity != nil {
 		deps.OnSleepActivity()
 	}

@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func TestTelegramOOMRecoveryRetriesThenUsesSubagent(t *testing.T) {
@@ -67,6 +69,70 @@ func TestTelegramOOMRecoveryDoesNotRetryOtherErrors(t *testing.T) {
 	}
 	if usedModel != "main" {
 		t.Fatalf("used model = %q, want main", usedModel)
+	}
+}
+
+func TestProcessTurnCanBeStoppedBySession(t *testing.T) {
+	chatStarted := make(chan struct{})
+	releaseChat := make(chan struct{})
+	var once sync.Once
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{Capabilities: []string{"completion"}})
+		case "/api/chat":
+			once.Do(func() { close(chatStarted) })
+			<-releaseChat
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+	defer close(releaseChat)
+
+	cfg := config.Config{
+		OllamaBaseURL:      ts.URL,
+		OllamaDefaultModel: "configured-main",
+		Workspace:          t.TempDir(),
+		SessionsPath:       t.TempDir(),
+		MemoryPath:         t.TempDir(),
+		SkillsPath:         t.TempDir(),
+	}
+	store := sessions.NewStore(cfg.SessionsPath)
+	const sessionID = "stop-test"
+	if err := store.Save(sessions.Session{ID: sessionID, Title: "Stop test", Model: cfg.OllamaDefaultModel}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ProcessTurn(context.Background(), Deps{
+			ConfigMgr:    config.NewManager(cfg),
+			Client:       ollama.NewClient(ts.URL),
+			SessionStore: store,
+		}, TurnRequest{
+			SessionID: sessionID,
+			Channel:   "telegram",
+			Messages:  []router.MediaMessage{{Message: ollama.Message{Role: "user", Content: "wait"}}},
+		})
+		done <- err
+	}()
+
+	select {
+	case <-chatStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("chat request did not start")
+	}
+	if !sessions.AbortSession(sessionID) {
+		t.Fatal("expected active session to be aborted")
+	}
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ProcessTurn error = %v, want context.Canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ProcessTurn did not stop after abort")
 	}
 }
 

@@ -565,19 +565,31 @@ if (els.logoutBtn) {
     window.location.reload();
   });
 }
+async function stopActiveSession() {
+  if (state.currentAbortController) {
+    state.currentAbortController.abort();
+  }
+  if (!state.activeSessionId) {
+    addSystemMessage("No active session to stop.");
+    renderMessages();
+    return false;
+  }
+  try {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/abort`, { method: "POST" });
+    const result = await response.json();
+    addSystemMessage(result.aborted ? "Agent stopped." : "No active agent to stop.");
+    renderMessages();
+    return Boolean(result.aborted);
+  } catch (err) {
+    console.error("Failed to abort session on backend:", err);
+    addSystemMessage(`Could not stop the agent: ${err.message}`);
+    renderMessages();
+    return false;
+  }
+}
+
 if (els.skipBtn) {
-  els.skipBtn.addEventListener("click", async () => {
-    if (state.currentAbortController) {
-      state.currentAbortController.abort();
-    }
-    if (state.activeSessionId) {
-      try {
-        await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/abort`, { method: "POST" });
-      } catch (err) {
-        console.error("Failed to abort session on backend:", err);
-      }
-    }
-  });
+  els.skipBtn.addEventListener("click", stopActiveSession);
 }
 document.addEventListener("paste", handlePaste);
 
@@ -641,6 +653,17 @@ document.querySelectorAll(".filter-btn").forEach((btn) => {
 
 // --- Quick Slash Commands Controller ---
 const SLASH_COMMANDS = [
+  {
+    cmd: "/stop",
+    args: "",
+    icon: "■",
+    desc: "Immediately stop the active agent",
+    action: async () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      await stopActiveSession();
+    }
+  },
   {
     cmd: "/goal",
     args: "<objective>",
@@ -2652,6 +2675,12 @@ async function sendMessage(event) {
   }
   await waitForBootstrap();
   const content = els.prompt.value.trim();
+  if (content === "/stop") {
+    els.prompt.value = "";
+    els.prompt.focus();
+    await stopActiveSession();
+    return;
+  }
   if (content.startsWith("/goal")) {
     els.prompt.value = "";
     els.prompt.focus();
