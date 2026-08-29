@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/cache"
+	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
@@ -179,15 +181,27 @@ func TestCheckHardwareAndSelectModel(t *testing.T) {
 
 	sm := NewSleepManager(config.NewManager(cfg), client, nil)
 
-	// Case 1: No models loaded. Should return primary preferred model (subagent-model:1b).
+	// Case 1: No models loaded. In default reflection mode, should return learning-model.
 	psModels = nil
 	psErr = nil
 	model, err := sm.checkHardwareAndSelectModel(context.Background())
 	if err != nil {
 		t.Fatalf("Case 1 failed: %v", err)
 	}
+	if model != "learning-model" {
+		t.Errorf("Case 1: expected learning-model, got %q", model)
+	}
+
+	// Case 1b: Subagents enabled. Should prefer subagent model.
+	cfgSub := cfg
+	cfgSub.SleepModeSubagentsEnabled = true
+	smSub := NewSleepManager(config.NewManager(cfgSub), client, nil)
+	model, err = smSub.checkHardwareAndSelectModel(context.Background())
+	if err != nil {
+		t.Fatalf("Case 1b failed: %v", err)
+	}
 	if model != "subagent-model:1b" {
-		t.Errorf("Case 1: expected subagent-model:1b, got %q", model)
+		t.Errorf("Case 1b: expected subagent-model:1b, got %q", model)
 	}
 
 	// Case 2: Subagent model is loaded (with tag normalization). Should return subagent-model:1b.
@@ -269,12 +283,14 @@ func TestLearningCycleSkipsWhenModelLacksTools(t *testing.T) {
 	sessionsPath := filepath.Join(tmpDir, "sessions")
 	store := sessions.NewStore(sessionsPath)
 
-	// Create a session with a message so it's considered valid.
-	msgRaw, _ := json.Marshal(map[string]string{"role": "user", "content": "hello"})
+	// Create a non-trivial session with 2 user messages so it is not skipped as trivial.
+	msgRaw1, _ := json.Marshal(map[string]string{"role": "user", "content": "first question"})
+	msgRaw2, _ := json.Marshal(map[string]string{"role": "assistant", "content": "first answer"})
+	msgRaw3, _ := json.Marshal(map[string]string{"role": "user", "content": "second question with more details"})
 	sess := sessions.Session{
 		ID:       "test-sess-1",
 		Title:    "Test Session",
-		Messages: []json.RawMessage{msgRaw},
+		Messages: []json.RawMessage{msgRaw1, msgRaw2, msgRaw3},
 	}
 	if err := store.Save(sess); err != nil {
 		t.Fatalf("failed to save session: %v", err)
@@ -310,5 +326,114 @@ func TestLearningCycleSkipsWhenModelLacksTools(t *testing.T) {
 	}
 	if found {
 		t.Error("expected session to NOT be in AnalyzedSessions when model lacks tools")
+	}
+}
+
+func TestTrivialSessionAutoAnalyzed(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sleep-mgr-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sessionsPath := filepath.Join(tmpDir, "sessions")
+	store := sessions.NewStore(sessionsPath)
+
+	// Create a trivial 1-turn session with no feedback
+	msgRaw, _ := json.Marshal(map[string]string{"role": "user", "content": "hi"})
+	sess := sessions.Session{
+		ID:       "trivial-sess",
+		Title:    "Hi",
+		Messages: []json.RawMessage{msgRaw},
+	}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("failed to save session: %v", err)
+	}
+
+	cfg := config.Config{
+		Workspace:                    filepath.Join(tmpDir, "workspace"),
+		SessionsPath:                 sessionsPath,
+		SkillsPath:                   filepath.Join(tmpDir, "skills"),
+		SleepModeEnabled:             true,
+		SleepModeInactivityThreshold: "5s",
+		OllamaModelLearning:          "some-model",
+	}
+
+	sm := NewSleepManager(config.NewManager(cfg), nil, nil)
+	sm.runLearningCycleForSessionsWithModel(context.Background(), []string{"trivial-sess"}, "some-model")
+
+	// Should be auto-analyzed without invoking LLM
+	found := false
+	for _, id := range sm.state.AnalyzedSessions {
+		if id == "trivial-sess" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected trivial session to be marked in AnalyzedSessions")
+	}
+}
+
+func TestMaxRetriesMarksSessionAnalyzed(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "sleep-mgr-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	sessionsPath := filepath.Join(tmpDir, "sessions")
+	store := sessions.NewStore(sessionsPath)
+
+	// Session with 2 user turns
+	msg1, _ := json.Marshal(map[string]string{"role": "user", "content": "q1"})
+	msg2, _ := json.Marshal(map[string]string{"role": "assistant", "content": "a1"})
+	msg3, _ := json.Marshal(map[string]string{"role": "user", "content": "q2"})
+	sess := sessions.Session{
+		ID:       "failing-sess",
+		Title:    "Failing",
+		Messages: []json.RawMessage{msg1, msg2, msg3},
+	}
+	_ = store.Save(sess)
+
+	cfg := config.Config{
+		Workspace:                    filepath.Join(tmpDir, "workspace"),
+		SessionsPath:                 sessionsPath,
+		SkillsPath:                   filepath.Join(tmpDir, "skills"),
+		SleepModeEnabled:             true,
+		SleepModeInactivityThreshold: "5s",
+		OllamaDefaultModel:           "default-model",
+	}
+
+	sm := NewSleepManager(config.NewManager(cfg), nil, nil)
+	// Prime cache with tools capability for default-model
+	probePath := cache.DefaultPath()
+	snap, _ := cache.Load(probePath)
+	snap.Models = append(snap.Models, capabilities.ModelReport{
+		Name: "default-model",
+		Capabilities: map[string]capabilities.Status{
+			"tools": capabilities.Confirmed,
+		},
+	})
+	_ = cache.Save(probePath, snap)
+
+	// Simulate failing 2 times
+	sm.failedAttempts["failing-sess"] = 2
+
+	// Third attempt fails (cancelled context immediately)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	sm.runLearningCycleForSessionsWithModel(ctx, []string{"failing-sess"}, "default-model")
+
+	found := false
+	for _, id := range sm.state.AnalyzedSessions {
+		if id == "failing-sess" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected session to be marked analyzed after reaching maxSessionFailures")
 	}
 }

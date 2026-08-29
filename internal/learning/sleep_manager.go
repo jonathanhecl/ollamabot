@@ -30,41 +30,56 @@ type LearningState struct {
 	StateVersion     int       `json:"state_version"`
 }
 
+const (
+	defaultCycleCooldown = 15 * time.Minute // minimum rest between completed learning cycles
+	defaultDeferBackoff  = 3 * time.Minute  // wait time when VRAM/hardware or background slot is busy
+	maxSessionFailures   = 3                // max retries before skipping a failing session
+)
+
 type Subtask struct {
 	Type     string `json:"type"`      // "analyze_session"
 	TargetID string `json:"target_id"` // Session ID
 }
 
 type SleepManager struct {
-	mu           sync.RWMutex
-	cfgMgr       *config.Manager
-	client       *ollama.Client
-	sessionStore *sessions.Store
-	memoryStore  *memory.Store
-	lastActivity time.Time
-	isSleeping   bool
-	isLearning   bool
-	learnCancel  context.CancelFunc
-	state        LearningState
-	statePath    string
-	taskQueue    []Subtask
-	inFlight     []string  // sessions currently being analyzed (requeued on pause)
-	pendingWork  bool      // non-subagent mode: whether unanalyzed sessions remain
-	resumeNotBefore time.Time // don't re-enter sleep before this (resume delay)
+	mu              sync.RWMutex
+	cfgMgr          *config.Manager
+	client          *ollama.Client
+	sessionStore    *sessions.Store
+	memoryStore     *memory.Store
+	lastActivity    time.Time
+	isSleeping      bool
+	isLearning      bool
+	learnCancel     context.CancelFunc
+	state           LearningState
+	statePath       string
+	taskQueue       []Subtask
+	inFlight        []string          // sessions currently being analyzed (requeued on pause)
+	pendingWork     bool              // non-subagent mode: whether unanalyzed sessions remain
+	resumeNotBefore time.Time         // don't re-enter sleep before this (resume delay)
+	cooldownUntil   time.Time         // don't start next learning cycle before this time
+	failedAttempts  map[string]int    // track failures per session to prevent infinite retry loops
 }
 
 func (sm *SleepManager) config() config.Config {
 	return sm.cfgMgr.Get()
 }
 
+func (sm *SleepManager) setCooldown(d time.Duration) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.cooldownUntil = time.Now().Add(d)
+}
+
 func NewSleepManager(cfg *config.Manager, client *ollama.Client, memoryStore *memory.Store) *SleepManager {
 	return &SleepManager{
-		cfgMgr:       cfg,
-		client:       client,
-		sessionStore: sessions.NewStore(cfg.Get().SessionsPath),
-		memoryStore:  memoryStore,
-		lastActivity: time.Now(),
-		statePath:    filepath.Join(cfg.Get().SessionsPath, "learning_state.json"),
+		cfgMgr:         cfg,
+		client:         client,
+		sessionStore:   sessions.NewStore(cfg.Get().SessionsPath),
+		memoryStore:    memoryStore,
+		lastActivity:   time.Now(),
+		statePath:      filepath.Join(cfg.Get().SessionsPath, "learning_state.json"),
+		failedAttempts: make(map[string]int),
 	}
 }
 
@@ -121,12 +136,13 @@ func (sm *SleepManager) Start(ctx context.Context) {
 				sm.mu.RLock()
 				lastAct := sm.lastActivity
 				resumeNotBefore := sm.resumeNotBefore
+				cooldownUntil := sm.cooldownUntil
 				isSleeping := sm.isSleeping
 				isLearning := sm.isLearning
 				sm.mu.RUnlock()
 
 				now := time.Now()
-				if now.Sub(lastAct) >= inactivityThreshold && !now.Before(resumeNotBefore) {
+				if now.Sub(lastAct) >= inactivityThreshold && !now.Before(resumeNotBefore) && !now.Before(cooldownUntil) {
 					if !isSleeping && !isLearning {
 						sm.mu.Lock()
 						sm.isSleeping = true
@@ -204,6 +220,7 @@ func (sm *SleepManager) Pause() {
 	sm.isLearning = false
 	sm.isSleeping = false
 	sm.pendingWork = false
+	sm.cooldownUntil = time.Time{}
 	// NOTE: taskQueue is intentionally preserved so pending subtasks survive
 	// the pause and are resumed on the next sleep cycle.
 
@@ -230,10 +247,12 @@ func (sm *SleepManager) checkHardwareAndSelectModel(ctx context.Context) (string
 	learningModel := sm.config().OllamaModelLearning
 	defaultModel := sm.config().OllamaDefaultModel
 	var primaryModel string
-	if subagentModel != "" {
+	if sm.config().SleepModeSubagentsEnabled && subagentModel != "" {
 		primaryModel = subagentModel
 	} else if learningModel != "" {
 		primaryModel = learningModel
+	} else if subagentModel != "" {
+		primaryModel = subagentModel
 	} else {
 		primaryModel = defaultModel
 	}
@@ -268,11 +287,14 @@ func (sm *SleepManager) checkHardwareAndSelectModel(ctx context.Context) (string
 		return false
 	}
 
-	if modelIsLoaded(subagentModel) {
+	if sm.config().SleepModeSubagentsEnabled && modelIsLoaded(subagentModel) {
 		return subagentModel, nil
 	}
 	if modelIsLoaded(learningModel) {
 		return learningModel, nil
+	}
+	if modelIsLoaded(subagentModel) {
+		return subagentModel, nil
 	}
 	if modelIsLoaded(defaultModel) {
 		return defaultModel, nil
@@ -289,13 +311,15 @@ func (sm *SleepManager) processNextQueuedTask(ctx context.Context) {
 	sm.mu.Lock()
 	if len(sm.taskQueue) == 0 {
 		sm.mu.Unlock()
+		sm.setCooldown(defaultCycleCooldown)
 		return
 	}
 	sm.mu.Unlock()
 
 	modelToUse, err := sm.checkHardwareAndSelectModel(ctx)
 	if err != nil {
-		log.Printf("[sleep] Hardware check / model selection deferred: %v. Retrying in next ticker loop...", err)
+		log.Printf("[sleep] Hardware check / model selection deferred: %v. Retrying in %v...", err, defaultDeferBackoff)
+		sm.setCooldown(defaultDeferBackoff)
 		return
 	}
 
@@ -393,13 +417,15 @@ func (d *sleepStreamHandler) OnContextOptimized(optimizedMessages []ollama.Messa
 func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 	modelToUse, err := sm.checkHardwareAndSelectModel(parentCtx)
 	if err != nil {
-		log.Printf("[sleep] Hardware check / model selection deferred for learning cycle: %v. Retrying in next ticker loop...", err)
+		log.Printf("[sleep] Hardware check / model selection deferred for learning cycle: %v. Retrying in %v...", err, defaultDeferBackoff)
+		sm.setCooldown(defaultDeferBackoff)
 		return
 	}
 
 	sessList, err := sm.sessionStore.List()
 	if err != nil {
 		log.Printf("[sleep] Error listing sessions: %v", err)
+		sm.setCooldown(defaultDeferBackoff)
 		return
 	}
 
@@ -424,6 +450,7 @@ func (sm *SleepManager) runLearningCycle(parentCtx context.Context) {
 		sm.mu.Lock()
 		sm.pendingWork = false
 		sm.mu.Unlock()
+		sm.setCooldown(defaultCycleCooldown)
 		log.Println("[sleep] No new sessions to analyze.")
 		return
 	}
@@ -461,7 +488,8 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 		// background slot is shared with GoalManager/PlanMonitor and may be
 		// busy when this runs.
 		sm.requeueSessions(sessionsToAnalyze)
-		log.Printf("[sleep] Background slot busy, deferring learning cycle")
+		sm.setCooldown(defaultDeferBackoff)
+		log.Printf("[sleep] Background slot busy, deferring learning cycle for %v", defaultDeferBackoff)
 		return
 	}
 	defer releaseSlot()
@@ -497,6 +525,27 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 			continue
 		}
 
+		userMsgCount := 0
+		for _, raw := range sess.Messages {
+			var m struct {
+				Role string `json:"role"`
+			}
+			if err := json.Unmarshal(raw, &m); err == nil && m.Role == "user" {
+				userMsgCount++
+			}
+		}
+
+		// Skip trivial sessions: if there are fewer than 2 user messages and no explicit feedback,
+		// there is nothing meaningful to extract for reflection or skill refinement.
+		if userMsgCount < 2 && len(sess.Feedback) == 0 {
+			sm.mu.Lock()
+			sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sessionID)
+			sm.mu.Unlock()
+			_ = sm.SaveState()
+			log.Printf("[sleep] Session %s marked analyzed (trivial, <2 user turns and no feedback)", sessionID)
+			continue
+		}
+
 		validSessions = append(validSessions, sessionID)
 
 		fmt.Fprintf(&historyText, "\n--- SESSION: %s (ID: %s) ---\n", sess.Title, sess.ID)
@@ -524,21 +573,17 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 
 	if len(validSessions) == 0 {
 		log.Println("[sleep] No valid sessions to analyze after filtering.")
+		sm.setCooldown(defaultCycleCooldown)
 		return
 	}
 
 	learningModel := modelToUse
 	if learningModel == "" {
-		learningModel = sm.config().OllamaModelSubagent
-		if learningModel == "" {
-			learningModel = sm.config().OllamaModelLearning
-		}
-		if learningModel == "" {
-			learningModel = sm.config().OllamaDefaultModel
-		}
+		learningModel = config.ResolveModel(sm.config(), config.ModelRoleLearning)
 	}
 	if learningModel == "" {
-		log.Println("[sleep] No default, learning or subagent model configured. Aborting cycle.")
+		log.Println("[sleep] No default or learning model configured. Aborting cycle.")
+		sm.setCooldown(defaultCycleCooldown)
 		return
 	}
 
@@ -555,6 +600,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 			probeCancel()
 			if err != nil || result.Status != capabilities.Confirmed {
 				log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
+				sm.setCooldown(defaultDeferBackoff)
 				return
 			}
 			_ = cache.SaveProbeRun(probePath, cache.ProbeRun{
@@ -566,6 +612,7 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 			})
 		} else {
 			log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
+			sm.setCooldown(defaultDeferBackoff)
 			return
 		}
 	}
@@ -585,68 +632,42 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 	}
 
 	analysisPrompt := fmt.Sprintf(`You are the OllamaBot self-refining learning analyzer.
-Analyze the following conversation histories from %d consolidated sessions for:
-- Potential errors, user frustration, repetitive mistakes, or areas where the assistant struggled.
-- User preferences, coding style preferences, spoken language preferences, tastes, background info, or user name.
-
+Analyze the following conversation histories from %d consolidated sessions:
 ---
 CONVERSATION HISTORIES:
 %s
 %s%s---
 
-Your goal:
-1. Pay special attention to messages marked with user feedback reactions:
-   - A 👎 (negative) indicates the user was unhappy with that response — investigate what went wrong and create/modify skills to prevent the issue.
-   - A 👍 (positive) confirms the approach was good — reinforce those patterns in skills if applicable.
-2. Pay HIGHEST priority to explicit user text feedback (corrections, preferences, praise). These are direct instructions from the user about what to improve or remember.
-3. Determine if the assistant made any mistakes, failed to solve a task, or caused user frustration. If so, create/modify the corresponding skills.
-4. Identify user preferences, tastes, or durable technical facts/decisions.
-   - For general user profile info (name, language, coding styles), update 'agent/USER_PROFILE.md' using 'read_file' and 'write_file' or 'edit_file'.
-   - For specific durable facts, project decisions, or debugging solutions, call 'memory_add' to store them into long-term vector memory. Use 'memory_list' and 'memory_delete' to remove outdated or contradictory facts.
-5. Call the appropriate tools to make these improvements. You have access to:
-   - 'skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete' for skill management. ALWAYS run 'skill_list' first to check for existing skills with similar intent.
-   - 'read_file', 'write_file', 'edit_file' to update 'agent/SOUL.md' or 'agent/USER_PROFILE.md'.
-   - 'memory_add', 'memory_delete', 'memory_list', 'memory_search' to manage long-term memory.
+Your instructions:
+1. Pay highest priority to explicit user text feedback or negative feedback (👎). If the user corrected the assistant, determine what rule or guideline would prevent the mistake and update or create ONLY the relevant skill.
+2. If there are NO user complaints, NO mistakes, and NO durable facts to remember, DO NOT call any tools. Simply write a concise final summary.
+3. NEVER edit unrelated skills (e.g. do not add conversational guidelines or unit conversions to coding/refactor skills).
+4. Do NOT write to audit_log.md — the system logs your actions automatically.
+Provide a clear final summary of your reflection.`, len(validSessions), historyText.String(), feedbackText.String(), textFeedbackSection)
 
-If no changes are needed to skills, memory, or the user profile, respond explaining why, and do not call any tools.
-Provide a clear final summary of what you did.`, len(validSessions), historyText.String(), feedbackText.String(), textFeedbackSection)
-
-	registry := tools.NewRegistry(sm.config().WebSearchEnabled, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{
-		Providers:    sm.config().SearchProviders,
-		BraveAPIKey:  sm.config().BraveSearchAPIKey,
-		TavilyAPIKey: sm.config().TavilyAPIKey,
-	})
+	registry := tools.NewRegistry(false, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{})
 	registry.SetSkillsPath(sm.config().SkillsPath)
 	registry.SetSessionStore(sm.sessionStore)
 
 	reflectorAgent := agent.NewAgent(sm.cfgMgr, sm.client, registry)
+	reflectorAgent.SetMaxIterations(6)
 	reflectorAgent.SetOptions(map[string]any{
 		"temperature": 0.1,
+		"num_predict": 2048,
 	})
 
 	systemPrompt := `You are the OllamaBot Self-Improvement Reflector.
 You operate in the background during sleep mode.
-You have access to tools to modify skills, identity, user profile, and long-term memory ('memory_add', 'memory_delete', 'memory_list').
-Be precise and constructive. Focus on creating high-quality, actionable, clear skill guidelines and indexing durable knowledge.
-When editing or creating skills, use standard SKILL.md format.
+You have access to tools to manage skills ('skill_list', 'skill_get', 'skill_create', 'skill_edit', 'skill_delete'), update user profile ('agent/USER_PROFILE.md'), and manage long-term memory ('memory_add', 'memory_delete', 'memory_list').
 
-To prevent duplicates, you MUST check existing skills with 'skill_list' before creating a new one.
-
-If you discover durable facts, user preferences, or key technical decisions in the analyzed sessions, call 'memory_add' to store them into long-term memory for future recall. Call 'memory_delete' to prune obsolete facts.
-
-Keep the user profile ('agent/USER_PROFILE.md') structured:
-- Name
-- Preferred Languages
-- Coding Styles & Preferences
-- Tastes & Interests
-- General Context & Past Decisions
-
-Log all updates you make in the audit log ('skills/audit_log.md'). You can write or edit this file using 'write_file' or 'edit_file' tools. Each log entry must include:
-- Date/time
-- Chat Session ID(s) analyzed
-- Issue or user preferences detected
-- Actions executed (skills created, user profile updated, memories stored/pruned, etc.)
-- Justification/Reasoning`
+BE CONSERVATIVE AND HIGHLY SELECTIVE:
+- Do NOT modify existing skills or create new ones for normal, successful, or routine conversations.
+- ONLY create or edit a skill if there was an explicit user correction, negative feedback (👎), or a clear repeated mistake.
+- NEVER modify an unrelated skill (e.g. NEVER add conversational guidelines, unit conversions, or weather notes to a coding/refactoring skill).
+- Keep user profile ('agent/USER_PROFILE.md') limited to durable, explicit facts about the user (e.g. name, declared language preferences, explicit coding style preferences). Do NOT record temporary discussion topics (e.g. asking about today's weather) as user preferences.
+- Only call 'memory_add' for durable facts, key decisions, or technical solutions that will be useful across sessions.
+- Do NOT attempt to edit or write to 'skills/audit_log.md' — the system automatically logs your reflection summary and actions.
+- If everything went well and no changes are required, DO NOT call any tools. Simply output a brief summary explaining that the session was successful and no modifications were needed.`
 
 	messages := []ollama.Message{
 		{Role: "system", Content: systemPrompt},
@@ -654,9 +675,21 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 	}
 
 	runCtx, runCancel := agent.SubagentContext(ctx, sm.config())
-	finalHistory, err := reflectorAgent.Run(runCtx, learningModel, messages, true, &sleepStreamHandler{})
+	finalHistory, err := reflectorAgent.Run(runCtx, learningModel, messages, false, &sleepStreamHandler{})
 	runCancel()
 	if err != nil {
+		sm.mu.Lock()
+		for _, id := range validSessions {
+			sm.failedAttempts[id]++
+			if sm.failedAttempts[id] >= maxSessionFailures {
+				log.Printf("[sleep] Session %s failed %d times in reflection, marking analyzed to avoid infinite retry loop", id, sm.failedAttempts[id])
+				sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, id)
+			}
+		}
+		sm.mu.Unlock()
+		_ = sm.SaveState()
+		sm.setCooldown(defaultDeferBackoff)
+
 		if errors.Is(err, context.DeadlineExceeded) {
 			log.Printf("[sleep] Reflection agent timed out after %d minutes", sm.config().SubagentTimeoutMinutes)
 			return
@@ -728,11 +761,22 @@ Log all updates you make in the audit log ('skills/audit_log.md'). You can write
 	sm.mu.Lock()
 	for _, sID := range validSessions {
 		sm.state.AnalyzedSessions = append(sm.state.AnalyzedSessions, sID)
+		delete(sm.failedAttempts, sID)
 	}
 	sm.mu.Unlock()
 	_ = sm.SaveState()
 
 	log.Printf("[sleep] Analysis of sessions [%s] completed successfully.", consolidatedSessIDs)
+	sm.setCooldown(defaultCycleCooldown)
+
+	// Unload inactive models so Ollama frees VRAM and GPU can enter idle power state
+	if sm.client != nil {
+		go func() {
+			unloadCtx, unloadCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer unloadCancel()
+			_ = sm.client.UnloadInactiveModels(unloadCtx, sm.config().OllamaDefaultModel)
+		}()
+	}
 }
 
 func (sm *SleepManager) generateDailyDigest(analyzedIDs []string, reflectionSummary string) {

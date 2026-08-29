@@ -54,8 +54,9 @@ type Agent struct {
 	registry    *tools.Registry
 	paths       *pathMemory
 	currentGoal string
-	options     map[string]any
-	mu          sync.RWMutex
+	options       map[string]any
+	maxIterations int
+	mu            sync.RWMutex
 }
 
 func (a *Agent) config() config.Config {
@@ -81,6 +82,12 @@ func (a *Agent) SetOptions(opts map[string]any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.options = opts
+}
+
+func (a *Agent) SetMaxIterations(n int) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.maxIterations = n
 }
 
 // Run executes the iterative multi-turn planning and tool loop.
@@ -232,7 +239,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		handler.OnEvent("plan_mode", map[string]any{"mode": planMode})
 	}
 
-	for i := 0; i < MaxIterations; i++ {
+	maxIter := MaxIterations
+	a.mu.RLock()
+	if a.maxIterations > 0 {
+		maxIter = a.maxIterations
+	}
+	a.mu.RUnlock()
+
+	for i := 0; i < maxIter; i++ {
 		// --- DYNAMIC SYSTEM PREFIX (rebuilt each iteration) ---
 		// Only the date/time, todo progress, and plan reinforcement actually
 		// change between iterations.

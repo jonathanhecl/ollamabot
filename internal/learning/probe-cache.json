@@ -1,0 +1,48 @@
+{
+  "generated_at": "0001-01-01T00:00:00Z",
+  "base_url": "",
+  "ollama_version": "",
+  "models": [
+    {
+      "Name": "default-model",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "tools": "comprobado"
+      },
+      "Reported": null,
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "",
+      "Size": 0
+    },
+    {
+      "Name": "default-model",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "tools": "comprobado"
+      },
+      "Reported": null,
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "",
+      "Size": 0
+    }
+  ],
+  "running": null,
+  "expected": null,
+  "probe_runs": [
+    {
+      "name": "tools",
+      "model": "default-model",
+      "status": "comprobado",
+      "details": "",
+      "run_at": "2026-08-29T00:12:34.2053298-03:00"
+    }
+  ]
+}
