@@ -34,6 +34,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/scheduler"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
@@ -256,6 +257,7 @@ type Bot struct {
 	msgIDMu              sync.RWMutex
 	msgIDMap             map[string]map[int64]int // chatIDStr -> telegram_msg_id -> session_message_index
 	mcpManager           *mcp.Manager
+	schedulerMgr         *scheduler.Manager
 }
 
 func (b *Bot) config() config.Config {
@@ -316,6 +318,37 @@ func (b *Bot) SetApprovalService(service *sessions.ApprovalService) {
 	if service != nil {
 		b.approvalService = service
 	}
+}
+
+func (b *Bot) SetSchedulerManager(sm *scheduler.Manager) {
+	b.schedulerMgr = sm
+	if sm != nil {
+		sm.RegisterNotifier("telegram", func(task scheduler.Task, message string) error {
+			targetChatID := task.TargetChatID
+			if targetChatID == 0 && task.SessionID != "" {
+				targetChatID = b.lookupChatID(task.SessionID)
+			}
+			if targetChatID == 0 {
+				log.Printf("[Telegram] Cannot deliver reminder %s: no chatID found", task.ID)
+				return fmt.Errorf("target chat ID not found")
+			}
+			_, err := b.sendMessage(targetChatID, message, 0, "Markdown")
+			return err
+		})
+	}
+}
+
+func (b *Bot) lookupChatID(sessionID string) int64 {
+	b.sessManager.mu.RLock()
+	defer b.sessManager.mu.RUnlock()
+	for chatIDStr, sID := range b.sessManager.mapping {
+		if sID == sessionID {
+			if id, err := strconv.ParseInt(chatIDStr, 10, 64); err == nil {
+				return id
+			}
+		}
+	}
+	return 0
 }
 
 func (b *Bot) registerPlanMonitorNotifiers() {
@@ -753,7 +786,7 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 	switch cmd {
 	case "/start":
 		b.startNewSession(chatIDStr)
-		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/stop` - Immediately stop the active agent\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/image <prompt>` - Force generate an image\n- `/feedback <text>` - Submit feedback for the agent to learn from\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
+		b.sendMessage(chatID, "👋 *Welcome to OllamaBot on Telegram!*\n\nI am your local-first AI companion. You can chat with me, send images, or send voice messages.\n\n*Commands:*\n- `/new` - Start a new clean session\n- `/stop` - Immediately stop the active agent\n- `/reminders` - List scheduled reminders and tasks\n- `/sessions` - List recent sessions (up to 10)\n- `/session <ID>` - Switch to a specific session\n- `/status` - Monitor VRAM and Ollama status\n- `/settings` - Change active models config\n- `/projects` - List autonomous workspace projects\n- `/memory <query>` - Query long-term semantic memory\n- `/reloadmodels` - Force reload models inventory & save snapshot\n- `/image <prompt>` - Force generate an image\n- `/feedback <text>` - Submit feedback for the agent to learn from\n- `/start` - Display this welcome message\n\nAsk me anything to get started!", 0, "Markdown")
 	case "/new":
 		b.startNewSession(chatIDStr)
 		b.sendMessage(chatID, "🔄 *New session started!* Previous history cleared.", 0, "Markdown")
@@ -777,6 +810,10 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 		} else {
 			b.sendMessage(chatID, "No active agent to stop.", 0, "")
 		}
+	case "/reminders", "/recordatorios":
+		b.handleRemindersCommand(chatID)
+	case "/cancel_reminder":
+		b.handleCancelReminderCommand(chatID, args)
 	case "/feedback":
 		if strings.TrimSpace(args) == "" {
 			b.sendMessage(chatID, "📝 *Usage:* `/feedback <text>`\n\nSubmit feedback for the agent to learn from. Examples:\n- `/feedback You should always respond in Spanish`\n- `/feedback Don't use bullet points for short answers`\n- `/feedback Great job with the code refactoring`", 0, "Markdown")
@@ -1067,8 +1104,76 @@ func (b *Bot) handleCommand(chatID int64, cmd string, args string) {
 			}
 		}
 	default:
-		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/sessions`, `/session`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/goal`, `/start`", 0, "Markdown")
+		b.sendMessage(chatID, "❌ Unknown command. Available commands: `/new`, `/reminders`, `/sessions`, `/session`, `/status`, `/settings`, `/projects`, `/memory`, `/reloadmodels`, `/goal`, `/start`", 0, "Markdown")
 	}
+}
+
+func (b *Bot) handleRemindersCommand(chatID int64) {
+	if b.schedulerMgr == nil {
+		b.sendMessage(chatID, "⚠️ Scheduler service is not configured.", 0, "")
+		return
+	}
+
+	tasks := b.schedulerMgr.ListRawTasks("telegram", "", false)
+	var chatTasks []scheduler.Task
+	for _, t := range tasks {
+		if t.TargetChatID == 0 || t.TargetChatID == chatID {
+			chatTasks = append(chatTasks, t)
+		}
+	}
+
+	if len(chatTasks) == 0 {
+		b.sendMessage(chatID, "📅 *No active reminders or scheduled tasks.*\n\nYou can ask me to schedule something anytime! For example:\n- _\"Recuérdame en 20 minutos sacar la comida\"_\n- _\"Revisa mis correos todos los días a las 9am\"_", 0, "Markdown")
+		return
+	}
+
+	b.sendMessage(chatID, fmt.Sprintf("📅 *Active Reminders & Tasks (%d):*", len(chatTasks)), 0, "Markdown")
+	now := time.Now()
+	for idx, t := range chatTasks {
+		typeLabel := "⏰ Reminder"
+		if t.Type == scheduler.TaskTypeAgentTask {
+			typeLabel = "🤖 Autonomous Task"
+		}
+		timeInfo := t.NextRunAt.Format("2006-01-02 15:04:05")
+		if t.ScheduleType == scheduler.ScheduleTypeCron {
+			timeInfo = fmt.Sprintf("Cron `%s` (Next: %s)", t.CronExpr, t.NextRunAt.Format("15:04:05"))
+		} else if t.ScheduleType == scheduler.ScheduleTypeInterval {
+			timeInfo = fmt.Sprintf("Every `%s` (Next: %s)", t.IntervalStr, t.NextRunAt.Format("15:04:05"))
+		} else if t.NextRunAt.After(now) {
+			timeInfo = fmt.Sprintf("%s (in %s)", timeInfo, t.NextRunAt.Sub(now).Round(time.Second))
+		}
+
+		cardText := fmt.Sprintf("*%d. [%s]* `#%s`\n📌 *Content:* %s\n⏳ *Schedule:* %s", idx+1, typeLabel, t.ID, t.Prompt, timeInfo)
+		markup := &InlineKeyboardMarkup{
+			InlineKeyboard: [][]InlineKeyboardButton{
+				{
+					{
+						Text:         "❌ Cancel",
+						CallbackData: "cancel_rem:" + t.ID,
+					},
+				},
+			},
+		}
+		_, _ = b.sendMessageWithMarkup(chatID, cardText, 0, "Markdown", markup)
+	}
+}
+
+func (b *Bot) handleCancelReminderCommand(chatID int64, args string) {
+	if b.schedulerMgr == nil {
+		b.sendMessage(chatID, "⚠️ Scheduler service is not configured.", 0, "")
+		return
+	}
+	taskID := strings.TrimSpace(args)
+	taskID = strings.TrimPrefix(taskID, "#")
+	if taskID == "" {
+		b.sendMessage(chatID, "Usage: `/cancel_reminder <id>` (e.g. `/cancel_reminder rem_1a2b3c4d`)", 0, "Markdown")
+		return
+	}
+	if err := b.schedulerMgr.CancelTask(taskID); err != nil {
+		b.sendMessage(chatID, fmt.Sprintf("❌ Error: %v", err), 0, "")
+		return
+	}
+	b.sendMessage(chatID, fmt.Sprintf("✅ Reminder `#%s` has been cancelled.", taskID), 0, "Markdown")
 }
 
 func (b *Bot) processMessageInput(msg *Message, sessionID string) {
@@ -1223,6 +1328,7 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		CachePath:       snapshotPath(),
 		ApprovalService: b.approvalService,
 		MCPManager:      b.mcpManager,
+		SchedulerManager: b.schedulerMgr,
 		ApprovalHandler: &telegramApprovalHandler{
 			bot:    b,
 			chatID: chatID,
@@ -1271,10 +1377,11 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 			_, _ = b.sendMessage(chatID, message, 0, "")
 		},
 	}, engine.TurnRequest{
-		SessionID:   sessionID,
-		Channel:     "telegram",
-		Messages:    engine.MediaMessagesFromRaw(history),
-		BaseHistory: history,
+		SessionID:    sessionID,
+		Channel:      "telegram",
+		TargetChatID: chatID,
+		Messages:     engine.MediaMessagesFromRaw(history),
+		BaseHistory:  history,
 	})
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -2899,6 +3006,20 @@ func (b *Bot) handleCallbackQuery(cb *CallbackQuery) {
 	}
 
 	data := cb.Data
+	if strings.HasPrefix(data, "cancel_rem:") {
+		taskID := strings.TrimPrefix(data, "cancel_rem:")
+		if b.schedulerMgr != nil {
+			if err := b.schedulerMgr.CancelTask(taskID); err == nil {
+				_ = b.answerCallbackQuery(cb.ID, "✅ Reminder cancelled", false)
+				if cb.Message != nil {
+					_ = b.editMessageText(cb.Message.Chat.ID, cb.Message.MessageID, cb.Message.Text+"\n\n*(Cancelled)*", "", nil)
+				}
+				return
+			}
+		}
+		_ = b.answerCallbackQuery(cb.ID, "⚠️ Could not cancel reminder", true)
+		return
+	}
 	if strings.HasPrefix(data, "settings_role:") {
 		b.handleSettingsRoleCallback(cb)
 		return

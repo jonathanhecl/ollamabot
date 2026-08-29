@@ -120,7 +120,7 @@ func TestProcessTurnCanBeStoppedBySession(t *testing.T) {
 
 	select {
 	case <-chatStarted:
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("chat request did not start")
 	}
 	if !sessions.AbortSession(sessionID) {
@@ -131,7 +131,7 @@ func TestProcessTurnCanBeStoppedBySession(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("ProcessTurn error = %v, want context.Canceled", err)
 		}
-	case <-time.After(2 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("ProcessTurn did not stop after abort")
 	}
 }

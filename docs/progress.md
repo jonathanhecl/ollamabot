@@ -1,5 +1,24 @@
 # Progress
 
+## 2026-08-29 — Scheduled Reminders & Autonomous Background Tasks (Scheduler)
+
+Implemented a robust, lightweight background scheduler and reminder system across the agent pipeline (`internal/scheduler`, `internal/tools`, `internal/engine`, `internal/telegram`, `internal/web`, `cmd/ollamabot`):
+
+- **Core Scheduler Engine (`internal/scheduler`)**:
+  - Implemented `Manager` with persistence to `sessions/scheduler_tasks.json` and background heartbeat ticker.
+  - Supports relative durations (`in 15m`, `2h`, `1d`), absolute timestamps (`15:30`, `2026-08-29 18:00`), intervals (`every 30m`), and standard 5-part cron syntax (`0 9 * * *`, `@daily`, `@hourly`).
+  - Supports two task types: `alert` (direct proactive text notification to user) and `agent_task` (autonomous execution with LLM + tools, acquiring background slot to prevent VRAM thrashing).
+- **Agent Tools (`internal/tools`)**:
+  - Defined `SchedulerService` interface and `ScheduledTaskInfo` to prevent package dependency cycles.
+  - Exposed 4 new tools: `schedule_reminder`, `schedule_task`, `schedule_list`, and `schedule_cancel`.
+- **Channel Delivery (`internal/telegram`, `internal/web`)**:
+  - **Telegram**: Added proactive delivery (`b.sendMessage`), `/reminders` and `/recordatorios` command with inline keyboard cancellation buttons (`[❌ Cancel]`), `/cancel_reminder <id>`, and callback query handler.
+  - **Web**: Registered web notifier appending messages to session history with SSE notifications, plus REST endpoints `GET /api/scheduler/tasks`, `POST /api/scheduler/tasks`, and `DELETE /api/scheduler/tasks/{id}`.
+- **Engine & Main Integration (`internal/engine`, `cmd/ollamabot`)**:
+  - Wired `SchedulerManager` into `engine.Deps` and `TargetChatID` into `TurnRequest`.
+  - Started `SchedulerManager` at application startup in `cmd/ollamabot/main.go`.
+- Unit tests added in `internal/scheduler` and `internal/tools` with 100% pass rate.
+
 ## 2026-08-26 — VRAM-Safe Interactive and Auxiliary Model Scheduling
 
 Prevented background and auxiliary Ollama workloads from unexpectedly loading alongside a memory-intensive interactive model:

@@ -35,6 +35,7 @@ type Deps struct {
 	MemoryStore  *memory.Store
 	CachePath    string
 	MCPManager   *mcp.Manager
+	SchedulerManager tools.SchedulerService
 
 	ApprovalHandler         tools.ApprovalHandler
 	ApprovalService         *sessions.ApprovalService
@@ -52,10 +53,11 @@ type Deps struct {
 }
 
 type TurnRequest struct {
-	SessionID   string
-	Channel     string
-	Messages    []router.MediaMessage
-	BaseHistory []sessions.RawMsg
+	SessionID    string
+	Channel      string
+	TargetChatID int64
+	Messages     []router.MediaMessage
+	BaseHistory  []sessions.RawMsg
 }
 
 type TurnResult struct {
@@ -165,6 +167,8 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 
 	recorder := sessions.NewRecorder(deps.SessionStore, req.SessionID, baseHistory, model, req.Channel)
 	registry := BuildRegistry(deps, req.SessionID, recorder)
+	registry.SetChannel(req.Channel)
+	registry.SetTargetChatID(req.TargetChatID)
 	handler := agent.StreamHandler(noopStreamHandler{})
 	if deps.StreamHandlerFactory != nil {
 		handler = deps.StreamHandlerFactory(recorder, model)
@@ -275,6 +279,9 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 		registry.SetPlanProgressHandler(deps.OnPlanProgress)
 	}
 	registry.SetMCPManager(deps.MCPManager)
+	if deps.SchedulerManager != nil {
+		registry.SetSchedulerService(deps.SchedulerManager)
+	}
 	return registry
 }
 

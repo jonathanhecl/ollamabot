@@ -32,6 +32,36 @@
       "HasVisionEncoder": false,
       "ModifiedAt": "",
       "Size": 0
+    },
+    {
+      "Name": "default-model",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "tools": "comprobado"
+      },
+      "Reported": null,
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "",
+      "Size": 0
+    },
+    {
+      "Name": "default-model",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "tools": "comprobado"
+      },
+      "Reported": null,
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "",
+      "Size": 0
     }
   ],
   "running": null,

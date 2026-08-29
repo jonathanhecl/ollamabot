@@ -28,6 +28,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/scheduler"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/telemetry"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
@@ -60,6 +61,7 @@ type Server struct {
 	activeSessionsMu    sync.Mutex
 	activeSessions      map[string]context.CancelFunc
 	mcpManager          *mcp.Manager
+	schedulerMgr        *scheduler.Manager
 }
 
 type pendingWebPlanConfirmation struct {
@@ -206,6 +208,32 @@ func (s *Server) SetMCPManager(m *mcp.Manager) {
 	s.mu.Unlock()
 }
 
+func (s *Server) SetSchedulerManager(sm *scheduler.Manager) {
+	s.mu.Lock()
+	s.schedulerMgr = sm
+	s.mu.Unlock()
+	if sm != nil {
+		sm.RegisterNotifier("web", func(task scheduler.Task, message string) error {
+			if task.SessionID != "" {
+				sess, err := s.sessionStore.Get(task.SessionID)
+				if err == nil {
+					asstMsg := sessions.RawMsg{
+						Role:      "assistant",
+						Content:   message,
+						Timestamp: time.Now().Format(time.RFC3339),
+					}
+					if raw, err := json.Marshal(asstMsg); err == nil {
+						sess.Messages = append(sess.Messages, raw)
+						_ = s.sessionStore.Save(sess)
+						sessions.NotifyUpdate(task.SessionID)
+					}
+				}
+			}
+			return nil
+		})
+	}
+}
+
 func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/models", s.handleModels)
@@ -247,6 +275,9 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/tools/approve", s.handleApproveTool)
 	mux.HandleFunc("POST /api/tools/clarify", s.handleClarifyTool)
 	mux.HandleFunc("POST /api/tools/plan-confirm", s.handlePlanConfirm)
+	mux.HandleFunc("GET /api/scheduler/tasks", s.handleListSchedulerTasks)
+	mux.HandleFunc("POST /api/scheduler/tasks", s.handleCreateSchedulerTask)
+	mux.HandleFunc("DELETE /api/scheduler/tasks/{id}", s.handleCancelSchedulerTask)
 
 	// Autonomous projects endpoints
 	mux.HandleFunc("GET /api/autonomous/projects", s.handleListProjects)
@@ -738,6 +769,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		CachePath:       s.cachePath,
 		ApprovalService: s.approvalService,
 		MCPManager:      mcpMgr,
+		SchedulerManager: s.schedulerMgr,
 		ApprovalHandler: &webApprovalHandler{
 			server:  s,
 			w:       w,
@@ -2831,3 +2863,60 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+func (s *Server) handleListSchedulerTasks(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerMgr == nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	sessionID := r.URL.Query().Get("session_id")
+	channel := r.URL.Query().Get("channel")
+	includeCompleted := r.URL.Query().Get("include_completed") == "true"
+	tasks := s.schedulerMgr.ListRawTasks(channel, sessionID, includeCompleted)
+	writeJSON(w, http.StatusOK, tasks)
+}
+
+func (s *Server) handleCreateSchedulerTask(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("scheduler service is not available"))
+		return
+	}
+	var req struct {
+		Text        string `json:"text"`
+		When        string `json:"when"`
+		Channel     string `json:"channel"`
+		SessionID   string `json:"session_id"`
+		IsAgentTask bool   `json:"is_agent_task"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	if req.Channel == "" {
+		req.Channel = "web"
+	}
+	task, err := s.schedulerMgr.CreateTask(req.Channel, req.SessionID, 0, req.Text, req.When, req.IsAgentTask)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, task)
+}
+
+func (s *Server) handleCancelSchedulerTask(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("scheduler service is not available"))
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeError(w, http.StatusBadRequest, errors.New("missing task id"))
+		return
+	}
+	if err := s.schedulerMgr.CancelTask(id); err != nil {
+		writeError(w, http.StatusNotFound, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
+}
+

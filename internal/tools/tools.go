@@ -71,6 +71,9 @@ type Registry struct {
 	mcpToolNames            map[string]bool
 	safetyPolicy            SafetyPolicy
 	dryRun                  bool
+	schedulerService        SchedulerService
+	channel                 string
+	targetChatID            int64
 }
 
 // SafetyPolicy defines the enforcement level for tool operations.
@@ -2764,6 +2767,14 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		}
 
 		return fmt.Sprintf("Session %s successfully exported to file: %s", sessID, relPath), nil
+	case "schedule_reminder":
+		return r.executeScheduleReminder(args)
+	case "schedule_task":
+		return r.executeScheduleTask(args)
+	case "schedule_list":
+		return r.executeScheduleList(args)
+	case "schedule_cancel":
+		return r.executeScheduleCancel(args)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
