@@ -202,6 +202,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	}
 
 	emptyChatErrRetries := 0
+	emptyRecoveryAttempted := false
 	planStepHasAction := false
 	planTextOnlyRetries := 0
 	todoTextOnlyRetries := 0
@@ -1042,7 +1043,25 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				})
 				continue
 			}
-			return messages, fmt.Errorf("agent returned empty response after %d retries", emptyChatErrRetries)
+			// Last resort: the model keeps answering with thinking tokens only
+			// (or nothing at all). Instead of failing the turn with an error
+			// and leaving the user with no answer, try one direct,
+			// non-thinking, tool-free call so the gathered tool results still
+			// reach the user as a visible response.
+			if !emptyRecoveryAttempted {
+				emptyRecoveryAttempted = true
+				if recovered, ok := a.attemptEmptyRecovery(ctx, model, messages, numCtx, numPredict); ok {
+					messages = append(messages, recovered)
+					completedCleanly = true
+					break
+				}
+			}
+			messages = append(messages, ollama.Message{
+				Role:    "assistant",
+				Content: "I looked into this but couldn't put the answer together. Please try asking again, perhaps with more detail.",
+			})
+			completedCleanly = true
+			break
 		}
 
 		// 9. Enforce Todo Completion: gently guide the model without stalling loops
@@ -1120,6 +1139,40 @@ func voiceLooksLikeContinuation(text string) bool {
 		}
 	}
 	return false
+}
+
+// attemptEmptyRecovery makes one final, constrained model call after the
+// agent produced only thinking tokens (or nothing) several times in a row.
+// Thinking is disabled and no tools are offered, so the model can only emit
+// a visible answer built from the tool results already in the conversation.
+// It reports whether a usable visible response was produced.
+func (a *Agent) attemptEmptyRecovery(ctx context.Context, model string, messages []ollama.Message, numCtx, numPredict int) (ollama.Message, bool) {
+	reqMsgs := make([]ollama.Message, 0, len(messages)+1)
+	reqMsgs = append(reqMsgs, messages...)
+	reqMsgs = append(reqMsgs, ollama.Message{
+		Role:    "system",
+		Content: "Answer the user's last question NOW in plain visible text, using the tool results already in this conversation. Do not call any tools. Do not output thinking tokens or an empty response.",
+	})
+	resp, err := a.client.Chat(ctx, ollama.ChatRequest{
+		Model:    model,
+		Messages: reqMsgs,
+		Think:    false,
+		Options: map[string]any{
+			"num_ctx":     numCtx,
+			"num_predict": numPredict,
+			"temperature": 0.2,
+		},
+	})
+	if err != nil {
+		log.Printf("[Agent] Empty-recovery call failed: %v", err)
+		return ollama.Message{}, false
+	}
+	text := strings.TrimSpace(CleanThinkingTokens(resp.Message.Content))
+	if text == "" {
+		log.Printf("[Agent] Empty-recovery call also returned no visible text")
+		return ollama.Message{}, false
+	}
+	return ollama.Message{Role: "assistant", Content: text}, true
 }
 
 func (a *Agent) rescuePathParam(toolName string, params map[string]any) {
