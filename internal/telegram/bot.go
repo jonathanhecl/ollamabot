@@ -2659,6 +2659,9 @@ func (b *Bot) sendStartupNotification() {
 	if b.config().OllamaModelEmbed != "" {
 		sb.WriteString(fmt.Sprintf("• *Memory:* `%s`\n", b.config().OllamaModelEmbed))
 	}
+	if b.config().OllamaModelSpeech != "" {
+		sb.WriteString(fmt.Sprintf("• *Speech:* `%s`\n", b.config().OllamaModelSpeech))
+	}
 	sb.WriteString("\n")
 
 	sb.WriteString("🛠️ *Active Capabilities:*\n")
@@ -2677,6 +2680,9 @@ func (b *Bot) sendStartupNotification() {
 	}
 	if b.config().OllamaModelEmbed != "" {
 		sb.WriteString("• 💾 Long-Term Memory (RAG)\n")
+	}
+	if b.config().OllamaModelSpeech != "" {
+		sb.WriteString("• 🗣️ Voice Replies\n")
 	}
 
 	messageText := strings.TrimSpace(sb.String())
