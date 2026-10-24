@@ -84,6 +84,12 @@ func (r *Registry) SpeechModel() string {
 	return r.speechModel
 }
 
+// LastVoiceText returns the spoken text from the successful send_voice call
+// in this turn, or empty when no voice was generated yet.
+func (r *Registry) LastVoiceText() string {
+	return r.voiceSentText
+}
+
 func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, error) {
 	model := strings.TrimSpace(r.speechModel)
 	if model == "" {

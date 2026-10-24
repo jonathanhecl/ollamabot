@@ -998,6 +998,28 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 			}
 
+			// Voice replies are terminal when there is no pending work:
+			// the spoken text is the final answer, so finish the turn
+			// without another model round-trip. With pending todos or plan
+			// steps, continue the loop so the model can keep working.
+			if spoken := a.registry.LastVoiceText(); spoken != "" && !hasPending && !hasActivePlanSteps {
+				voiceDone := false
+				for _, pc := range prepared {
+					if pc.toolName == "send_voice" {
+						voiceDone = true
+						break
+					}
+				}
+				if voiceDone {
+					messages = append(messages, ollama.Message{Role: "assistant", Content: spoken})
+					if handler != nil {
+						handler.OnContent(spoken)
+					}
+					completedCleanly = true
+					break
+				}
+			}
+
 			// Continue with next loop turn so the LLM processes results
 			continue
 		}

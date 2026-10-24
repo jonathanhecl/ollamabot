@@ -103,8 +103,11 @@ func TestProcessTurnDeliversVoiceAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessTurn: %v", err)
 	}
-	if result.FinalAnswer != "Listo." {
-		t.Fatalf("final answer = %q, want %q", result.FinalAnswer, "Listo.")
+	if result.FinalAnswer != "Hola, todo listo." {
+		t.Fatalf("final answer = %q, want %q", result.FinalAnswer, "Hola, todo listo.")
+	}
+	if got := atomic.LoadInt32(&chatCalls); got != 1 {
+		t.Fatalf("chat calls = %d, want 1 (no second round-trip after voice)", got)
 	}
 	if spoken != "Hola, todo listo." {
 		t.Fatalf("spoken text = %q", spoken)
