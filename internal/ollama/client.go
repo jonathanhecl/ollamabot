@@ -258,6 +258,110 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 	return fmt.Errorf("max retries exceeded")
 }
 
+// Speech synthesizes audio with a model that reports the "speech" capability.
+// Ollama exposes this through the OpenAI-compatible /v1/audio/speech endpoint,
+// which streams raw audio bytes instead of JSON. The response has no
+// Content-Length, so the body is read until EOF and never sized from headers.
+func (c *Client) Speech(ctx context.Context, req SpeechRequest) (SpeechResponse, error) {
+	req.Model = strings.TrimSpace(req.Model)
+	req.Input = strings.TrimSpace(req.Input)
+	if req.Model == "" {
+		return SpeechResponse{}, fmt.Errorf("speech model is required")
+	}
+	if req.Input == "" {
+		return SpeechResponse{}, fmt.Errorf("speech input is required")
+	}
+	if req.ResponseFormat == "" {
+		req.ResponseFormat = SpeechFormatWAV
+	}
+	if req.ResponseFormat != SpeechFormatWAV && req.ResponseFormat != SpeechFormatPCM {
+		return SpeechResponse{}, fmt.Errorf("unsupported speech format %q: use %q or %q", req.ResponseFormat, SpeechFormatWAV, SpeechFormatPCM)
+	}
+
+	payload, err := json.Marshal(req)
+	if err != nil {
+		return SpeechResponse{}, err
+	}
+
+	maxRetries := 3
+	backoff := 500 * time.Millisecond
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return SpeechResponse{}, ctx.Err()
+		}
+
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL()+"/v1/audio/speech", bytes.NewReader(payload))
+		if err != nil {
+			return SpeechResponse{}, err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return SpeechResponse{}, err
+		}
+
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			if attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return SpeechResponse{}, readErr
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			message := speechErrorMessage(body)
+			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
+				time.Sleep(backoff)
+				backoff *= 2
+				continue
+			}
+			return SpeechResponse{}, fmt.Errorf("ollama POST /v1/audio/speech failed: status %d: %s", resp.StatusCode, message)
+		}
+
+		if len(body) == 0 {
+			return SpeechResponse{}, fmt.Errorf("ollama returned empty speech audio for model %q", req.Model)
+		}
+
+		contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+		if contentType == "" {
+			contentType = speechContentType(req.ResponseFormat)
+		}
+		return SpeechResponse{Audio: body, ContentType: contentType, Format: req.ResponseFormat}, nil
+	}
+	return SpeechResponse{}, fmt.Errorf("max retries exceeded")
+}
+
+// speechErrorMessage extracts the OpenAI-style error message Ollama returns for
+// rejected speech requests, falling back to the raw body.
+func speechErrorMessage(body []byte) string {
+	var envelope struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err == nil && strings.TrimSpace(envelope.Error.Message) != "" {
+		return envelope.Error.Message
+	}
+	return strings.TrimSpace(string(body))
+}
+
+func speechContentType(format string) string {
+	if format == SpeechFormatPCM {
+		return "audio/pcm"
+	}
+	return "audio/wav"
+}
+
 func (c *Client) Embed(ctx context.Context, req EmbedRequest) (EmbedResponse, error) {
 	var out EmbedResponse
 	err := c.do(ctx, http.MethodPost, "/api/embed", req, &out)

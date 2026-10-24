@@ -121,6 +121,31 @@ type EmbedResponse struct {
 	Embeddings [][]float64 `json:"embeddings"`
 }
 
+const (
+	// SpeechFormatWAV returns a 16-bit mono 24 kHz WAV stream.
+	SpeechFormatWAV = "wav"
+	// SpeechFormatPCM returns raw 16-bit little-endian mono 24 kHz samples.
+	SpeechFormatPCM = "pcm"
+)
+
+// SpeechRequest is the body for /v1/audio/speech. Ollama validates strictly:
+// response_format only accepts wav or pcm, speed only accepts 1, and
+// instructions is not supported.
+type SpeechRequest struct {
+	Model          string `json:"model"`
+	Input          string `json:"input"`
+	Voice          string `json:"voice,omitempty"`
+	ResponseFormat string `json:"response_format,omitempty"`
+}
+
+// SpeechResponse holds the synthesized audio. Format mirrors the request so
+// callers can name the file before writing it.
+type SpeechResponse struct {
+	Audio       []byte
+	ContentType string
+	Format      string
+}
+
 // GenerateRequest is used for image generation models (diffusion models like Flux)
 type GenerateRequest struct {
 	Model   string         `json:"model"`
