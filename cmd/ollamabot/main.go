@@ -300,6 +300,20 @@ func runProbe(ctx context.Context, args []string, cfg config.Config, client *oll
 		printResult(result)
 		saveRun(cachePath, result)
 		return err
+	case "speech":
+		flags := flag.NewFlagSet("probe speech", flag.ContinueOnError)
+		model := flags.String("model", cfg.OllamaModelSpeech, "model name")
+		outPath := flags.String("out", "", "write the generated WAV to this path")
+		if err := flags.Parse(args[1:]); err != nil {
+			return err
+		}
+		if *model == "" {
+			return fmt.Errorf("--model is required")
+		}
+		result, err := runner.Speech(ctx, *model, *outPath)
+		printResult(result)
+		saveRun(cachePath, result)
+		return err
 	case "vision":
 		flags := flag.NewFlagSet("probe vision", flag.ContinueOnError)
 		model := flags.String("model", cfg.OllamaDefaultModel, "model name")
@@ -504,6 +518,7 @@ func probeUsage() {
 	fmt.Println("  probe embeddings --model MODEL")
 	fmt.Println("  probe audio --model MODEL")
 	fmt.Println("  probe audio --model MODEL --audio PATH")
+	fmt.Println("  probe speech --model MODEL [--out PATH]")
 }
 
 func resolveWorkspace(workspace string) (string, error) {

@@ -235,6 +235,75 @@ func (r *Runner) Audio(ctx context.Context, model string, audioPath string) (Res
 	return result("audio", model, capabilities.Pending, "no audio encoder detected and no stable REST audio payload documented"), nil
 }
 
+// Speech verifies that a model reports the speech capability and that it can
+// synthesize audio end to end. The generated WAV can be kept with outPath.
+func (r *Runner) Speech(ctx context.Context, model string, outPath string) (Result, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return result("speech", model, capabilities.Pending, "model is required"), fmt.Errorf("model is required")
+	}
+
+	show, err := r.client.Show(ctx, model)
+	if err != nil {
+		return result("speech", model, capabilities.Pending, err.Error()), err
+	}
+	if !reportsCapability(show.Capabilities, "speech") {
+		return result("speech", model, capabilities.Pending, "model does not report the speech capability; speech models reject chat and completion calls"), nil
+	}
+
+	const probeText = "Speech probe OK."
+	res, err := r.client.Speech(ctx, ollama.SpeechRequest{Model: model, Input: probeText})
+	if err != nil {
+		return result("speech", model, capabilities.Pending, err.Error()), err
+	}
+	if !looksLikeWAV(res.Audio) {
+		return result("speech", model, capabilities.Pending, fmt.Sprintf("audio body is not a WAV stream (%d bytes, content-type %q)", len(res.Audio), res.ContentType)), nil
+	}
+	if strings.TrimSpace(outPath) != "" {
+		if err := os.WriteFile(outPath, res.Audio, 0o644); err != nil {
+			return result("speech", model, capabilities.Pending, err.Error()), err
+		}
+	}
+
+	detail := fmt.Sprintf("%s, %d bytes, about %.1fs at 24 kHz mono", res.ContentType, len(res.Audio), wavSeconds(res.Audio))
+	detail += "; " + describeVoices(show.Voices)
+	if strings.TrimSpace(outPath) != "" {
+		detail += fmt.Sprintf("; wrote %s", outPath)
+	}
+	return result("speech", model, capabilities.Confirmed, detail), nil
+}
+
+func reportsCapability(list []string, want string) bool {
+	for _, capability := range list {
+		if capability == want {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeWAV checks the RIFF/WAVE magic. Ollama writes placeholder length
+// fields, so the sizes in the header are not trustworthy.
+func looksLikeWAV(audio []byte) bool {
+	return len(audio) >= 12 && string(audio[0:4]) == "RIFF" && string(audio[8:12]) == "WAVE"
+}
+
+// wavSeconds estimates duration from the payload size: 16-bit mono 24 kHz.
+func wavSeconds(audio []byte) float64 {
+	const bytesPerSecond = 24000 * 2
+	if len(audio) <= 44 {
+		return 0
+	}
+	return float64(len(audio)-44) / bytesPerSecond
+}
+
+func describeVoices(voices []string) string {
+	if len(voices) == 0 {
+		return "voices: cannot be listed by this runtime (pre 0.40.11); using the checkpoint default"
+	}
+	return "voices: " + strings.Join(voices, ", ")
+}
+
 func result(name, model string, status capabilities.Status, details string) Result {
 	return Result{Name: name, Model: model, Status: status, Details: details}
 }
