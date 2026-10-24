@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
@@ -84,10 +85,74 @@ func (r *Registry) SpeechModel() string {
 	return r.speechModel
 }
 
-// LastVoiceText returns the spoken text from the successful send_voice call
-// in this turn, or empty when no voice was generated yet.
+// LastVoiceText returns the spoken text from the most recent successful
+// send_voice call in this turn, or empty when no voice was generated yet.
 func (r *Registry) LastVoiceText() string {
 	return r.voiceSentText
+}
+
+// normalizeVoiceText reduces a voice text to its comparable essence:
+// lowercase, no punctuation, single spaces. Two messages that differ only in
+// capitalization or in "¡!¿?" placement normalize to the same string, which
+// is exactly the near-duplicate bypass the per-turn guard must catch.
+func normalizeVoiceText(s string) string {
+	s = strings.ToLower(s)
+	var b strings.Builder
+	for _, rn := range s {
+		if unicode.IsLetter(rn) || unicode.IsNumber(rn) {
+			b.WriteRune(rn)
+		} else if unicode.IsSpace(rn) {
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// voiceWordOverlap returns the Jaccard similarity (0..1) between the word sets
+// of two normalized voice texts. Catches light paraphrases that are not
+// string-equal but say the same thing (e.g. one added filler word).
+func voiceWordOverlap(a, b string) float64 {
+	setA := map[string]bool{}
+	for _, w := range strings.Fields(a) {
+		setA[w] = true
+	}
+	if len(setA) == 0 {
+		return 0
+	}
+	setB := map[string]bool{}
+	for _, w := range strings.Fields(b) {
+		setB[w] = true
+	}
+	inter := 0
+	for w := range setA {
+		if setB[w] {
+			inter++
+		}
+	}
+	union := len(setA) + len(setB) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
+// voiceAlreadySent reports whether text was already spoken in this turn,
+// either verbatim (after normalization) or nearly (high word overlap).
+func (r *Registry) voiceAlreadySent(text string) bool {
+	norm := normalizeVoiceText(text)
+	if norm == "" {
+		return false
+	}
+	for _, prev := range r.voiceSentTexts {
+		prevNorm := normalizeVoiceText(prev)
+		if prevNorm == "" {
+			continue
+		}
+		if norm == prevNorm || voiceWordOverlap(norm, prevNorm) >= 0.9 {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, error) {
@@ -110,10 +175,8 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	if text == "" {
 		return "", fmt.Errorf("text is empty after removing Markdown and code; provide the words to speak")
 	}
-	if r.voiceSent {
-		if strings.EqualFold(cleanSpeechText(r.voiceSentText), cleanSpeechText(raw)) {
-			return fmt.Sprintf("You already sent this exact voice message in this turn. Do NOT send the same words again. Continue with your remaining work or end your turn."), nil
-		}
+	if len(r.voiceSentTexts) > 0 && r.voiceAlreadySent(text) {
+		return fmt.Sprintf("You already sent this voice message in this turn (same words, only punctuation or small details differ). Do NOT send it again: the user already heard it. Continue with your remaining work or end your turn."), nil
 	}
 	if chars := len([]rune(text)); chars > voiceMaxChars {
 		return "", fmt.Errorf("text is too long for a voice note (%d characters, maximum %d); shorten it or answer in text", chars, voiceMaxChars)
@@ -150,6 +213,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, mime, path, text)
 	r.voiceSent = true
 	r.voiceSentText = text
+	r.voiceSentTexts = append(r.voiceSentTexts, text)
 
 	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes) with its transcription. Do NOT repeat the spoken text in your reply. Continue with any remaining work; you may send another voice message later in this turn only if you have NEW words to say (never the same ones). End your turn when nothing is left to do.", filename, len(res.Audio)), nil
 }

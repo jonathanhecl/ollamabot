@@ -62,6 +62,7 @@ type Registry struct {
 	speechModel             string
 	voiceSent               bool
 	voiceSentText           string
+	voiceSentTexts          []string
 	imageSteps              int
 	imageProgressHandler    ImageProgressHandler
 	attachmentHandler       AttachmentGeneratedHandler

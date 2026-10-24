@@ -195,23 +195,60 @@ func TestSendVoiceAllowsNewWordsBlocksDuplicates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("duplicate send_voice should not error: %v", err)
 	}
-	if !strings.Contains(second, "already sent this exact") {
+	if !strings.Contains(second, "already sent this voice message") {
 		t.Fatalf("duplicate call should warn without new audio, got: %q", second)
 	}
 	if handler.call != 1 {
 		t.Fatalf("attachment handler called %d times, want 1", handler.call)
 	}
 
+	// Same words with different punctuation ("¡!" placement) also block:
+	// this is the near-duplicate bypass that delivered the same voice twice.
+	third, err := callVoice(t, registry, "¡HOLA, TODO LISTO!")
+	if err != nil {
+		t.Fatalf("near-duplicate send_voice should not error: %v", err)
+	}
+	if !strings.Contains(third, "already sent this voice message") {
+		t.Fatalf("near-duplicate call should warn without new audio, got: %q", third)
+	}
+	if handler.call != 1 {
+		t.Fatalf("attachment handler called %d times, want 1", handler.call)
+	}
+
 	// Distinct words are a new voice note and synthesize again.
-	third, err := callVoice(t, registry, "Ya encontré el archivo.")
+	fourth, err := callVoice(t, registry, "Ya encontré el archivo.")
 	if err != nil {
 		t.Fatalf("second distinct send_voice: %v", err)
 	}
-	if !strings.Contains(third, "Voice note delivered") {
-		t.Fatalf("unexpected third result: %q", third)
+	if !strings.Contains(fourth, "Voice note delivered") {
+		t.Fatalf("unexpected fourth result: %q", fourth)
 	}
 	if handler.call != 2 {
 		t.Fatalf("attachment handler called %d times, want 2", handler.call)
+	}
+}
+
+func TestSendVoiceBlocksRealNearDuplicate(t *testing.T) {
+	handler := &fakeAttachmentHandler{}
+	registry, _ := newVoiceRegistry(t, "phonon:40m-es", handler)
+
+	// Transcriptions from the reported double-delivery: same message, only
+	// "¡!" placement differs.
+	first := "¡Claro que sí! Revisando el pronóstico detallado, el día más caluroso de la semana será el jueves. Es el día que se espera que alcance los 32 grados Celsius, ¡así que ese será el día para disfrutar de un sol radiante y un calorcito intenso! También hay otros días, como el miércoles y el viernes, donde se esperan temperaturas muy cercanas a los 30 o 31 grados, pero el jueves es el campeón de la semana. ¡A disfrutar de ese calor!"
+	second := "Claro que sí! Revisando el pronóstico detallado, el día más caluroso de la semana será el jueves. Es el día que se espera que alcance los 32 grados Celsius, así que ese será el día para disfrutar de un sol radiante y un calorcito intenso! También hay otros días, como el miércoles y el viernes, donde se esperan temperaturas muy cercanas a los 30 o 31 grados, pero el jueves es el campeón de la semana. ¡A disfrutar de ese calor!"
+
+	if _, err := callVoice(t, registry, first); err != nil {
+		t.Fatalf("first send_voice: %v", err)
+	}
+	res, err := callVoice(t, registry, second)
+	if err != nil {
+		t.Fatalf("near-duplicate send_voice should not error: %v", err)
+	}
+	if !strings.Contains(res, "already sent this voice message") {
+		t.Fatalf("near-duplicate should be blocked without new audio, got: %q", res)
+	}
+	if handler.call != 1 {
+		t.Fatalf("attachment handler called %d times, want 1", handler.call)
 	}
 }
 
