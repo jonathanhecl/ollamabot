@@ -178,7 +178,7 @@ func TestSendVoiceRequiresAttachmentChannel(t *testing.T) {
 	}
 }
 
-func TestSendVoiceOnlySendsAudioOncePerTurn(t *testing.T) {
+func TestSendVoiceAllowsNewWordsBlocksDuplicates(t *testing.T) {
 	handler := &fakeAttachmentHandler{}
 	registry, _ := newVoiceRegistry(t, "phonon:40m-es", handler)
 
@@ -190,15 +190,28 @@ func TestSendVoiceOnlySendsAudioOncePerTurn(t *testing.T) {
 		t.Fatalf("unexpected first result: %q", first)
 	}
 
-	second, err := callVoice(t, registry, "Hola, todo listo.")
+	// Same words in a different casing get blocked without new audio.
+	second, err := callVoice(t, registry, "HOLA, TODO LISTO.")
 	if err != nil {
-		t.Fatalf("second send_voice should not error: %v", err)
+		t.Fatalf("duplicate send_voice should not error: %v", err)
 	}
-	if !strings.Contains(second, "already delivered") {
-		t.Fatalf("second call should warn without new audio, got: %q", second)
+	if !strings.Contains(second, "already sent this exact") {
+		t.Fatalf("duplicate call should warn without new audio, got: %q", second)
 	}
 	if handler.call != 1 {
 		t.Fatalf("attachment handler called %d times, want 1", handler.call)
+	}
+
+	// Distinct words are a new voice note and synthesize again.
+	third, err := callVoice(t, registry, "Ya encontré el archivo.")
+	if err != nil {
+		t.Fatalf("second distinct send_voice: %v", err)
+	}
+	if !strings.Contains(third, "Voice note delivered") {
+		t.Fatalf("unexpected third result: %q", third)
+	}
+	if handler.call != 2 {
+		t.Fatalf("attachment handler called %d times, want 2", handler.call)
 	}
 }
 

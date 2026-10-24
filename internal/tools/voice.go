@@ -35,7 +35,7 @@ func sendVoiceTool() ollama.Tool {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "send_voice",
-			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it do NOT repeat the spoken text: the audio is delivered with its transcription and that is enough, unless you have further tasks. Never call it more than once per turn and never call it again once the voice was delivered. Call it at most once per turn and never call it again after it succeeds.",
+			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered with its transcription, so do NOT repeat the spoken text in your reply. You may send several voice messages in one turn (for example, progress updates during a long task), but each call must say something NEW: never resend the same or nearly the same words. Call it at most once per model response.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -111,7 +111,9 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 		return "", fmt.Errorf("text is empty after removing Markdown and code; provide the words to speak")
 	}
 	if r.voiceSent {
-		return fmt.Sprintf("Voice note with its transcription was already delivered in this turn. Do NOT call send_voice again: end your turn now unless you have further tasks (todos, plan steps, or necessary research)."), nil
+		if strings.EqualFold(cleanSpeechText(r.voiceSentText), cleanSpeechText(raw)) {
+			return fmt.Sprintf("You already sent this exact voice message in this turn. Do NOT send the same words again. Continue with your remaining work or end your turn."), nil
+		}
 	}
 	if chars := len([]rune(text)); chars > voiceMaxChars {
 		return "", fmt.Errorf("text is too long for a voice note (%d characters, maximum %d); shorten it or answer in text", chars, voiceMaxChars)
@@ -149,7 +151,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	r.voiceSent = true
 	r.voiceSentText = text
 
-	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes) with its transcription. Do NOT call send_voice again in this turn and do NOT repeat the spoken text: end your turn now unless you have further tasks (todos, plan steps, or necessary research).", filename, len(res.Audio)), nil
+	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes) with its transcription. Do NOT repeat the spoken text in your reply. Continue with any remaining work; you may send another voice message later in this turn only if you have NEW words to say (never the same ones). End your turn when nothing is left to do.", filename, len(res.Audio)), nil
 }
 
 // attachmentsDir is the canonical session attachments location, matching
