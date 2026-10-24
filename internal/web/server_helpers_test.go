@@ -84,6 +84,8 @@ func TestDetectMime(t *testing.T) {
 		{"test.mov", "video/quicktime"},
 		{"test.mp3", "audio/mpeg"},
 		{"test.wav", "audio/wav"},
+		{"test.ogg", "audio/ogg"},
+		{"test.opus", "audio/ogg"},
 		{"test.py", "text/x-python"},
 		{"test.go", "text/x-go"},
 		{"test.js", "text/javascript"},

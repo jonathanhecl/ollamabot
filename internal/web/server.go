@@ -1521,7 +1521,13 @@ func (s *Server) handleDownloadGeneration(w http.ResponseWriter, r *http.Request
 	}
 	defer f.Close()
 
-	w.Header().Set("Content-Type", "image/png")
+	// The endpoint serves generated images and synthesized voice notes from the
+	// same directory, so the type follows the file extension.
+	contentType := detectMime(clean)
+	if contentType == "application/octet-stream" {
+		contentType = "image/png"
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	http.ServeContent(w, r, clean, time.Time{}, f)
 }
@@ -1564,6 +1570,8 @@ func detectMime(name string) string {
 		return "audio/mpeg"
 	case ".wav":
 		return "audio/wav"
+	case ".ogg", ".oga", ".opus":
+		return "audio/ogg"
 	case ".py":
 		return "text/x-python"
 	case ".go":
