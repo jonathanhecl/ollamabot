@@ -35,13 +35,13 @@ func sendVoiceTool() ollama.Tool {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "send_voice",
-			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it do not repeat the spoken words as text: reply with at most one short sentence.",
+			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"text": map[string]any{
 						"type":        "string",
-						"description": fmt.Sprintf("Exactly what should be spoken, written the way a person would say it, without Markdown, code, or emoji. Maximum %d characters.", voiceMaxChars),
+						"description": fmt.Sprintf("Exactly what should be spoken, written the way a person would say it, without Markdown, code, or emoji. This same text will also be shown below the voice message, so write it as the final visible reply. Maximum %d characters.", voiceMaxChars),
 					},
 				},
 				"required": []string{"text"},
@@ -138,7 +138,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	}
 	r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, mime, path)
 
-	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes). Do not repeat the spoken text in your reply; answer with at most one short sentence.", filename, len(res.Audio)), nil
+	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes). Reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.", filename, len(res.Audio)), nil
 }
 
 // attachmentsDir is the canonical session attachments location, matching

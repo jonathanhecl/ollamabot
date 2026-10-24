@@ -1,6 +1,7 @@
 package telegram
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 func TestIsVoiceContainer(t *testing.T) {
@@ -109,5 +111,83 @@ func TestAttachmentHandlerStillSendsPluginFilesAsDocuments(t *testing.T) {
 
 	if len(*paths) != 1 || !strings.HasSuffix((*paths)[0], "/sendDocument") {
 		t.Fatalf("telegram calls = %v, want sendDocument", *paths)
+	}
+}
+
+func TestSpokenTextsFromMessages(t *testing.T) {
+	mustRaw := func(t *testing.T, msg rawMsg) json.RawMessage {
+		t.Helper()
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatalf("marshal message: %v", err)
+		}
+		return raw
+	}
+	mustToolCall := func(t *testing.T, name, args string) json.RawMessage {
+		t.Helper()
+		raw, err := json.Marshal(ollama.ToolCall{
+			Type:     "function",
+			Function: ollama.ToolFunction{Name: name, Arguments: json.RawMessage(args)},
+		})
+		if err != nil {
+			t.Fatalf("marshal tool call: %v", err)
+		}
+		return raw
+	}
+
+	tests := []struct {
+		name     string
+		messages []json.RawMessage
+		want     []string
+	}{
+		{
+			name:     "no messages",
+			messages: nil,
+			want:     nil,
+		},
+		{
+			name: "ignores other tools",
+			messages: []json.RawMessage{
+				mustRaw(t, rawMsg{Role: "assistant", ToolCalls: []json.RawMessage{
+					mustToolCall(t, "get_time", `{"timezone":"UTC"}`),
+				}}),
+			},
+			want: nil,
+		},
+		{
+			name: "single voice call",
+			messages: []json.RawMessage{
+				mustRaw(t, rawMsg{Role: "assistant", ToolCalls: []json.RawMessage{
+					mustToolCall(t, "send_voice", `{"text":"Hola, todo listo."}`),
+				}}),
+			},
+			want: []string{"Hola, todo listo."},
+		},
+		{
+			name: "keeps every spoken reply in order",
+			messages: []json.RawMessage{
+				mustRaw(t, rawMsg{Role: "assistant", ToolCalls: []json.RawMessage{
+					mustToolCall(t, "send_voice", `{"text":"Primero."}`),
+				}}),
+				mustRaw(t, rawMsg{Role: "assistant", ToolCalls: []json.RawMessage{
+					mustToolCall(t, "send_voice", `{"text":"Segundo."}`),
+				}}),
+			},
+			want: []string{"Primero.", "Segundo."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := spokenTextsFromMessages(tt.messages)
+			if len(got) != len(tt.want) {
+				t.Fatalf("spokenTextsFromMessages() = %q, want %q", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("spokenTextsFromMessages()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }

@@ -1264,7 +1264,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 	if a.registry != nil && a.registry.VoiceEnabled() {
 		prefix = append(prefix, ollama.Message{
 			Role: "system",
-			Content: "You can answer with your voice through the `send_voice` tool. Choose it only when hearing the answer is better than reading it: a short greeting, a quick confirmation, a brief conversational reply, or a human-sounding answer. Keep the spoken text the way a person talks, without Markdown, code, lists or emoji, and under 1500 characters. Never use it for code, file contents, tables, step-by-step instructions, numbers, URLs, error output or long explanations: those belong in text. The audio reaches the user on its own, so after calling it do not repeat the same words as text; at most add one short sentence.",
+			Content: "You can answer with your voice through the `send_voice` tool. Choose it only when hearing the answer is better than reading it: a short greeting, a quick confirmation, a brief conversational reply, or a human-sounding answer. Keep the spoken text the way a person talks, without Markdown, code, lists or emoji, and under 1500 characters. Never use it for code, file contents, tables, step-by-step instructions, numbers, URLs, error output or long explanations: those belong in text. The audio reaches the user on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.",
 		})
 	}
 

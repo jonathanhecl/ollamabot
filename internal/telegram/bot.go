@@ -1410,6 +1410,13 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	}
 
 	finalAnswer := turnResult.FinalAnswer
+	turnMessages := newRawMessages
+	if len(initialRawMessages) < len(newRawMessages) {
+		turnMessages = newRawMessages[len(initialRawMessages):]
+	}
+	if spoken := spokenTextsFromMessages(turnMessages); len(spoken) > 0 {
+		finalAnswer = strings.Join(spoken, "\n\n")
+	}
 	if finalAnswer == "" {
 		// No text response (e.g. only an image was generated); nothing more to send.
 		return
@@ -2237,8 +2244,51 @@ func getTelegramToolLabel(name string, args any) string {
 	return name
 }
 
+func spokenTextsFromMessages(messages []json.RawMessage) []string {
+	var out []string
+	for _, raw := range messages {
+		var m rawMsg
+		if err := json.Unmarshal(raw, &m); err != nil {
+			continue
+		}
+		for _, tcRaw := range m.ToolCalls {
+			var tc ollama.ToolCall
+			if err := json.Unmarshal(tcRaw, &tc); err != nil {
+				continue
+			}
+			if tc.Function.Name != "send_voice" {
+				continue
+			}
+			argsBytes := []byte(strings.TrimSpace(string(tc.Function.Arguments)))
+			if len(argsBytes) == 0 {
+				continue
+			}
+			var args struct {
+				Text string `json:"text"`
+			}
+			if err := json.Unmarshal(argsBytes, &args); err != nil {
+				var asString string
+				if err2 := json.Unmarshal(argsBytes, &asString); err2 == nil {
+					if err3 := json.Unmarshal([]byte(asString), &args); err3 != nil {
+						continue
+					}
+				} else {
+					continue
+				}
+			}
+			if text := strings.TrimSpace(args.Text); text != "" {
+				out = append(out, text)
+			}
+		}
+	}
+	return out
+}
+
 func (h *telegramStreamAdapter) OnToolStart(name string, args any, source string) {
 	h.recorder.OnToolStart(name, args, source)
+	if name == "send_voice" {
+		return
+	}
 	toolLabel := getTelegramToolLabel(name, args)
 	if source != "" && source != "internal" {
 		toolLabel = fmt.Sprintf("%s (%s)", toolLabel, source)
