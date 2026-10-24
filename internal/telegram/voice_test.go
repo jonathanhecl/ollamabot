@@ -32,6 +32,40 @@ func TestIsVoiceContainer(t *testing.T) {
 	}
 }
 
+func TestVoiceCaptionRunes(t *testing.T) {
+	accentMark := strings.Repeat("á", 1200) // 2400 bytes in UTF-8
+
+	tests := []struct {
+		name    string
+		input   string
+		wantLen int // in runes
+		wantEnd string
+	}{
+		{name: "short text unchanged", input: "hola", wantLen: 4, wantEnd: "hola"},
+		{name: "ascii truncated at limit", input: strings.Repeat("a", 1500), wantLen: 1001, wantEnd: "…"},
+		{name: "accented text rune-safe", input: accentMark, wantLen: 1001, wantEnd: "…"},
+		{name: "empty", input: "  ", wantLen: 0, wantEnd: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := voiceCaption(tt.input)
+			runes := []rune(got)
+			if len(runes) != tt.wantLen {
+				t.Fatalf("caption length = %d runes, want %d", len(runes), tt.wantLen)
+			}
+			if tt.wantEnd == "" {
+				if got != "" {
+					t.Fatalf("caption = %q, want empty", got)
+				}
+				return
+			}
+			if !strings.HasSuffix(got, tt.wantEnd) {
+				t.Fatalf("caption does not end with %q: %q", tt.wantEnd, got[len(got)-4:])
+			}
+		})
+	}
+}
+
 // newVoiceTestBot wires a Bot against a fake Telegram API so delivery can be
 // asserted without network access.
 func newVoiceTestBot(t *testing.T, workspace string) (*Bot, *[]string, *[]string) {

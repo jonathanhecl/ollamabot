@@ -1728,7 +1728,7 @@ func (h *telegramAttachmentHandler) sendAudioAttachment(path string, transcripti
 		converted, err := h.bot.convertToVoiceOGG(path)
 		if err != nil {
 			log.Printf("[Telegram] Voice conversion failed for %s, sending as document: %v", path, err)
-			if _, err := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0); err != nil {
+			if _, err := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0, false); err != nil {
 				log.Printf("[Telegram] Error sending audio attachment %s: %v", path, err)
 			}
 			return
@@ -1742,21 +1742,22 @@ func (h *telegramAttachmentHandler) sendAudioAttachment(path string, transcripti
 
 	if _, err := h.bot.sendVoice(h.chatID, voicePath, caption, 0); err != nil {
 		log.Printf("[Telegram] Error sending voice note %s, sending as document: %v", voicePath, err)
-		if _, docErr := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0); docErr != nil {
+		if _, docErr := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0, false); docErr != nil {
 			log.Printf("[Telegram] Error sending audio attachment %s: %v", path, docErr)
 		}
 	}
 }
 
 // voiceCaption truncates the spoken text to the Telegram caption limit so it
-// can travel below the voice bubble in the same message.
+// can travel below the voice bubble in the same message. Truncation is
+// rune-safe (Telegram rejects captions with invalid UTF-8).
 func voiceCaption(transcription string) string {
 	const limit = 1000
-	text := strings.TrimSpace(transcription)
-	if len(text) > limit {
-		text = strings.TrimSpace(text[:limit]) + "…"
+	runes := []rune(strings.TrimSpace(transcription))
+	if len(runes) > limit {
+		return strings.TrimSpace(string(runes[:limit])) + "…"
 	}
-	return text
+	return string(runes)
 }
 
 // voiceFallbackCaption keeps the transcription visible when the audio can
@@ -1768,8 +1769,10 @@ func voiceFallbackCaption(transcription string) string {
 	return "🔊 *Voice message*"
 }
 
-// sendDocument sends a general file document to a Telegram chat with an optional caption.
-func (b *Bot) sendDocument(chatID int64, filePath string, caption string, replyToID int64) (int64, error) {
+// sendDocument sends a general file document to a Telegram chat with an
+// optional caption. parseMarkdown=false sends plain text (used for voice
+// transcriptions, which are model output and must never be parsed as markup).
+func (b *Bot) sendDocument(chatID int64, filePath string, caption string, replyToID int64, parseMarkdown bool) (int64, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return 0, err
@@ -1781,7 +1784,9 @@ func (b *Bot) sendDocument(chatID int64, filePath string, caption string, replyT
 	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
 	if caption != "" {
 		_ = writer.WriteField("caption", caption)
-		_ = writer.WriteField("parse_mode", "Markdown")
+		if parseMarkdown {
+			_ = writer.WriteField("parse_mode", "Markdown")
+		}
 	}
 	if replyToID != 0 {
 		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
@@ -3822,7 +3827,7 @@ func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref 
 		}
 		// Only send non-images as documents; images are handled via progress/image completion handlers
 		if !strings.HasPrefix(mime, "image/") {
-			_, err := h.bot.sendDocument(h.chatID, path, fmt.Sprintf("📄 *%s*", ref), 0)
+			_, err := h.bot.sendDocument(h.chatID, path, fmt.Sprintf("📄 *%s*", ref), 0, true)
 			if err != nil {
 				log.Printf("[Telegram] Error sending document attachment %s: %v", ref, err)
 			}

@@ -111,7 +111,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 		return "", fmt.Errorf("text is empty after removing Markdown and code; provide the words to speak")
 	}
 	if r.voiceSent {
-		return fmt.Sprintf("Voice note already delivered in this turn. Do NOT call send_voice again. Reply with the EXACT same text as plain text and end your turn: %s", r.voiceSentText), nil
+		return fmt.Sprintf("Voice note with its transcription was already delivered in this turn. Do NOT call send_voice again: end your turn now unless you have further tasks (todos, plan steps, or necessary research)."), nil
 	}
 	if chars := len([]rune(text)); chars > voiceMaxChars {
 		return "", fmt.Errorf("text is too long for a voice note (%d characters, maximum %d); shorten it or answer in text", chars, voiceMaxChars)
