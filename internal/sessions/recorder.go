@@ -879,6 +879,16 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 	}
 
 	out := make([]json.RawMessage, 0, len(finalHistory))
+	// Tool-generated attachments (images, voice notes) live on the messages the
+	// stream recorded during this turn. finalHistory only carries text and tool
+	// calls, so new assistant messages take their attachments from here.
+	var turnAssistantMsgs []RawMsg
+	for _, active := range r.activeMessages {
+		if active.Role == "assistant" {
+			turnAssistantMsgs = append(turnAssistantMsgs, active)
+		}
+	}
+	turnAssistantIdx := 0
 	for _, msg := range finalHistory {
 		if msg.Role == "system" && IsInternalTimelineMessage(msg.Content) {
 			continue
@@ -963,6 +973,17 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 			Images:    msg.Images,
 			ToolCalls: tcRaw,
 			Timestamp: msgTimestamp,
+		}
+		if msg.Role == "assistant" && turnAssistantIdx < len(turnAssistantMsgs) {
+			recorded := turnAssistantMsgs[turnAssistantIdx]
+			rm.AttachmentRefs = recorded.AttachmentRefs
+			rm.Attachments = recorded.Attachments
+			if len(rm.ImageKinds) == 0 {
+				rm.ImageKinds = recorded.ImageKinds
+			}
+		}
+		if msg.Role == "assistant" {
+			turnAssistantIdx++
 		}
 		raw, _ := json.Marshal(rm)
 		out = append(out, raw)
