@@ -178,6 +178,30 @@ func TestSendVoiceRequiresAttachmentChannel(t *testing.T) {
 	}
 }
 
+func TestSendVoiceOnlySendsAudioOncePerTurn(t *testing.T) {
+	handler := &fakeAttachmentHandler{}
+	registry, _ := newVoiceRegistry(t, "phonon:40m-es", handler)
+
+	first, err := callVoice(t, registry, "Hola, todo listo.")
+	if err != nil {
+		t.Fatalf("first send_voice: %v", err)
+	}
+	if !strings.Contains(first, "Voice note delivered") {
+		t.Fatalf("unexpected first result: %q", first)
+	}
+
+	second, err := callVoice(t, registry, "Hola, todo listo.")
+	if err != nil {
+		t.Fatalf("second send_voice should not error: %v", err)
+	}
+	if !strings.Contains(second, "already delivered") {
+		t.Fatalf("second call should warn without new audio, got: %q", second)
+	}
+	if handler.call != 1 {
+		t.Fatalf("attachment handler called %d times, want 1", handler.call)
+	}
+}
+
 func TestCleanSpeechText(t *testing.T) {
 	tests := []struct {
 		name  string

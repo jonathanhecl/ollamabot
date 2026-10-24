@@ -60,6 +60,8 @@ type Registry struct {
 	searchCfg               SearchConfig
 	imageModel              string
 	speechModel             string
+	voiceSent               bool
+	voiceSentText           string
 	imageSteps              int
 	imageProgressHandler    ImageProgressHandler
 	attachmentHandler       AttachmentGeneratedHandler

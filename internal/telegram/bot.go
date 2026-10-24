@@ -2277,7 +2277,9 @@ func spokenTextsFromMessages(messages []json.RawMessage) []string {
 				}
 			}
 			if text := strings.TrimSpace(args.Text); text != "" {
-				out = append(out, text)
+				if len(out) == 0 || out[len(out)-1] != text {
+					out = append(out, text)
+				}
 			}
 		}
 	}

@@ -35,7 +35,7 @@ func sendVoiceTool() ollama.Tool {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "send_voice",
-			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.",
+			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence. Call it at most once per turn and never call it again after it succeeds.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -104,6 +104,9 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	if text == "" {
 		return "", fmt.Errorf("text is empty after removing Markdown and code; provide the words to speak")
 	}
+	if r.voiceSent {
+		return fmt.Sprintf("Voice note already delivered in this turn. Do NOT call send_voice again. Reply with the EXACT same text as plain text and end your turn: %s", r.voiceSentText), nil
+	}
 	if chars := len([]rune(text)); chars > voiceMaxChars {
 		return "", fmt.Errorf("text is too long for a voice note (%d characters, maximum %d); shorten it or answer in text", chars, voiceMaxChars)
 	}
@@ -137,8 +140,10 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 		mime = "audio/wav"
 	}
 	r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, mime, path)
+	r.voiceSent = true
+	r.voiceSentText = text
 
-	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes). Reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.", filename, len(res.Audio)), nil
+	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes). Do NOT call send_voice again in this turn. Reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.", filename, len(res.Audio)), nil
 }
 
 // attachmentsDir is the canonical session attachments location, matching
