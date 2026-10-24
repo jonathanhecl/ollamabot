@@ -87,7 +87,107 @@ func TestLoadStartupNotification(t *testing.T) {
 	}
 }
 
-func TestCreateInteractiveWebOnly(t *testing.T) {	path := t.TempDir() + "/.env"
+func TestSaveBasicLoadRoundTrip(t *testing.T) {
+	// Env vars take precedence over the file in Load, so clear them to
+	// prove the file itself round-trips every persisted setting.
+	keys := []string{
+		"OLLAMA_BASE_URL", "OLLAMA_PROBE_MODELS", "OLLAMA_DEFAULT_MODEL",
+		"OLLAMA_MODEL_VISION", "OLLAMA_MODEL_AUDIO", "OLLAMA_MODEL_EMBED",
+		"OLLAMA_MODEL_IMAGE", "OLLAMA_MODEL_SPEECH", "OLLAMA_IMAGE_STEPS",
+		"TELEGRAM_BOT_TOKEN", "TELEGRAM_AUTHORIZED_IDS", "SESSION_EXPIRY_MIN",
+		"TELEGRAM_STARTUP_NOTIFICATION", "SERVER_ENABLED", "WEB_ENABLED",
+		"SERVER_PORT", "WEB_PORT", "WEB_ADDR", "WEB_SEARCH_ENABLED",
+		"SERVER_EXPOSE_NETWORK", "WEB_EXPOSE_NETWORK", "SESSION_AUTO_NAME",
+		"WEB_AUTO_NAME", "WORKSPACE_PATH", "SESSIONS_PATH", "MEMORY_PATH",
+		"SKILLS_PATH", "SLEEP_MODE_ENABLED", "SLEEP_MODE_INACTIVITY_THRESHOLD",
+		"SLEEP_MODE_RESUME_DELAY", "OLLAMA_MODEL_LEARNING",
+		"SLEEP_MODE_SUBAGENTS_ENABLED", "OLLAMA_MODEL_SUBAGENT",
+		"OLLAMA_THINK_ENABLED", "OLLAMA_MAX_TOKENS", "OLLAMA_MAX_CONTEXT",
+		"SERVER_PASSWORD", "SESSION_PLAN_CONFIRMATION", "PLAN_CONFIRMATION",
+		"SUBAGENT_TIMEOUT_MINUTES", "AUTONOMOUS_STALE_TASK_MINUTES",
+		"AUTONOMOUS_VERIFICATION_ENABLED", "WEB_SEARCH_PRIORITY",
+		"SEARCH_PROVIDERS", "WEB_SEARCH_BRAVE_API_KEY", "WEB_SEARCH_TAVILY_API_KEY",
+	}
+	saved := map[string]string{}
+	had := map[string]bool{}
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			saved[k], had[k] = v, true
+			t.Cleanup(func() {})
+		}
+		if err := os.Unsetenv(k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, k := range keys {
+			if had[k] {
+				_ = os.Setenv(k, saved[k])
+			}
+		}
+	})
+
+	want := Config{
+		OllamaBaseURL:                 "http://192.168.1.10:11434",
+		OllamaProbeModels:             []string{"probe-a", "probe-b"},
+		OllamaDefaultModel:            "roundtrip-main",
+		OllamaModelVision:             "roundtrip-vision",
+		OllamaModelAudio:              "roundtrip-audio",
+		OllamaModelEmbed:              "roundtrip-embed",
+		OllamaModelImage:              "roundtrip-image",
+		OllamaModelSpeech:             "roundtrip-speech",
+		OllamaModelLearning:           "roundtrip-learning",
+		OllamaModelSubagent:           "roundtrip-subagent",
+		OllamaImageSteps:              7,
+		OllamaThinkEnabled:            false,
+		OllamaMaxTokens:               4096,
+		OllamaMaxContext:              8192,
+		ServerEnabled:                 false,
+		ServerPort:                    "9091",
+		ServerPassword:                "s3cret",
+		ServerExposeNetwork:           false,
+		SessionAutoName:               false,
+		TelegramBotToken:              "roundtrip-token",
+		TelegramAuthorizedIDs:         []string{"111", "222"},
+		TelegramSessionExpiryMin:      60,
+		TelegramStartupNotification:   true,
+		Workspace:                     "ws-rt",
+		WorkspaceRaw:                  "ws-rt",
+		SessionsPath:                  "sess-rt",
+		SessionsPathRaw:               "sess-rt",
+		MemoryPath:                    "mem-rt",
+		MemoryPathRaw:                 "mem-rt",
+		SkillsPath:                    "sk-rt",
+		SkillsPathRaw:                 "sk-rt",
+		SleepModeEnabled:              true,
+		SleepModeInactivityThreshold:  "45m",
+		SleepModeResumeDelay:          "5m",
+		SleepModeSubagentsEnabled:     true,
+		SearchProviders:               []string{"brave", "tavily"},
+		BraveSearchAPIKey:             "brave-rt",
+		TavilyAPIKey:                  "tavily-rt",
+		WebSearchEnabled:              true,
+		PlanConfirmation:              "always",
+		SubagentTimeoutMinutes:        15,
+		AutonomousStaleTaskMinutes:    45,
+		AutonomousVerificationEnabled: false,
+	}
+
+	path := t.TempDir() + "/.env"
+	if err := SaveBasic(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip mismatch:\n got=%+v\nwant=%+v", got, want)
+	}
+}
+
+func TestCreateInteractiveWebOnly(t *testing.T) {
+	path := t.TempDir() + "/.env"
 	input := strings.NewReader("y\n9090\nn\nn\nhttp://localhost:11434\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {
