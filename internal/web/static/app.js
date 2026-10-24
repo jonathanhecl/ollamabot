@@ -4210,6 +4210,13 @@ function inlineMd(text) {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
+// formatTranscriptionTime renders transcription wall-clock time compactly:
+// sub-second as ms, otherwise seconds with one decimal (e.g. 12.1s).
+function formatTranscriptionTime(ms) {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function attachmentPreview(attachment) {
   const label = escapeHtml(attachment.name || attachment.mime || attachment.kind);
   if (attachment.kind === "image") {
@@ -4223,7 +4230,7 @@ function attachmentPreview(attachment) {
     let transcriptionHtml = "";
     if (attachment.transcription) {
       const ms = Number(attachment.transcribe_ms);
-      const msBadge = ms > 0 ? ` <span class="audio-transcription-ms" title="Transcription time">${ms} ms</span>` : "";
+      const msBadge = ms > 0 ? ` <span class="audio-transcription-ms" title="Transcription time">${formatTranscriptionTime(ms)}</span>` : "";
       transcriptionHtml = `<div class="audio-transcription">${escapeHtml(attachment.transcription)}${msBadge}</div>`;
     } else if (attachment.unreadable) {
       transcriptionHtml = `<div class="audio-transcription unreadable">Audio could not be transcribed.</div>`;
