@@ -104,7 +104,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	}
 
 	// A cold speech model has to load before the first sample is produced, so
-	// allow more than the default per-tool timeout.
+	// the registry raises this tool's timeout; keep a guard here too.
 	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 

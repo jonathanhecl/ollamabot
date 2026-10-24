@@ -1493,6 +1493,10 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			timeoutSec = t
 		}
 	}
+	if name == "send_voice" {
+		// Speech synthesis may include a cold model load on the Ollama host.
+		timeoutSec = 180
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
