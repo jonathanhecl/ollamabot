@@ -152,6 +152,7 @@ Below is a detailed guide to all configuration parameters available in your `.en
 - `OLLAMA_MODEL_AUDIO`: Dedicated model used for transcribing audio voice message attachments.
 - `OLLAMA_MODEL_EMBED`: Dedicated model used for generating vector embeddings for semantic RAG memory.
 - `OLLAMA_MODEL_IMAGE`: Dedicated model used for the `generate_image` tool (e.g. Flux).
+- `OLLAMA_MODEL_SPEECH`: Dedicated model with the `speech` capability used for voice replies (e.g. `phonon:40m-es`). It cannot answer chat prompts; when unset, the `send_voice` tool is hidden.
 - `OLLAMA_MODEL_LEARNING`: Dedicated model used for reflection and consolidation in Sleep Mode.
 - `OLLAMA_MODEL_SUBAGENT`: Dedicated model used for subagent tasks (such as planning, auto-naming, and summarizing).
 
@@ -200,6 +201,7 @@ Configured in `.env` and editable from the web **Manage Models & Roles** UI (wri
 | Learning | `OLLAMA_MODEL_LEARNING` | Sleep-mode reflection; falls back to main |
 | Embeddings | `OLLAMA_MODEL_EMBED` | Long-term memory search |
 | Image gen | `OLLAMA_MODEL_IMAGE` | `generate_image` tool |
+| Speech | `OLLAMA_MODEL_SPEECH` | `send_voice` tool (text-to-speech) |
 | Thinking | `OLLAMA_THINK_ENABLED` | Reasoning phase when main model supports it |
 
 Capabilities are probed via `internal/probe`; missing roles disable features gracefully without user-facing errors.
@@ -235,6 +237,7 @@ The agent has access to the following tools. Risky operations (file writes, shel
 | `defer_plan_continuation` | Pause an active plan for later resumption |
 | `ask_clarification` | Ask the user a clarifying question with clickable options |
 | `generate_image` | Generate an image via the configured image model |
+| `send_voice` | Speak a short reply as audio when the model judges voice is better than text |
 | `list_session_attachments` | List all attachments in the current session |
 | `view_session_attachment` | View contents of a specific session attachment |
 | `send_files` | Send files or directories from the workspace to the user |

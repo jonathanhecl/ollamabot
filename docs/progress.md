@@ -567,3 +567,18 @@ Fixed Ollama status 400 errors (`Jinja Exception: System message must be at the 
 - `internal/ollama/client.go`: added `SanitizeMessages(messages)` to automatically consolidate system prompts into a single initial system message at index 0 and convert mid-conversation system notes to user-role messages before posting to `/api/chat`.
 - `internal/ollama/client_test.go`: added unit test `TestSanitizeMessages`.
 - `internal/web/static/app.js`: updated `/api/chat/stream` response handling to extract and display HTTP error details in a visible chat step bubble (`⚠️ Error: ...`) when requests fail. Updated `tool_plan_confirmation`, `tool_approval_required`, and `tool_clarification_required` event handlers to set `assistant.waiting = false` and `assistant.streaming = false`, and added automatic re-attachment of `els.planConfirmationCard` in `renderMessages()` so approval buttons appear clearly without getting stuck in `PROCESSING`.
+
+## 2026-10-24 — Voice replies (Ollama speech models / text-to-speech)
+
+Added a `speech` model role and a `send_voice` tool so the agent can answer with audio when the model judges a spoken reply is better than text. Ollama exposes TTS through the OpenAI-compatible `/v1/audio/speech` endpoint (`speech` capability, `phonon` family); speech models reject `/api/chat`, so the audio decision is a tool call, not a chat capability.
+
+- `internal/config`: `OLLAMA_MODEL_SPEECH` + `ModelRoleSpeech` (no implicit fallback), `.env` persistence, setup auto-detection by model name.
+- `internal/capabilities`: `speech` in the known capability list. `internal/ollama`: `ShowResponse.Voices`.
+- `internal/ollama/client.go`: `Speech()` posts to `/v1/audio/speech`, reads the chunked body to EOF (RIFF sizes are placeholders), defaults to `wav`, rejects unsupported formats locally and surfaces Ollama's validation messages.
+- `internal/probe`: `probe speech --model MODEL [--out PATH]` validates the capability, the WAV magic and the estimated duration, and reports the voices `/api/show` exposes (only from 0.40.11).
+- `internal/tools/voice.go`: `send_voice` is registered only while a speech model is configured. It strips Markdown, code fences, links, URLs and tables, caps the text at 1500 characters, saves `voice_<unixnano>.wav` under the session attachments and notifies the channel. Channels without attachment delivery get a message telling the model to answer in text.
+- `internal/engine`, `internal/agent`: wire the speech model into the registry on every turn.
+- `internal/telegram`: audio attachments are transcoded to OGG/Opus with ffmpeg and sent with `sendVoice`; without ffmpeg or on conversion failure the WAV goes out as a document.
+- `internal/web`: Voice role in Manage Models & Roles, `model_speech` in settings, `speech` capability badge, and reloaded sessions map `voice_*.wav` to the audio player.
+
+Known limitation: as of Ollama 0.40.10 the published `phonon` checkpoints require the MLX runner (`this model requires MLX support...`), so TTS only runs on Apple Silicon today and stays disabled on Linux/NVIDIA. The plumbing is behind `OLLAMA_MODEL_SPEECH`, so it activates as soon as a Linux runner exists.
