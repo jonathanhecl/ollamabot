@@ -11,6 +11,7 @@ const (
 	ModelRoleEmbeddings = "embeddings"
 	ModelRoleLearning   = "learning"
 	ModelRoleImage      = "image"
+	ModelRoleSpeech     = "speech"
 )
 
 // ResolveModel returns the model assigned to a role by the application config.
@@ -41,6 +42,8 @@ func ResolveModel(cfg Config, role string) string {
 		return main
 	case ModelRoleImage:
 		return strings.TrimSpace(cfg.OllamaModelImage)
+	case ModelRoleSpeech:
+		return strings.TrimSpace(cfg.OllamaModelSpeech)
 	default:
 		return ""
 	}

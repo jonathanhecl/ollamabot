@@ -52,6 +52,7 @@ type ShowResponse struct {
 	ModelInfo     map[string]any `json:"model_info"`
 	ProjectorInfo map[string]any `json:"projector_info"`
 	Capabilities  []string       `json:"capabilities"`
+	Voices        []string       `json:"voices,omitempty"`
 	ModifiedAt    string         `json:"modified_at"`
 }
 

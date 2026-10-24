@@ -11,6 +11,7 @@ func TestResolveModel(t *testing.T) {
 		OllamaModelEmbed:    "embed-model",
 		OllamaModelLearning: "learning-model",
 		OllamaModelImage:    "image-model",
+		OllamaModelSpeech:   "speech-model",
 	}
 
 	tests := map[string]string{
@@ -22,6 +23,7 @@ func TestResolveModel(t *testing.T) {
 		ModelRoleEmbeddings: "embed-model",
 		ModelRoleLearning:   "learning-model",
 		ModelRoleImage:      "image-model",
+		ModelRoleSpeech:     "speech-model",
 	}
 	for role, want := range tests {
 		if got := ResolveModel(cfg, role); got != want {
@@ -40,5 +42,8 @@ func TestResolveModelFallbacks(t *testing.T) {
 	}
 	if got := ResolveModel(cfg, ModelRoleVision); got != "" {
 		t.Fatalf("vision should not fall back implicitly, got %q", got)
+	}
+	if got := ResolveModel(cfg, ModelRoleSpeech); got != "" {
+		t.Fatalf("speech should not fall back implicitly, got %q", got)
 	}
 }

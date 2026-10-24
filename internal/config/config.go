@@ -24,6 +24,7 @@ type Config struct {
 	OllamaModelAudio              string
 	OllamaModelEmbed              string
 	OllamaModelImage              string
+	OllamaModelSpeech             string
 	OllamaImageSteps              int
 	TelegramBotToken              string
 	TelegramAuthorizedIDs         []string
@@ -128,6 +129,7 @@ func Load(path string) (Config, error) {
 	cfg.OllamaModelAudio = apply("OLLAMA_MODEL_AUDIO")
 	cfg.OllamaModelEmbed = apply("OLLAMA_MODEL_EMBED")
 	cfg.OllamaModelImage = apply("OLLAMA_MODEL_IMAGE")
+	cfg.OllamaModelSpeech = apply("OLLAMA_MODEL_SPEECH")
 	if value := apply("OLLAMA_IMAGE_STEPS"); value != "" {
 		if val, err := strconv.Atoi(value); err == nil {
 			cfg.OllamaImageSteps = val
@@ -443,6 +445,10 @@ func CreateInteractive(path string, in io.Reader, out io.Writer) error {
 				cfg.OllamaModelImage = m
 				fmt.Fprintf(out, "Auto-assigned IMAGE role to: %s\n", m)
 			}
+			if cfg.OllamaModelSpeech == "" && strings.Contains(mLower, "phonon") {
+				cfg.OllamaModelSpeech = m
+				fmt.Fprintf(out, "Auto-assigned SPEECH role to: %s\n", m)
+			}
 		}
 	}
 
@@ -552,6 +558,7 @@ func SaveBasic(path string, cfg Config) error {
 			"OLLAMA_MODEL_AUDIO=%s\n"+
 			"OLLAMA_MODEL_EMBED=%s\n"+
 			"OLLAMA_MODEL_IMAGE=%s\n"+
+			"OLLAMA_MODEL_SPEECH=%s\n"+
 			"OLLAMA_MODEL_LEARNING=%s\n"+
 			"OLLAMA_MODEL_SUBAGENT=%s\n"+
 			"OLLAMA_IMAGE_STEPS=%d\n"+
@@ -594,6 +601,7 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.OllamaModelAudio,
 		cfg.OllamaModelEmbed,
 		cfg.OllamaModelImage,
+		cfg.OllamaModelSpeech,
 		cfg.OllamaModelLearning,
 		cfg.OllamaModelSubagent,
 		cfg.OllamaImageSteps,
