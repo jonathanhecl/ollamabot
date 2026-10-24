@@ -4038,6 +4038,7 @@ function isInternalSystemMessage(content) {
     content.includes("There are still pending TODO items") ||
     content.includes("Plan monitor resume:") ||
     content.includes("Previous attempt returned only thinking") ||
+    content.includes("Previous attempt returned an empty response") ||
     content.includes("This is a summary of the optimized previous context:") ||
     content.startsWith("Error: Malformed JSON arguments in <invoke") ||
     content.startsWith("Error: Invalid JSON syntax in <invoke") ||
