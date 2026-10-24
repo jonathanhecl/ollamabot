@@ -1611,6 +1611,121 @@ func (b *Bot) sendPhoto(chatID int64, photoPath string, caption string, replyToI
 	return 0, nil
 }
 
+// sendVoice sends an audio file as a Telegram voice note. The file must be
+// OGG/Opus, MP3 or M4A for clients to render it as a voice message.
+func (b *Bot) sendVoice(chatID int64, voicePath string, replyToID int64) (int64, error) {
+	file, err := os.Open(voicePath)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
+	if replyToID != 0 {
+		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
+	}
+
+	part, err := writer.CreateFormFile("voice", filepath.Base(voicePath))
+	if err != nil {
+		return 0, err
+	}
+	if _, err = io.Copy(part, file); err != nil {
+		return 0, err
+	}
+	writer.Close()
+
+	resp, err := b.httpClient.Post(b.apiBase+"/sendVoice", writer.FormDataContentType(), &body)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var apiResp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+		Result      *struct {
+			MessageID int64 `json:"message_id"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return 0, err
+	}
+	if !apiResp.OK {
+		return 0, fmt.Errorf("telegram api error: %s", apiResp.Description)
+	}
+	if apiResp.Result != nil {
+		return apiResp.Result.MessageID, nil
+	}
+	return 0, nil
+}
+
+// isVoiceContainer reports whether Telegram already accepts the file as a
+// voice note without transcoding.
+func isVoiceContainer(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".ogg", ".oga", ".opus", ".mp3", ".m4a":
+		return true
+	default:
+		return false
+	}
+}
+
+// convertToVoiceOGG transcodes a WAV or any other audio file into OGG/Opus,
+// which is what Telegram clients render as a voice bubble. The caller owns the
+// returned temporary file.
+func (b *Bot) convertToVoiceOGG(inputPath string) (string, error) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		return "", fmt.Errorf("ffmpeg not found in PATH: %w", err)
+	}
+
+	tempDir := filepath.Join(b.config().Workspace, "temp")
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		return "", fmt.Errorf("failed to create temp directory: %w", err)
+	}
+	outputPath := filepath.Join(tempDir, fmt.Sprintf("voice_%d.ogg", time.Now().UnixNano()))
+
+	cmd := exec.Command("ffmpeg", "-y", "-i", inputPath, "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-b:a", "48k", outputPath)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		_ = os.Remove(outputPath)
+		return "", fmt.Errorf("voice conversion failed: %w (stderr: %s)", err, stderr.String())
+	}
+	return outputPath, nil
+}
+
+// sendAudioAttachment delivers a synthesized audio attachment as a voice note,
+// falling back to a document when the audio cannot be transcoded.
+func (h *telegramAttachmentHandler) sendAudioAttachment(path string) {
+	if h.bot == nil || h.chatID == 0 {
+		return
+	}
+
+	voicePath := path
+	cleanup := false
+	if !isVoiceContainer(path) {
+		converted, err := h.bot.convertToVoiceOGG(path)
+		if err != nil {
+			log.Printf("[Telegram] Voice conversion failed for %s, sending as document: %v", path, err)
+			if _, err := h.bot.sendDocument(h.chatID, path, "🔊 *Voice message*", 0); err != nil {
+				log.Printf("[Telegram] Error sending audio attachment %s: %v", path, err)
+			}
+			return
+		}
+		voicePath = converted
+		cleanup = true
+	}
+	if cleanup {
+		defer os.Remove(voicePath)
+	}
+
+	if _, err := h.bot.sendVoice(h.chatID, voicePath, 0); err != nil {
+		log.Printf("[Telegram] Error sending voice note %s: %v", voicePath, err)
+	}
+}
+
 // sendDocument sends a general file document to a Telegram chat with an optional caption.
 func (b *Bot) sendDocument(chatID int64, filePath string, caption string, replyToID int64) (int64, error) {
 	file, err := os.Open(filePath)
@@ -3608,6 +3723,10 @@ func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref 
 		h.recorder.AddAttachmentRef(ref, mime, path)
 	}
 	if h.bot != nil && h.chatID != 0 {
+		if strings.HasPrefix(mime, "audio/") {
+			h.sendAudioAttachment(path)
+			return
+		}
 		// Only send non-images as documents; images are handled via progress/image completion handlers
 		if !strings.HasPrefix(mime, "image/") {
 			_, err := h.bot.sendDocument(h.chatID, path, fmt.Sprintf("📄 *%s*", ref), 0)
