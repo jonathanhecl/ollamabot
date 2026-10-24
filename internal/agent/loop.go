@@ -68,6 +68,7 @@ func NewAgent(cfg *config.Manager, client *ollama.Client, registry *tools.Regist
 	if registry != nil {
 		registry.SetImageModel(cfg.Get().OllamaModelImage)
 		registry.SetImageSteps(cfg.Get().OllamaImageSteps)
+		registry.SetSpeechModel(cfg.Get().OllamaModelSpeech)
 		registry.SetPlanConfirmMode(cfg.Get().PlanConfirmation)
 	}
 	return &Agent{

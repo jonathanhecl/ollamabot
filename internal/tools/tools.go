@@ -59,6 +59,7 @@ type Registry struct {
 	skillsPath              string
 	searchCfg               SearchConfig
 	imageModel              string
+	speechModel             string
 	imageSteps              int
 	imageProgressHandler    ImageProgressHandler
 	attachmentHandler       AttachmentGeneratedHandler
@@ -1896,6 +1897,8 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 			r.planProgressHandler(r.sessionID, plan)
 		}
 		return userMessage + "\n\n" + message, nil
+	case "send_voice":
+		return r.sendVoice(ctx, args)
 	case "generate_image":
 		prompt, _ := args["prompt"].(string)
 		if prompt == "" {
