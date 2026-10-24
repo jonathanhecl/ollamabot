@@ -60,8 +60,34 @@ func TestDefaultEnvPath(t *testing.T) {
 	}
 }
 
-func TestCreateInteractiveWebOnly(t *testing.T) {
-	path := t.TempDir() + "/.env"
+func TestLoadStartupNotification(t *testing.T) {
+	tests := []struct {
+		name  string
+		lines string
+		want  bool
+	}{
+		{name: "true", lines: "TELEGRAM_BOT_TOKEN=x\nTELEGRAM_STARTUP_NOTIFICATION=true\n", want: true},
+		{name: "false", lines: "TELEGRAM_BOT_TOKEN=x\nTELEGRAM_STARTUP_NOTIFICATION=false\n", want: false},
+		{name: "absent defaults false", lines: "TELEGRAM_BOT_TOKEN=x\n", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := t.TempDir() + "/.env"
+			if err := os.WriteFile(path, []byte(tt.lines), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TelegramStartupNotification != tt.want {
+				t.Fatalf("StartupNotification = %v, want %v", cfg.TelegramStartupNotification, tt.want)
+			}
+		})
+	}
+}
+
+func TestCreateInteractiveWebOnly(t *testing.T) {	path := t.TempDir() + "/.env"
 	input := strings.NewReader("y\n9090\nn\nn\nhttp://localhost:11434\n\n\n")
 	var output strings.Builder
 	if err := CreateInteractive(path, input, &output); err != nil {

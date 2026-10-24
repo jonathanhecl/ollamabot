@@ -145,6 +145,9 @@ func Load(path string) (Config, error) {
 			cfg.TelegramSessionExpiryMin = val
 		}
 	}
+	if value := apply("TELEGRAM_STARTUP_NOTIFICATION"); value != "" {
+		cfg.TelegramStartupNotification = parseBool(value)
+	}
 	if value := apply("SERVER_ENABLED"); value != "" {
 		cfg.ServerEnabled = parseBool(value)
 	} else if value := apply("WEB_ENABLED"); value != "" {
