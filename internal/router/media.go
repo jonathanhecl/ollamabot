@@ -41,6 +41,8 @@ type AttachmentResult struct {
 	Description   string `json:"description,omitempty"`
 	Unreadable    bool   `json:"unreadable,omitempty"`
 	Note          string `json:"note,omitempty"`
+	// TranscribeMs is how long the audio transcription took (0 when absent).
+	TranscribeMs int64 `json:"transcribe_ms,omitempty"`
 }
 
 // ResolveResult is the outcome of ResolveMessages.
@@ -207,6 +209,7 @@ func (r *Router) resolveActiveUserMessage(ctx context.Context, msg MediaMessage,
 				result.Language = t.Language
 				result.Sounds = t.Sounds
 				result.Unreadable = t.Unreadable
+				result.TranscribeMs = t.DurationMs
 			}
 			result.Model = r.audioModel()
 			// The transcription text is injected in BOTH modes: even models

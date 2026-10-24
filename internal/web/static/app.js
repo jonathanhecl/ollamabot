@@ -3036,6 +3036,7 @@ async function processNextQueueItem() {
             if (r.kind === "audio") {
               att.transcription = r.transcription || "";
               att.unreadable = !!r.unreadable;
+              att.transcribe_ms = r.transcribe_ms || 0;
             }
             if (r.kind === "image") {
               att.description = r.description || "";
@@ -4221,7 +4222,9 @@ function attachmentPreview(attachment) {
     const stopAll = `onclick="event.stopPropagation(); event.stopImmediatePropagation()" onkeydown="event.stopPropagation(); event.stopImmediatePropagation()" onkeypress="event.stopPropagation(); event.stopImmediatePropagation()" onkeyup="event.stopPropagation(); event.stopImmediatePropagation()" onmousedown="event.stopPropagation()" onmouseup="event.stopPropagation()" onpointerdown="event.stopPropagation()" onpointerup="event.stopPropagation()" onfocus="event.stopPropagation()"`;
     let transcriptionHtml = "";
     if (attachment.transcription) {
-      transcriptionHtml = `<div class="audio-transcription">${escapeHtml(attachment.transcription)}</div>`;
+      const ms = Number(attachment.transcribe_ms);
+      const msBadge = ms > 0 ? ` <span class="audio-transcription-ms" title="Transcription time">${ms} ms</span>` : "";
+      transcriptionHtml = `<div class="audio-transcription">${escapeHtml(attachment.transcription)}${msBadge}</div>`;
     } else if (attachment.unreadable) {
       transcriptionHtml = `<div class="audio-transcription unreadable">Audio could not be transcribed.</div>`;
     }
@@ -5008,6 +5011,7 @@ function normalizeRawMessages(rawMessages) {
         data: att.data || "",
         url: url || "",
         transcription: att.transcription || "",
+        transcribe_ms: Number(att.transcribe_ms) || 0,
         description: att.description || "",
         processed_by: att.processed_by || "",
         processed_at: att.processed_at || "",
@@ -5376,6 +5380,7 @@ async function saveSession() {
         data: att.data || "",
         url: att.url || (att.data ? `data:${att.mime || (att.kind === "audio" ? "audio/wav" : "image/png")};base64,${att.data}` : ""),
         transcription: att.transcription || "",
+        transcribe_ms: Number(att.transcribe_ms) || 0,
         description: att.description || "",
         processed_by: att.processed_by || "",
         processed_at: att.processed_at || "",

@@ -819,8 +819,25 @@ func (r *Recorder) snapshotMessagesLocked() []json.RawMessage {
 	return allMessages
 }
 
-func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json.RawMessage {
-	if len(finalHistory) == 0 {
+// stripInjectedTranscriptionBlocks removes the transcription blocks the router
+// injects into the user message for the model ("[Transcription of ...]: ...",
+// optionally followed by a non-speech sounds note on the same line). The
+// transcription itself is persisted on the audio attachment; keeping the block
+// here would duplicate it in the visible timeline.
+func stripInjectedTranscriptionBlocks(content string) string {	if !strings.Contains(content, "[Transcription of ") {
+		return content
+	}
+	var kept []string
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "[Transcription of ") && strings.Contains(line, `]: "`) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.TrimSpace(strings.Join(kept, "\n"))
+}
+
+func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json.RawMessage {	if len(finalHistory) == 0 {
 		return r.snapshotMessagesLocked()
 	}
 
@@ -921,6 +938,12 @@ func (r *Recorder) mergeFinalHistoryLocked(finalHistory []ollama.Message) []json
 			contentToSave := msg.Content
 			if orig.Content != "" {
 				contentToSave = orig.Content
+			} else {
+				// The router injects transcription blocks into the message the
+				// model sees, but the visible transcription lives on the audio
+				// attachment (rendered under the player). Saving both would
+				// show it twice in the timeline; channel notes are kept.
+				contentToSave = stripInjectedTranscriptionBlocks(msg.Content)
 			}
 			rm := RawMsg{
 				Role:        msg.Role,

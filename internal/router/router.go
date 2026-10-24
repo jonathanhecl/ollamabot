@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
@@ -48,6 +49,9 @@ type AudioTranscription struct {
 	Language      string `json:"language,omitempty"`
 	Sounds        string `json:"sounds,omitempty"`
 	Unreadable    bool   `json:"unreadable"`
+	// DurationMs is the wall-clock time the transcription took, including
+	// retries, so the UI can show how long the processing step ran.
+	DurationMs int64 `json:"duration_ms,omitempty"`
 }
 
 var audioTranscriptionSchema = map[string]any{
@@ -237,6 +241,7 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 	model := r.audioModel()
 	log.Printf("[Router] TranscribeAudio: model=%q, data_len=%d", model, len(base64data))
 
+	start := time.Now()
 	var lastErr error
 	for attempt := 1; attempt <= 2; attempt++ {
 		resp, err := r.client.Chat(ctx, ollama.ChatRequest{
@@ -260,7 +265,7 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 			// Last resort on final attempt: treat the raw text as transcription.
 			if attempt == 2 && raw != "" {
 				log.Printf("[Router] TranscribeAudio: falling back to raw text as transcription")
-				return AudioTranscription{Transcription: raw}, nil
+				return AudioTranscription{Transcription: raw, DurationMs: time.Since(start).Milliseconds()}, nil
 			}
 			continue
 		}
@@ -270,7 +275,8 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 		if out.Transcription == "" && out.Sounds == "" {
 			out.Unreadable = true
 		}
-		log.Printf("[Router] TranscribeAudio OK: transcription_len=%d, language=%q, unreadable=%v", len(out.Transcription), out.Language, out.Unreadable)
+		log.Printf("[Router] TranscribeAudio OK: transcription_len=%d, language=%q, unreadable=%v, took=%dms", len(out.Transcription), out.Language, out.Unreadable, time.Since(start).Milliseconds())
+		out.DurationMs = time.Since(start).Milliseconds()
 		return out, nil
 	}
 	return AudioTranscription{}, lastErr

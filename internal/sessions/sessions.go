@@ -179,6 +179,7 @@ type AttachmentMeta struct {
 	Data          string `json:"data,omitempty"`
 	URL           string `json:"url,omitempty"`
 	Transcription string `json:"transcription,omitempty"`
+	TranscribeMs  int64  `json:"transcribe_ms,omitempty"`
 	Description   string `json:"description,omitempty"`
 	ProcessedBy   string `json:"processed_by,omitempty"`
 	ProcessedAt   string `json:"processed_at,omitempty"`
@@ -637,6 +638,7 @@ type attachmentStorage struct {
 	Kind          string `json:"kind"`
 	Data          string `json:"data"` // base64 encoded
 	Transcription string `json:"transcription,omitempty"`
+	TranscribeMs  int64  `json:"transcribe_ms,omitempty"`
 	Description   string `json:"description,omitempty"`
 	ProcessedBy   string `json:"processed_by,omitempty"`
 	ProcessedAt   string `json:"processed_at,omitempty"`
@@ -678,6 +680,7 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 				Kind:          att.Kind,
 				Data:          att.Data,
 				Transcription: att.Transcription,
+				TranscribeMs:  att.TranscribeMs,
 				Description:   att.Description,
 				ProcessedBy:   att.ProcessedBy,
 				ProcessedAt:   att.ProcessedAt,
@@ -786,6 +789,7 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 					Data:          storage.Data,
 					URL:           "",
 					Transcription: storage.Transcription,
+					TranscribeMs:  storage.TranscribeMs,
 					Description:   storage.Description,
 					ProcessedBy:   storage.ProcessedBy,
 					ProcessedAt:   storage.ProcessedAt,

@@ -378,6 +378,7 @@ func ApplyMediaMetadata(messages []sessions.RawMsg, attachments []router.Attachm
 			if ar.Kind == "audio" {
 				att.Transcription = ar.Transcription
 				att.Unreadable = ar.Unreadable
+				att.TranscribeMs = ar.TranscribeMs
 			}
 			if ar.Kind == "image" {
 				att.Description = ar.Description
