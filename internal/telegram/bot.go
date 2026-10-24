@@ -1722,7 +1722,10 @@ func (h *telegramAttachmentHandler) sendAudioAttachment(path string) {
 	}
 
 	if _, err := h.bot.sendVoice(h.chatID, voicePath, 0); err != nil {
-		log.Printf("[Telegram] Error sending voice note %s: %v", voicePath, err)
+		log.Printf("[Telegram] Error sending voice note %s, sending as document: %v", voicePath, err)
+		if _, docErr := h.bot.sendDocument(h.chatID, path, "🔊 *Voice message*", 0); docErr != nil {
+			log.Printf("[Telegram] Error sending audio attachment %s: %v", path, docErr)
+		}
 	}
 }
 
