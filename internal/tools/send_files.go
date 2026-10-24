@@ -74,7 +74,7 @@ func SendFiles(workspace, sessionsPath, sessionID string, paths []string, zipNam
 
 		mimeType := detectMimeType(filename)
 		if handler != nil && strings.TrimSpace(sessionID) != "" {
-			handler.OnAttachmentGenerated(sessionID, filename, mimeType, destPath)
+			handler.OnAttachmentGenerated(sessionID, filename, mimeType, destPath, "")
 		}
 		return fmt.Sprintf("Shared file %q with user.", filename), nil
 	}
@@ -139,7 +139,7 @@ func SendFiles(workspace, sessionsPath, sessionID string, paths []string, zipNam
 	}
 
 	if handler != nil && strings.TrimSpace(sessionID) != "" {
-		handler.OnAttachmentGenerated(sessionID, destZipName, "application/zip", destZipPath)
+		handler.OnAttachmentGenerated(sessionID, destZipName, "application/zip", destZipPath, "")
 	}
 
 	return fmt.Sprintf("Shared zipped files in %q with user.", destZipName), nil

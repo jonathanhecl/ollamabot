@@ -20,7 +20,7 @@ type fakeAttachmentHandler struct {
 	call int
 }
 
-func (f *fakeAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+func (f *fakeAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
 	f.call++
 	f.ref = ref
 	f.mime = mime

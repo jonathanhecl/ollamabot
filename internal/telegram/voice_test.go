@@ -68,7 +68,7 @@ func TestAttachmentHandlerSendsVoiceForOGG(t *testing.T) {
 	}
 
 	handler := &telegramAttachmentHandler{bot: bot, chatID: 42}
-	handler.OnAttachmentGenerated("sess-1", "voice_1.ogg", "audio/ogg", voicePath)
+	handler.OnAttachmentGenerated("sess-1", "voice_1.ogg", "audio/ogg", voicePath, "Hola, todo listo.")
 
 	if len(*paths) != 1 || (*paths)[0] != "/botTEST/sendVoice" {
 		t.Fatalf("telegram calls = %v, want one sendVoice", *paths)
@@ -88,7 +88,7 @@ func TestAttachmentHandlerFallsBackToDocumentWithoutFFmpeg(t *testing.T) {
 
 	t.Setenv("PATH", "")
 	handler := &telegramAttachmentHandler{bot: bot, chatID: 42}
-	handler.OnAttachmentGenerated("sess-1", "voice_1.wav", "audio/wav", wavPath)
+	handler.OnAttachmentGenerated("sess-1", "voice_1.wav", "audio/wav", wavPath, "")
 
 	if len(*paths) != 1 || (*paths)[0] != "/botTEST/sendDocument" {
 		t.Fatalf("telegram calls = %v, want a document fallback", *paths)
@@ -107,7 +107,7 @@ func TestAttachmentHandlerStillSendsPluginFilesAsDocuments(t *testing.T) {
 	}
 
 	handler := &telegramAttachmentHandler{bot: bot, chatID: 42}
-	handler.OnAttachmentGenerated("sess-1", "report.txt", "text/plain", path)
+	handler.OnAttachmentGenerated("sess-1", "report.txt", "text/plain", path, "")
 
 	if len(*paths) != 1 || !strings.HasSuffix((*paths)[0], "/sendDocument") {
 		t.Fatalf("telegram calls = %v, want sendDocument", *paths)

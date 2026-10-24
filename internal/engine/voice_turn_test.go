@@ -103,8 +103,8 @@ func TestProcessTurnDeliversVoiceAttachment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProcessTurn: %v", err)
 	}
-	if result.FinalAnswer != "Hola, todo listo." {
-		t.Fatalf("final answer = %q, want %q", result.FinalAnswer, "Hola, todo listo.")
+	if result.FinalAnswer != "" {
+		t.Fatalf("final answer = %q, want empty (audio already carries its transcription)", result.FinalAnswer)
 	}
 	if got := atomic.LoadInt32(&chatCalls); got != 1 {
 		t.Fatalf("chat calls = %d, want 1 (no second round-trip after voice)", got)
@@ -131,6 +131,9 @@ func TestProcessTurnDeliversVoiceAttachment(t *testing.T) {
 				continue
 			}
 			found = true
+			if att.Transcription != "Hola, todo listo." {
+				t.Fatalf("attachment transcription = %q, want spoken text", att.Transcription)
+			}
 			if !strings.HasPrefix(att.Name, "voice_") {
 				t.Fatalf("unexpected attachment name: %q", att.Name)
 			}
@@ -151,6 +154,6 @@ type attachmentRecorder struct {
 	recorder *sessions.Recorder
 }
 
-func (a attachmentRecorder) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
-	a.recorder.AddAttachmentRef(ref, mime, path)
+func (a attachmentRecorder) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
+	a.recorder.AddAttachmentRefWithTranscription(ref, mime, path, transcription)
 }

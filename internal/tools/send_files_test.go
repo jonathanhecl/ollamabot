@@ -17,7 +17,7 @@ type mockAttachmentHandler struct {
 	called    bool
 }
 
-func (m *mockAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+func (m *mockAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
 	m.sessionID = sessionID
 	m.ref = ref
 	m.mime = mime

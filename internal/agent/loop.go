@@ -999,9 +999,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 
 			// Voice replies are terminal when there is no pending work:
-			// the spoken text is the final answer, so finish the turn
-			// without another model round-trip. With pending todos or plan
-			// steps, continue the loop so the model can keep working.
+			// the audio was already delivered with its transcription, so
+			// finish the turn without another model round-trip just to
+			// repeat the same text. With pending todos or plan steps,
+			// continue the loop so the model can keep working.
 			if spoken := a.registry.LastVoiceText(); spoken != "" && !hasPending && !hasActivePlanSteps {
 				voiceDone := false
 				for _, pc := range prepared {
@@ -1011,10 +1012,6 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 				}
 				if voiceDone {
-					messages = append(messages, ollama.Message{Role: "assistant", Content: spoken})
-					if handler != nil {
-						handler.OnContent(spoken)
-					}
 					completedCleanly = true
 					break
 				}
@@ -1286,7 +1283,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 	if a.registry != nil && a.registry.VoiceEnabled() {
 		prefix = append(prefix, ollama.Message{
 			Role: "system",
-			Content: "You can answer with your voice through the `send_voice` tool. Choose it only when hearing the answer is better than reading it: a short greeting, a quick confirmation, a brief conversational reply, or a human-sounding answer. Keep the spoken text the way a person talks, without Markdown, code, lists or emoji, and under 1500 characters. Never use it for code, file contents, tables, step-by-step instructions, numbers, URLs, error output or long explanations: those belong in text. The audio reaches the user on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence. Call send_voice at most once per turn and never call it again after it succeeds.",
+			Content: "You can answer with your voice through the `send_voice` tool. Choose it only when hearing the answer is better than reading it: a short greeting, a quick confirmation, a brief conversational reply, or a human-sounding answer. Keep the spoken text the way a person talks, without Markdown, code, lists or emoji, and under 1500 characters. Never use it for code, file contents, tables, step-by-step instructions, numbers, URLs, error output or long explanations: those belong in text. The audio reaches the user with its transcription, so never repeat the spoken text afterwards: end your turn right after the call unless you have further tasks. Call send_voice at most once per turn and never call it again after it succeeds.",
 		})
 	}
 

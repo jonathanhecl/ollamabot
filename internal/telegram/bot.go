@@ -1415,7 +1415,12 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 		turnMessages = newRawMessages[len(initialRawMessages):]
 	}
 	if spoken := spokenTextsFromMessages(turnMessages); len(spoken) > 0 {
-		finalAnswer = strings.Join(spoken, "\n\n")
+		// The audio already carries its transcription as caption: when the
+		// model has nothing more to say, that is enough and the same text
+		// is not repeated as a separate message.
+		if strings.TrimSpace(finalAnswer) == "" || strings.TrimSpace(finalAnswer) == strings.TrimSpace(strings.Join(spoken, "\n\n")) {
+			return
+		}
 	}
 	if finalAnswer == "" {
 		// No text response (e.g. only an image was generated); nothing more to send.
@@ -1620,7 +1625,9 @@ func (b *Bot) sendPhoto(chatID int64, photoPath string, caption string, replyToI
 
 // sendVoice sends an audio file as a Telegram voice note. The file must be
 // OGG/Opus, MP3 or M4A for clients to render it as a voice message.
-func (b *Bot) sendVoice(chatID int64, voicePath string, replyToID int64) (int64, error) {
+// Caption carries the spoken text below the voice bubble (truncated to the
+// Telegram caption limit); empty captions send the voice note on its own.
+func (b *Bot) sendVoice(chatID int64, voicePath string, caption string, replyToID int64) (int64, error) {
 	file, err := os.Open(voicePath)
 	if err != nil {
 		return 0, err
@@ -1630,6 +1637,9 @@ func (b *Bot) sendVoice(chatID int64, voicePath string, replyToID int64) (int64,
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("chat_id", fmt.Sprintf("%d", chatID))
+	if caption != "" {
+		_ = writer.WriteField("caption", caption)
+	}
 	if replyToID != 0 {
 		_ = writer.WriteField("reply_to_message_id", fmt.Sprintf("%d", replyToID))
 	}
@@ -1703,20 +1713,22 @@ func (b *Bot) convertToVoiceOGG(inputPath string) (string, error) {
 	return outputPath, nil
 }
 
-// sendAudioAttachment delivers a synthesized audio attachment as a voice note,
-// falling back to a document when the audio cannot be transcoded.
-func (h *telegramAttachmentHandler) sendAudioAttachment(path string) {
+// sendAudioAttachment delivers a synthesized audio attachment as a voice note
+// with its transcription as caption, falling back to a document when the
+// audio cannot be transcoded.
+func (h *telegramAttachmentHandler) sendAudioAttachment(path string, transcription string) {
 	if h.bot == nil || h.chatID == 0 {
 		return
 	}
 
 	voicePath := path
 	cleanup := false
+	caption := voiceCaption(transcription)
 	if !isVoiceContainer(path) {
 		converted, err := h.bot.convertToVoiceOGG(path)
 		if err != nil {
 			log.Printf("[Telegram] Voice conversion failed for %s, sending as document: %v", path, err)
-			if _, err := h.bot.sendDocument(h.chatID, path, "🔊 *Voice message*", 0); err != nil {
+			if _, err := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0); err != nil {
 				log.Printf("[Telegram] Error sending audio attachment %s: %v", path, err)
 			}
 			return
@@ -1728,12 +1740,32 @@ func (h *telegramAttachmentHandler) sendAudioAttachment(path string) {
 		defer os.Remove(voicePath)
 	}
 
-	if _, err := h.bot.sendVoice(h.chatID, voicePath, 0); err != nil {
+	if _, err := h.bot.sendVoice(h.chatID, voicePath, caption, 0); err != nil {
 		log.Printf("[Telegram] Error sending voice note %s, sending as document: %v", voicePath, err)
-		if _, docErr := h.bot.sendDocument(h.chatID, path, "🔊 *Voice message*", 0); docErr != nil {
+		if _, docErr := h.bot.sendDocument(h.chatID, path, voiceFallbackCaption(transcription), 0); docErr != nil {
 			log.Printf("[Telegram] Error sending audio attachment %s: %v", path, docErr)
 		}
 	}
+}
+
+// voiceCaption truncates the spoken text to the Telegram caption limit so it
+// can travel below the voice bubble in the same message.
+func voiceCaption(transcription string) string {
+	const limit = 1000
+	text := strings.TrimSpace(transcription)
+	if len(text) > limit {
+		text = strings.TrimSpace(text[:limit]) + "…"
+	}
+	return text
+}
+
+// voiceFallbackCaption keeps the transcription visible when the audio can
+// only be delivered as a document.
+func voiceFallbackCaption(transcription string) string {
+	if text := voiceCaption(transcription); text != "" {
+		return text
+	}
+	return "🔊 *Voice message*"
 }
 
 // sendDocument sends a general file document to a Telegram chat with an optional caption.
@@ -3779,13 +3811,13 @@ type telegramAttachmentHandler struct {
 	chatID   int64
 }
 
-func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+func (h *telegramAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
 	if h.recorder != nil {
-		h.recorder.AddAttachmentRef(ref, mime, path)
+		h.recorder.AddAttachmentRefWithTranscription(ref, mime, path, transcription)
 	}
 	if h.bot != nil && h.chatID != 0 {
 		if strings.HasPrefix(mime, "audio/") {
-			h.sendAudioAttachment(path)
+			h.sendAudioAttachment(path, transcription)
 			return
 		}
 		// Only send non-images as documents; images are handled via progress/image completion handlers

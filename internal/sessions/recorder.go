@@ -554,6 +554,13 @@ func (r *Recorder) Metrics() Metrics {
 // AddAttachmentRef appends an attachment reference to the current assistant message.
 // AddAttachmentRef appends an attachment reference to the current assistant message.
 func (r *Recorder) AddAttachmentRef(ref string, mime string, path string) {
+	r.AddAttachmentRefWithTranscription(ref, mime, path, "")
+}
+
+// AddAttachmentRefWithTranscription appends an attachment reference carrying
+// its spoken text, so channels can render the transcription with the audio
+// without the model spending another round-trip to repeat it.
+func (r *Recorder) AddAttachmentRefWithTranscription(ref string, mime string, path string, transcription string) {
 	r.mu.Lock()
 	msg := r.getOrCreateAssistantMsg()
 	msg.AttachmentRefs = append(msg.AttachmentRefs, ref)
@@ -573,11 +580,12 @@ func (r *Recorder) AddAttachmentRef(ref string, mime string, path string) {
 	}
 
 	msg.Attachments = append(msg.Attachments, AttachmentMeta{
-		Name: ref,
-		Mime: mime,
-		Kind: kind,
-		Path: path,
-		Size: size,
+		Name:          ref,
+		Mime:          mime,
+		Kind:          kind,
+		Path:          path,
+		Size:          size,
+		Transcription: transcription,
 	})
 	r.mu.Unlock()
 	r.NotifyUpdate(false)

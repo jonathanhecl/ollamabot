@@ -96,9 +96,12 @@ type ImageProgressHandler interface {
 }
 
 // AttachmentGeneratedHandler is called when a tool generates an attachment
-// that should be registered on the current assistant message.
+// that should be registered on the current assistant message. Transcription
+// carries the spoken text for audio attachments (empty otherwise) so the
+// channel can deliver it with the audio instead of asking the model to
+// repeat it in a second round-trip.
 type AttachmentGeneratedHandler interface {
-	OnAttachmentGenerated(sessionID string, ref string, mime string, path string)
+	OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string)
 }
 
 // SetApprovalHandler assigns a callback handler to approve risky tools.
@@ -2033,7 +2036,7 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 
 		// Notify attachment handler so the recorder can register it on the assistant message
 		if r.attachmentHandler != nil && strings.TrimSpace(r.sessionID) != "" {
-			r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, "image/png", filePath)
+			r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, "image/png", filePath, "")
 		}
 
 		// Call completion handler if set - pass real filesystem path

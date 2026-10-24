@@ -35,13 +35,13 @@ func sendVoiceTool() ollama.Tool {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "send_voice",
-			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence. Call it at most once per turn and never call it again after it succeeds.",
+			Description: "Deliver this reply as a spoken voice message instead of text. Use it only when the answer is short and conversational and hearing it is better than reading it: a greeting, a quick confirmation, a short explanation, a human-sounding reply. Never use it for code, file contents, tables, lists, step-by-step instructions, numbers, URLs, error output, or long answers; reply in text for those. The audio is delivered on its own, so after calling it do NOT repeat the spoken text: the audio is delivered with its transcription and that is enough, unless you have further tasks. Never call it more than once per turn and never call it again once the voice was delivered. Call it at most once per turn and never call it again after it succeeds.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"text": map[string]any{
 						"type":        "string",
-						"description": fmt.Sprintf("Exactly what should be spoken, written the way a person would say it, without Markdown, code, or emoji. This same text will also be shown below the voice message, so write it as the final visible reply. Maximum %d characters.", voiceMaxChars),
+						"description": fmt.Sprintf("Exactly what should be spoken, written the way a person would say it, without Markdown, code, or emoji. This same text is shown as the transcription with the voice message, so write it as the complete reply. Maximum %d characters.", voiceMaxChars),
 					},
 				},
 				"required": []string{"text"},
@@ -145,11 +145,11 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	if strings.TrimSpace(mime) == "" {
 		mime = "audio/wav"
 	}
-	r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, mime, path)
+	r.attachmentHandler.OnAttachmentGenerated(r.sessionID, filename, mime, path, text)
 	r.voiceSent = true
 	r.voiceSentText = text
 
-	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes). Do NOT call send_voice again in this turn. Reply with the EXACT same text that was spoken, without paraphrasing and without adding any extra sentence.", filename, len(res.Audio)), nil
+	return fmt.Sprintf("Voice note delivered to the user (%s, %d bytes) with its transcription. Do NOT call send_voice again in this turn and do NOT repeat the spoken text: end your turn now unless you have further tasks (todos, plan steps, or necessary research).", filename, len(res.Audio)), nil
 }
 
 // attachmentsDir is the canonical session attachments location, matching

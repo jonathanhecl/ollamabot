@@ -2761,9 +2761,9 @@ type webAttachmentHandler struct {
 	recorder *sessions.Recorder
 }
 
-func (h *webAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string) {
+func (h *webAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
 	if h.recorder != nil {
-		h.recorder.AddAttachmentRef(ref, mime, path)
+		h.recorder.AddAttachmentRefWithTranscription(ref, mime, path, transcription)
 	}
 }
 
