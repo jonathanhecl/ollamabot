@@ -40,7 +40,14 @@ func CleanThinkingTokens(text string) string {
 var (
 	invokeEnvelopePattern   = regexp.MustCompile(`(?is)<invoke[^>]*>.*?</invoke\s*>`)
 	toolCallEnvelopePattern = regexp.MustCompile(`(?is)<tool_call[^>]*>.*?</tool_call\s*>`)
-	customTagOpenPattern    = regexp.MustCompile(`(?is)<([A-Za-z_][A-Za-z0-9_]*)[^>]*>`)
+	// pipeToolCallEnvelopePattern removes the Qwen special-token dialect
+	// (<|tool_call>call:Name{...} up to its closer) for the same reason:
+	// leaving it in history makes the model re-issue the call endlessly.
+	pipeToolCallEnvelopePattern = regexp.MustCompile(`(?is)<\|tool_call\|?>.*?(?:<\|tool_response\|?>|</tool_call\s*>|<\|tool_call\|?>|<tool_call\s*>)`)
+	// pipeToolResponsePattern removes a leftover <|tool_response|> token when
+	// the lazy envelope match above stopped at an earlier closer.
+	pipeToolResponsePattern = regexp.MustCompile(`(?is)<\|tool_response\|?>`)
+	customTagOpenPattern       = regexp.MustCompile(`(?is)<([A-Za-z_][A-Za-z0-9_]*)[^>]*>`)
 )
 
 // StripToolCallEnvelopes removes XML tool-call envelopes (<invoke>...</invoke>,
@@ -57,6 +64,8 @@ func StripToolCallEnvelopes(text string) string {
 	}
 	cleaned := invokeEnvelopePattern.ReplaceAllString(text, "")
 	cleaned = toolCallEnvelopePattern.ReplaceAllString(cleaned, "")
+	cleaned = pipeToolCallEnvelopePattern.ReplaceAllString(cleaned, "")
+	cleaned = pipeToolResponsePattern.ReplaceAllString(cleaned, "")
 
 	// Remove custom <TOOLNAME>...</TOOLNAME> envelopes, but only for tags that
 	// normalize to a known tool name. Other markup is left untouched.

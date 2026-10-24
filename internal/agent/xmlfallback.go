@@ -11,6 +11,12 @@ var (
 	openInvokeRe   = regexp.MustCompile(`(?is)<invoke[^>]*name=["']([A-Za-z0-9_:-]+)["'][^>]*>`)
 	openToolCallRe = regexp.MustCompile(`(?is)<tool_call[^>]*name=["']([A-Za-z0-9_:-]+)["'][^>]*>`)
 	toolTagOpenRe  = regexp.MustCompile(`(?is)<([A-Za-z_][A-Za-z0-9_]*)>`)
+	// pipeToolCallRe matches the Qwen-style special-token dialect some
+	// uncensored/distilled models emit instead of native tool calls:
+	// <|tool_call>call:fetch_webpage{...}<tool_call><|tool_response>
+	// Quotes may appear as the literal <|"|> token. The closer can be
+	// <tool_call>, <|tool_call|>, </tool_call> or <|tool_response|>.
+	pipeToolCallRe = regexp.MustCompile(`(?is)<\|tool_call\|?>\s*call:([A-Za-z0-9_:-]+)\s*`)
 )
 
 var toolNameMapping = map[string]string{
@@ -48,8 +54,12 @@ var toolNameMapping = map[string]string{
 //	<invoke name="ToolName">{...}</invoke>
 //	<tool_call name="ToolName">{...}</tool_call>
 //	<TOOLNAME>{...}</TOOLNAME>
+//	<|tool_call>call:ToolName{...}<tool_call><|tool_response> (Qwen dialect)
 func parseXMLFallback(text string) (string, map[string]any, bool) {
 	clean := strings.TrimSpace(text)
+	if name, params, ok := parsePipeToolCall(clean); ok {
+		return name, params, true
+	}
 	if !strings.Contains(clean, "</") {
 		return "", nil, false
 	}
@@ -90,8 +100,63 @@ func parseNamedEnvelope(s string, openRe *regexp.Regexp, closeTag string) (strin
 	return name, params, true
 }
 
-func parseToolTagEnvelope(s string) (string, map[string]any, bool) {
-	loc := toolTagOpenRe.FindStringSubmatchIndex(s)
+// parsePipeToolCall recovers a tool call written in the Qwen special-token
+// dialect: <|tool_call>call:Name{...} followed by <tool_call>,
+// <|tool_call|>, </tool_call> or <|tool_response|>. The model may render
+// quotes as the literal <|"|> token, which is normalized before parsing.
+// The returned name is mapped through toolNameMapping like other envelopes.
+func parsePipeToolCall(s string) (string, map[string]any, bool) {
+	if !strings.Contains(s, "<|tool_call") {
+		return "", nil, false
+	}
+	normalized := strings.ReplaceAll(s, `<|"|>`, `"`)
+	loc := pipeToolCallRe.FindStringSubmatchIndex(normalized)
+	if loc == nil {
+		return "", nil, false
+	}
+	name := strings.TrimSpace(normalized[loc[2]:loc[3]])
+	norm := strings.ReplaceAll(strings.ToLower(name), "_", "")
+	if mapped, ok := toolNameMapping[norm]; ok {
+		name = mapped
+	}
+	body, end, ok := extractBalancedJSON(normalized, loc[1])
+	if !ok {
+		return "", nil, false
+	}
+	rest := normalized[end:]
+	closers := []string{"<|tool_response|>", "</tool_call>", "<|tool_call|>", "<tool_call>"}
+	closed := false
+	for _, c := range closers {
+		if containsFold(rest, c) {
+			closed = true
+			break
+		}
+	}
+	if !closed {
+		return "", nil, false
+	}
+	params, ok := decodeToolJSON(body)
+	if !ok {
+		// The pipe dialect often emits JS-style object literals with bare
+		// keys ({url: "..."}). Quote them and retry before giving up.
+		params, ok = decodeToolJSON(quoteBareKeys(body))
+	}
+	if !ok {
+		return "", nil, false
+	}
+	return name, params, true
+}
+
+// bareKeyRe quotes unquoted object keys ({url: "..."} -> {"url": "..."}).
+// It only matches keys positioned right after '{' or ',', so string values
+// containing colons are left untouched.
+var bareKeyRe = regexp.MustCompile(`([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)`)
+
+func quoteBareKeys(body string) string {
+	return bareKeyRe.ReplaceAllString(body, `${1}"${2}"${3}`)
+}
+
+func parseToolTagEnvelope(s string) (string, map[string]any, bool) {	loc := toolTagOpenRe.FindStringSubmatchIndex(s)
 	if loc == nil {
 		return "", nil, false
 	}
@@ -205,6 +270,15 @@ func containsFold(haystack, needle string) bool {
 // Returns a descriptive error message and true if a malformed call is detected.
 func detectMalformedXMLFallback(text string) (string, bool) {
 	clean := strings.TrimSpace(text)
+
+	// 0. Check for the Qwen <|tool_call>call:Name{...} dialect. If it is
+	// present but unparseable, tell the model to retry with a balanced
+	// JSON object instead of silently dropping the intended call.
+	if strings.Contains(clean, "<|tool_call") {
+		if _, _, ok := parsePipeToolCall(clean); !ok {
+			return "Error: Unparseable <|tool_call> tool call. Emit call:ToolName followed by a single balanced JSON object with double-quoted keys, e.g. <|tool_call>call:fetch_webpage{\"url\": \"https://example.com\"}<|tool_response|>.", true
+		}
+	}
 
 	// 1. Check for <invoke ...> tags
 	if strings.Contains(clean, "<invoke") {

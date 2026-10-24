@@ -68,6 +68,32 @@ func TestParseXMLFallback(t *testing.T) {
 			input:  `plain text response with no tags`,
 			wantOk: false,
 		},
+		{
+			name:       "qwen pipe dialect from screenshot",
+			input:      `<|tool_call>call:fetch_webpage{url:<|"|>https://www.meteoblue.com/es/tiempo/semana/galway_irlanda_2964180<|"|>}<tool_call><|tool_response>`,
+			wantTool:   "fetch_webpage",
+			wantParams: map[string]any{"url": "https://www.meteoblue.com/es/tiempo/semana/galway_irlanda_2964180"},
+			wantOk:     true,
+		},
+		{
+			name:       "qwen pipe dialect with response closer",
+			input:      `Next step: fetch it. <|tool_call|>call:web_search{"query": "galway weather"}<|tool_response|>`,
+			wantTool:   "web_search",
+			wantParams: map[string]any{"query": "galway weather"},
+			wantOk:     true,
+		},
+		{
+			name:       "qwen pipe dialect plain quotes and slash closer",
+			input:      `<|tool_call>call:read_file{"path": "README.md"}</tool_call>`,
+			wantTool:   "read_file",
+			wantParams: map[string]any{"path": "README.md"},
+			wantOk:     true,
+		},
+		{
+			name:       "qwen pipe dialect unbalanced json rejected",
+			input:      `<|tool_call>call:fetch_webpage{"url": "https://example.com"<|tool_response>`,
+			wantOk:     false,
+		},
 	}
 
 	for _, tt := range tests {

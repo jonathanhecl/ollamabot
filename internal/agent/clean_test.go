@@ -124,6 +124,8 @@ func TestStripToolCallEnvelopes(t *testing.T) {
 		{"unmapped invoke-style preserved", "<invoke not a tool call>", "<invoke not a tool call>"},
 		{"full tool tag not mapped to raw envelope", "<write_file>{\"file_path\":\"a.txt\"}</write_file>", "<write_file>{\"file_path\":\"a.txt\"}</write_file>"},
 		{"multiple envelopes", "<invoke name=\"read_file\">{\"path\":\"a\"}</invoke>\n<invoke name=\"list_files\">{}</invoke>", ""},
+		{"qwen pipe dialect envelope", "<|tool_call>call:fetch_webpage{url:<|\"|>https://x.example/y<|\"|>}<tool_call><|tool_response>", ""},
+		{"qwen pipe dialect with leading text", "Next step: fetch it.\n\n<|tool_call|>call:web_search{\"query\": \"galway weather\"}<|tool_response|>", "Next step: fetch it."},
 		{"whitespace only", "   ", ""},
 	}
 	for _, c := range cases {
