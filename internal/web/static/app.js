@@ -3905,7 +3905,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
         </details>
       ` : (showRunning ? `<div class="step-tool-running"><span></span><span></span><span></span></div>` : "");
       const statusBadge = statusLabel ? ` <span class="step-tool-status ${statusClass}">${statusLabel}</span>` : "";
-      const durBadge = step.duration_ms ? ` <span class="step-tool-status">${step.duration_ms}ms</span>` : "";
+      const durBadge = step.duration_ms ? ` <span class="step-tool-status">${formatDurationMs(step.duration_ms)}</span>` : "";
       return `<details class="step step-tool-exec ${statusClass}"><summary><span class="step-tool-icon">⚙️</span> ${escapeHtml(displayName)}${sourceLabel}${statusBadge}${durBadge}</summary>${argsHtml}${resultHtml}</details>`;
     }
     case "plan": {
@@ -3932,7 +3932,7 @@ function renderStep(step, isLive = false, isLastStep = false) {
     }
     case "system_event": {
       const label = step.content || step.name || "event";
-      const dur = step.duration_ms ? ` <span class="step-tool-status">${step.duration_ms}ms</span>` : "";
+      const dur = step.duration_ms ? ` <span class="step-tool-status">${formatDurationMs(step.duration_ms)}</span>` : "";
       let dataHtml = "";
       if (step.arguments) {
         let dataText = "";
@@ -4210,9 +4210,9 @@ function inlineMd(text) {
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
-// formatTranscriptionTime renders transcription wall-clock time compactly:
+// formatDurationMs renders a millisecond duration compactly:
 // sub-second as ms, otherwise seconds with one decimal (e.g. 12.1s).
-function formatTranscriptionTime(ms) {
+function formatDurationMs(ms) {
   if (ms < 1000) return `${ms} ms`;
   return `${(ms / 1000).toFixed(1)}s`;
 }
@@ -4230,7 +4230,7 @@ function attachmentPreview(attachment) {
     let transcriptionHtml = "";
     if (attachment.transcription) {
       const ms = Number(attachment.transcribe_ms);
-      const msBadge = ms > 0 ? ` <span class="audio-transcription-ms" title="Transcription time">${formatTranscriptionTime(ms)}</span>` : "";
+      const msBadge = ms > 0 ? ` <span class="audio-transcription-ms" title="Transcription time">${formatDurationMs(ms)}</span>` : "";
       transcriptionHtml = `<div class="audio-transcription">${escapeHtml(attachment.transcription)}${msBadge}</div>`;
     } else if (attachment.unreadable) {
       transcriptionHtml = `<div class="audio-transcription unreadable">Audio could not be transcribed.</div>`;
