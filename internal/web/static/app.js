@@ -113,6 +113,7 @@ const state = {
   audioModel: localStorage.getItem("ollamabot.audioModel") || "",
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
   imageModel: localStorage.getItem("ollamabot.imageModel") || "",
+  speechModel: localStorage.getItem("ollamabot.speechModel") || "",
   imageSteps: parseInt(localStorage.getItem("ollamabot.imageSteps"), 10) || 4,
   learningModel: localStorage.getItem("ollamabot.learningModel") || "",
   subagentModel: localStorage.getItem("ollamabot.subagentModel") || "",
@@ -1829,11 +1830,13 @@ async function loadSettings() {
   if (state.settings.model_audio) state.audioModel = state.settings.model_audio;
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
   if (state.settings.model_image) state.imageModel = state.settings.model_image;
+  if (state.settings.model_speech) state.speechModel = state.settings.model_speech;
   if (state.settings.image_steps) state.imageSteps = state.settings.image_steps;
   localStorage.setItem("ollamabot.visionModel", state.visionModel);
   localStorage.setItem("ollamabot.audioModel", state.audioModel);
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
   localStorage.setItem("ollamabot.imageModel", state.imageModel);
+  localStorage.setItem("ollamabot.speechModel", state.speechModel);
   localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
 }
 
@@ -1873,6 +1876,7 @@ async function saveSettings(event) {
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
+      model_speech: state.speechModel,
       image_steps: parseInt(els.ollamaImageSteps.value.trim(), 10) || 4,
       ollama_max_tokens: parseInt(els.ollamaMaxTokens.value.trim(), 10) || 16384,
       ollama_max_context: parseInt(els.ollamaMaxContext.value.trim(), 10) || 0,
@@ -1917,6 +1921,7 @@ async function saveSettings(event) {
   state.audioModel = data.model_audio || "";
   state.embeddingsModel = data.model_embeddings || "";
   state.imageModel = data.model_image || "";
+  state.speechModel = data.model_speech || "";
   state.imageSteps = data.image_steps || 4;
   state.learningModel = data.model_learning || "";
   state.subagentModel = data.model_subagent || "";
@@ -1925,6 +1930,7 @@ async function saveSettings(event) {
   localStorage.setItem("ollamabot.audioModel", state.audioModel);
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
   localStorage.setItem("ollamabot.imageModel", state.imageModel);
+  localStorage.setItem("ollamabot.speechModel", state.speechModel);
   localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
   localStorage.setItem("ollamabot.learningModel", state.learningModel);
   localStorage.setItem("ollamabot.subagentModel", state.subagentModel);
@@ -1952,6 +1958,7 @@ async function saveRoleModels() {
       model_audio: state.audioModel,
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
+      model_speech: state.speechModel,
       image_steps: state.imageSteps || 4,
       ollama_think_enabled: state.settings.ollama_think_enabled !== false,
       web_search_enabled: state.settings.web_search_enabled || false,
@@ -2296,6 +2303,7 @@ function renderModels() {
     const canAudio = model.capabilities?.audio === "comprobado" || model.capabilities?.audio === "inferido";
     const canEmbed = model.capabilities?.embedding === "comprobado" || model.capabilities?.embedding === "inferido";
     const canImage = model.capabilities?.image === "comprobado" || model.capabilities?.image === "inferido";
+    const canSpeech = model.capabilities?.speech === "comprobado" || model.capabilities?.speech === "inferido";
 
     const isMain = model.name === state.activeModel;
     const isLearning = model.name === state.learningModel;
@@ -2304,7 +2312,8 @@ function renderModels() {
     const isAudio = model.name === state.audioModel || (isMain && !state.audioModel && canAudio);
     const isEmbed = model.name === state.embeddingsModel;
     const isImage = model.name === state.imageModel;
-    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !canImage && !isLearning && !isSubagent;
+    const isSpeech = model.name === state.speechModel;
+    const isUseless = !isMainCapable && !canVision && !canAudio && !canEmbed && !canImage && !canSpeech && !isLearning && !isSubagent;
 
     const card = document.createElement("article");
     card.className = `model-card ${isMain ? "selected" : ""} ${isUseless ? "useless" : ""}`;
@@ -2334,6 +2343,7 @@ function renderModels() {
     if (isAudio) activeRolesHtml += `<span class="active-role-pill audio" title="This model is assigned to the AUDIO role">Audio</span>`;
     if (isEmbed) activeRolesHtml += `<span class="active-role-pill embed" title="This model is assigned to the EMBEDDINGS role">Embed</span>`;
     if (isImage) activeRolesHtml += `<span class="active-role-pill image" title="This model is assigned to the IMAGE GENERATION role" style="background:#ff9f40;color:#180a13;box-shadow:0 0 8px rgba(255,159,64,0.4);">Image</span>`;
+    if (isSpeech) activeRolesHtml += `<span class="active-role-pill speech" title="This model is assigned to the SPEECH (text-to-speech) role" style="background:#4dd4ac;color:#0b1a15;box-shadow:0 0 8px rgba(77,212,172,0.4);">Voice</span>`;
     const activeRolesContainer = activeRolesHtml ? `<div class="active-roles-container">${activeRolesHtml}</div>` : "";
 
     const statusBadgeHtml = model.loaded ?
@@ -2357,6 +2367,9 @@ function renderModels() {
     }
     if (canImage) {
       roleButtonsHtml += `<button class="choose role-btn ${isImage ? "active" : ""}" data-role="image" data-model="${escapeAttr(model.name)}">🎨 Image</button>`;
+    }
+    if (canSpeech) {
+      roleButtonsHtml += `<button class="choose role-btn ${isSpeech ? "active" : ""}" data-role="speech" data-model="${escapeAttr(model.name)}">🗣️ Voice</button>`;
     }
 
     const roleButtonsContainer = roleButtonsHtml ? `
@@ -2401,8 +2414,8 @@ function renderModels() {
         renderActive();
         renderModels();
       } else {
-        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : "embeddingsModel";
-        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : "ollamabot.embeddingsModel";
+        const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : role === "speech" ? "speechModel" : "embeddingsModel";
+        const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : role === "speech" ? "ollamabot.speechModel" : "ollamabot.embeddingsModel";
         if (state[stateKey] === model) {
           state[stateKey] = "";
           localStorage.setItem(lsKey, "");
@@ -2479,6 +2492,14 @@ function renderRoleAssignments() {
       value: state.imageModel,
       required: false,
       fallback: "disabled"
+    },
+    {
+      id: "speech",
+      name: "🗣️ Voice",
+      desc: "Speaks short replies as voice notes when the model judges audio is better than text. Requires SPEECH capability.",
+      value: state.speechModel,
+      required: false,
+      fallback: "disabled"
     }
   ];
 
@@ -2525,8 +2546,8 @@ function renderRoleAssignments() {
   container.querySelectorAll(".role-unassign-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       const role = btn.dataset.role;
-      const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : "embeddingsModel";
-      const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : "ollamabot.embeddingsModel";
+      const stateKey = role === "vision" ? "visionModel" : role === "audio" ? "audioModel" : role === "learning" ? "learningModel" : role === "subagent" ? "subagentModel" : role === "image" ? "imageModel" : role === "speech" ? "speechModel" : "embeddingsModel";
+      const lsKey = role === "vision" ? "ollamabot.visionModel" : role === "audio" ? "ollamabot.audioModel" : role === "learning" ? "ollamabot.learningModel" : role === "subagent" ? "ollamabot.subagentModel" : role === "image" ? "ollamabot.imageModel" : role === "speech" ? "ollamabot.speechModel" : "ollamabot.embeddingsModel";
 
       state[stateKey] = "";
       localStorage.setItem(lsKey, "");
@@ -4049,6 +4070,7 @@ function isRoleActiveForCap(capName, model) {
   const isAudio = name === state.audioModel || (isMain && !state.audioModel && canAudio);
   const isEmbed = name === state.embeddingsModel;
   const isImage = name === state.imageModel;
+  const isSpeech = name === state.speechModel;
 
   switch (capName) {
     case "completion":
@@ -4065,19 +4087,22 @@ function isRoleActiveForCap(capName, model) {
       return isEmbed;
     case "image":
       return isImage;
+    case "speech":
+      return isSpeech;
   }
   return false;
 }
 
 function capBadges(caps = {}, model = null) {
-  const order = ["completion", "tools", "thinking", "vision", "embedding", "audio"];
+  const order = ["completion", "tools", "thinking", "vision", "embedding", "audio", "speech"];
   const glyphs = {
     completion: "⚡ text",
     tools: "🛠️ tools",
     thinking: "🧠 think",
     vision: "👁️ vision",
     embedding: "🔗 embed",
-    audio: "🔊 audio"
+    audio: "🔊 audio",
+    speech: "🗣️ voice"
   };
   return order.map((name) => {
     const status = caps ? (caps[name] || "pendiente") : "pendiente";
@@ -4969,6 +4994,11 @@ function normalizeRawMessages(rawMessages) {
         url = `data:${mime};base64,${att.data}`;
       }
       if ((!url || url === "undefined") && att.kind === "image" && att.name?.startsWith("generated_") && state.activeSessionId) {
+        url = generatedImageURL(state.activeSessionId, att.name);
+      }
+      if ((!url || url === "undefined") && att.kind === "audio" && att.name?.startsWith("voice_") && state.activeSessionId) {
+        // Synthesized replies live next to generated images in the session
+        // attachments directory, so the same download route serves them.
         url = generatedImageURL(state.activeSessionId, att.name);
       }
       return {

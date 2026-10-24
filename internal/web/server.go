@@ -111,6 +111,7 @@ type SettingsResponse struct {
 	ModelAudio                   string `json:"model_audio"`
 	ModelEmbeddings              string `json:"model_embeddings"`
 	ModelImage                   string `json:"model_image"`
+	ModelSpeech                  string `json:"model_speech"`
 	ImageSteps                   int    `json:"image_steps"`
 	OllamaThinkEnabled           bool   `json:"ollama_think_enabled"`
 	OllamaMaxTokens              int    `json:"ollama_max_tokens"`
@@ -471,6 +472,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.OllamaModelAudio = strings.TrimSpace(input.ModelAudio)
 		cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 		cfg.OllamaModelImage = strings.TrimSpace(input.ModelImage)
+		cfg.OllamaModelSpeech = strings.TrimSpace(input.ModelSpeech)
 		cfg.OllamaImageSteps = input.ImageSteps
 		if cfg.OllamaImageSteps <= 0 {
 			cfg.OllamaImageSteps = 4
@@ -2173,6 +2175,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelAudio:                   cfg.OllamaModelAudio,
 		ModelEmbeddings:              cfg.OllamaModelEmbed,
 		ModelImage:                   cfg.OllamaModelImage,
+		ModelSpeech:                  cfg.OllamaModelSpeech,
 		ImageSteps:                   cfg.OllamaImageSteps,
 		OllamaThinkEnabled:           cfg.OllamaThinkEnabled,
 		OllamaMaxTokens:              cfg.OllamaMaxTokens,
