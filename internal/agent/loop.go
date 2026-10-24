@@ -208,6 +208,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	completedCleanly := false
 	contextOptimizationFailed := false
 	lengthRetries := 0
+	toolsExecutedThisTurn := 0
 
 	// Track filenames returned by MCP tools during this turn, so we can warn
 	// the model when it tries to access them via workspace tools (read_file,
@@ -889,6 +890,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				repeatCount := toolCallCounts[key]
 				toolGlobalCounts[toolName]++
 				globalCount := toolGlobalCounts[toolName]
+				toolsExecutedThisTurn++
 				var repetitiveLoopErr error
 
 				// Determine abort threshold dynamically based on call health.
@@ -899,6 +901,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				abortThreshold := 3
 				if isDeniedOrTimeout || isMCPValidationError || isError {
 					abortThreshold = 2
+					// Voice synthesis fails transiently (model cold loads, or the
+					// speech model was busy transcribing moments earlier). Give
+					// send_voice one extra attempt before aborting the turn.
+					if toolName == "send_voice" {
+						abortThreshold = 3
+					}
 				} else if isNoOpCall || isNetworkTool {
 					abortThreshold = 3
 				}
@@ -998,20 +1006,16 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 			}
 
-			// Voice replies are terminal when there is no pending work:
-			// the audio was already delivered with its transcription, so
-			// finish the turn without another model round-trip just to
-			// repeat the same text. With pending todos or plan steps,
-			// continue the loop so the model can keep working.
+			// Voice replies end the turn without an extra model round only in
+			// the terminal fast path: the voice succeeded, it was the ONLY tool
+			// executed in the whole turn (a greeting or quick confirmation),
+			// and the spoken text does not announce more work. A progress
+			// update inside a research turn (an ack voice, or a voice alongside
+			// other tools) must let the agent keep working, otherwise the turn
+			// dies before the user gets the real answer.
 			if spoken := a.registry.LastVoiceText(); spoken != "" && !hasPending && !hasActivePlanSteps {
-				voiceDone := false
-				for _, pc := range prepared {
-					if pc.toolName == "send_voice" {
-						voiceDone = true
-						break
-					}
-				}
-				if voiceDone {
+				voiceOnlyThisTurn := toolsExecutedThisTurn == 1 && len(prepared) == 1 && prepared[0].toolName == "send_voice"
+				if voiceOnlyThisTurn && !voiceLooksLikeContinuation(spoken) {
 					completedCleanly = true
 					break
 				}
@@ -1026,11 +1030,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		//   a) Content was purely thinking tokens (now empty after cleaning).
 		//   b) Model returned a completely empty response (no content, no thinking).
 		if strings.TrimSpace(cleanedText) == "" && len(toolCalls) == 0 {
-			if emptyChatErrRetries < 2 {
+			if emptyChatErrRetries < 3 {
 				emptyChatErrRetries++
+				nudge := "Previous attempt returned an empty response. Please produce a visible text response or call a tool."
+				if a.registry != nil && a.registry.VoiceEnabled() && a.registry.LastVoiceText() != "" {
+					nudge = "Previous attempt returned an empty response. If your task is finished, deliver the final answer NOW: either call send_voice with the final answer text, or write the final answer as plain text."
+				}
 				messages = append(messages, ollama.Message{
 					Role:    "system",
-					Content: "Previous attempt returned an empty response. Please produce a visible text response or call a tool.",
+					Content: nudge,
 				})
 				continue
 			}
@@ -1086,6 +1094,32 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		return messages, fmt.Errorf("agent exceeded maximum tool iterations (%d) before completing the turn", MaxIterations)
 	}
 	return messages, nil
+}
+
+// voiceLooksLikeContinuation reports whether the spoken text sounds like a
+// progress update announcing more work ("me tomo unos minutos, investigo..."),
+// in which case the turn must not end right after the voice: the agent is
+// supposed to keep working and deliver the answer later.
+func voiceLooksLikeContinuation(text string) bool {
+	patterns := []string{
+		// Spanish
+		"investigo", "investigando", "buscando", "busco", "reviso", "revisando",
+		"verificando", "consulto", "consultando", " analizo", "un momento",
+		"unos minutos", "en un rato", "dame un", "te aviso", "voy a",
+		"estoy revisando", "estoy buscando", "estoy verificando", "ya vuelvo",
+		"mientras", "espera", "me demor", "todavia no", "todavía no", "en breve",
+		// English
+		"let me", "i'll be", "i will be", "give me", "one moment", "a moment",
+		"checking", "looking into", "searching", "search for",
+		"working on", "shortly", "in a bit", "while i", "be right",
+	}
+	low := strings.ToLower(text)
+	for _, p := range patterns {
+		if strings.Contains(low, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) rescuePathParam(toolName string, params map[string]any) {
