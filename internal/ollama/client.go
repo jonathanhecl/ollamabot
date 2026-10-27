@@ -109,7 +109,8 @@ func (c *Client) Show(ctx context.Context, model string) (ShowResponse, error) {
 
 // SanitizeMessages ensures that a list of messages sent to Ollama complies with strict
 // chat template requirements (such as Jinja templates requiring that 'system' messages
-// ONLY appear at index 0).
+// ONLY appear at index 0, and that the message list never ends with 2 or more consecutive
+// assistant messages).
 func SanitizeMessages(messages []Message) []Message {
 	if len(messages) == 0 {
 		return messages
@@ -124,8 +125,44 @@ func SanitizeMessages(messages []Message) []Message {
 				systemParts = append(systemParts, strings.TrimSpace(msg.Content))
 			}
 		} else {
-			nonSystem = append(nonSystem, msg)
+			if len(nonSystem) > 0 && nonSystem[len(nonSystem)-1].Role == "assistant" && msg.Role == "assistant" {
+				// Merge consecutive assistant messages to prevent chat template / llama.cpp rejection:
+				// "Cannot have 2 or more assistant messages at the end of the list."
+				prev := &nonSystem[len(nonSystem)-1]
+				if strings.TrimSpace(prev.Content) == "" {
+					prev.Content = msg.Content
+				} else if strings.TrimSpace(msg.Content) != "" {
+					prev.Content = prev.Content + "\n\n" + msg.Content
+				}
+				if len(msg.ToolCalls) > 0 {
+					prev.ToolCalls = append(prev.ToolCalls, msg.ToolCalls...)
+				}
+				if strings.TrimSpace(prev.Thinking) == "" {
+					prev.Thinking = msg.Thinking
+				} else if strings.TrimSpace(msg.Thinking) != "" {
+					prev.Thinking = prev.Thinking + "\n" + msg.Thinking
+				}
+				if len(msg.Images) > 0 {
+					prev.Images = append(prev.Images, msg.Images...)
+				}
+			} else {
+				nonSystem = append(nonSystem, msg)
+			}
 		}
+	}
+
+	// Drop trailing assistant message if it is completely empty (no content and no tool calls)
+	for len(nonSystem) > 0 {
+		last := nonSystem[len(nonSystem)-1]
+		if last.Role == "assistant" && strings.TrimSpace(last.Content) == "" && len(last.ToolCalls) == 0 {
+			nonSystem = nonSystem[:len(nonSystem)-1]
+		} else {
+			break
+		}
+	}
+
+	if len(nonSystem) == 0 && len(systemParts) == 0 && len(messages) > 0 {
+		return messages
 	}
 
 	if len(systemParts) > 0 {

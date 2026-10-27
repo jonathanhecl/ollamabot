@@ -582,3 +582,13 @@ Added a `speech` model role and a `send_voice` tool so the agent can answer with
 - `internal/web`: Voice role in Manage Models & Roles, `model_speech` in settings, `speech` capability badge, and reloaded sessions map `voice_*.wav` to the audio player.
 
 Known limitation: as of Ollama 0.40.10 the published `phonon` checkpoints require the MLX runner (`this model requires MLX support...`), so TTS only runs on Apple Silicon today and stays disabled on Linux/NVIDIA. The plumbing is behind `OLLAMA_MODEL_SPEECH`, so it activates as soon as a Linux runner exists.
+
+## 2026-10-27 — Fix consecutive assistant message error and voice reply turn completion
+
+Fixed Ollama status 400 error (`Cannot have 2 or more assistant messages at the end of the list.`) triggered when turns executing tools before `send_voice` did not terminate cleanly and accumulated empty assistant retries:
+
+- `internal/agent/loop.go`: updated `send_voice` termination condition so that any turn delivering a non-continuation voice message as the sole tool in its batch completes cleanly, regardless of whether prior tools (e.g. `web_search`) ran earlier in the turn.
+- `internal/agent/loop.go`: pruned empty assistant messages from the trace before retrying or entering empty recovery, preventing orphan blank assistant messages from accumulating across retry iterations.
+- `internal/ollama/client.go`: updated `SanitizeMessages` to merge consecutive assistant messages into a single message block and prune trailing blank assistant messages before sending payloads to `/api/chat`.
+- `internal/ollama/client_test.go`: added unit tests for `SanitizeMessages` testing consecutive assistant message merging and trailing empty message removal.
+- `internal/engine/voice_turn_test.go`: added `TestProcessTurnDeliversVoiceAttachmentAfterTool` validating that research followed by `send_voice` completes cleanly without extra empty round-trips.

@@ -36,6 +36,43 @@ func TestSanitizeMessages(t *testing.T) {
 	}
 }
 
+func TestSanitizeMessages_ConsecutiveAssistant(t *testing.T) {
+	msgs := []Message{
+		{Role: "system", Content: "Prompt"},
+		{Role: "user", Content: "Question"},
+		{Role: "assistant", Content: "First part"},
+		{Role: "system", Content: "Nudge"},
+		{Role: "assistant", Content: "Second part"},
+	}
+
+	sanitized := SanitizeMessages(msgs)
+	// system should be at index 0, followed by user, followed by a SINGLE merged assistant message
+	if len(sanitized) != 3 {
+		t.Fatalf("expected 3 messages, got %d: %#v", len(sanitized), sanitized)
+	}
+	if sanitized[0].Role != "system" {
+		t.Errorf("expected system at index 0, got %s", sanitized[0].Role)
+	}
+	if sanitized[1].Role != "user" || sanitized[1].Content != "Question" {
+		t.Errorf("expected user at index 1, got %#v", sanitized[1])
+	}
+	if sanitized[2].Role != "assistant" || sanitized[2].Content != "First part\n\nSecond part" {
+		t.Errorf("expected merged assistant at index 2, got %#v", sanitized[2])
+	}
+}
+
+func TestSanitizeMessages_DropsTrailingEmptyAssistant(t *testing.T) {
+	msgs := []Message{
+		{Role: "user", Content: "Question"},
+		{Role: "assistant", Content: "   "},
+	}
+
+	sanitized := SanitizeMessages(msgs)
+	if len(sanitized) != 1 || sanitized[0].Role != "user" {
+		t.Fatalf("expected trailing empty assistant to be dropped, got: %#v", sanitized)
+	}
+}
+
 func TestCanUseAuxiliaryModel(t *testing.T) {
 	tests := []struct {
 		name    string

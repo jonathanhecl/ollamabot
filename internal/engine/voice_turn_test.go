@@ -150,6 +150,116 @@ func TestProcessTurnDeliversVoiceAttachment(t *testing.T) {
 	}
 }
 
+// TestProcessTurnDeliversVoiceAttachmentAfterTool verifies that a turn where a research
+// tool was executed first, followed by send_voice in a subsequent iteration, terminates
+// cleanly without forcing another model round-trip that could fail with empty response
+// or consecutive assistant messages.
+func TestProcessTurnDeliversVoiceAttachmentAfterTool(t *testing.T) {
+	var chatCalls int32
+	var spoken string
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{Capabilities: []string{"completion", "tools"}})
+		case "/api/ps":
+			_ = json.NewEncoder(w).Encode(ollama.PsResponse{})
+		case "/api/chat":
+			call := atomic.AddInt32(&chatCalls, 1)
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			if call == 1 {
+				// Round 1: Model calls list_files
+				streamChunk(w, ollama.ChatResponse{
+					Model: "main-model",
+					Message: ollama.Message{
+						Role: "assistant",
+						ToolCalls: []ollama.ToolCall{{
+							Type: "function",
+							Function: ollama.ToolFunction{
+								Name:      "list_files",
+								Arguments: json.RawMessage(`{}`),
+							},
+						}},
+					},
+				})
+				streamChunk(w, ollama.ChatResponse{Model: "main-model", Done: true, DoneReason: "stop"})
+				return
+			} else if call == 2 {
+				// Round 2: Model synthesizes and calls send_voice with final answer
+				streamChunk(w, ollama.ChatResponse{
+					Model: "main-model",
+					Message: ollama.Message{
+						Role: "assistant",
+						ToolCalls: []ollama.ToolCall{{
+							Type: "function",
+							Function: ollama.ToolFunction{
+								Name:      "send_voice",
+								Arguments: json.RawMessage(`{"text":"El jefe de Estado de Singapur es el Presidente."}`),
+							},
+						}},
+					},
+				})
+				streamChunk(w, ollama.ChatResponse{Model: "main-model", Done: true, DoneReason: "stop"})
+				return
+			}
+			t.Errorf("unexpected 3rd chat call after final send_voice: %d", call)
+			streamChunk(w, ollama.ChatResponse{Model: "main-model", Message: ollama.Message{Role: "assistant", Content: ""}})
+			streamChunk(w, ollama.ChatResponse{Model: "main-model", Done: true, DoneReason: "stop"})
+		case "/v1/audio/speech":
+			var req ollama.SpeechRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			spoken = req.Input
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(append([]byte("RIFF0000WAVE"), make([]byte, 200)...))
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	workspace := t.TempDir()
+	cfg := config.Config{
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "main-model",
+		OllamaModelSpeech:  "phonon:40m-es",
+		Workspace:          workspace,
+		SessionsPath:       filepath.Join(workspace, "sessions"),
+		MemoryPath:         filepath.Join(workspace, "memory"),
+		SkillsPath:         filepath.Join(workspace, "skills"),
+	}
+	store := sessions.NewStore(cfg.SessionsPath)
+	const sessionID = "voice-turn-after-tool"
+	if err := store.Save(sessions.Session{ID: sessionID, Title: "Voice", Model: cfg.OllamaDefaultModel}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	result, err := ProcessTurn(context.Background(), Deps{
+		ConfigMgr:    config.NewManager(cfg),
+		Client:       ollama.NewClient(server.URL),
+		SessionStore: store,
+		AttachmentFactory: func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler {
+			return attachmentRecorder{recorder: recorder}
+		},
+	}, TurnRequest{
+		SessionID: sessionID,
+		Channel:   "telegram",
+		Messages:  []router.MediaMessage{{Message: ollama.Message{Role: "user", Content: "¿Quién es el presidente de Singapur?"}}},
+	})
+	if err != nil {
+		t.Fatalf("ProcessTurn failed: %v", err)
+	}
+	if result.FinalAnswer != "" {
+		t.Fatalf("final answer = %q, want empty (carried by voice attachment)", result.FinalAnswer)
+	}
+	if got := atomic.LoadInt32(&chatCalls); got != 2 {
+		t.Fatalf("chat calls = %d, want 2 (1 tool + 1 voice, no extra empty round)", got)
+	}
+	if spoken != "El jefe de Estado de Singapur es el Presidente." {
+		t.Fatalf("spoken text = %q", spoken)
+	}
+}
+
 type attachmentRecorder struct {
 	recorder *sessions.Recorder
 }

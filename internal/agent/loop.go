@@ -1007,16 +1007,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 			}
 
-			// Voice replies end the turn without an extra model round only in
-			// the terminal fast path: the voice succeeded, it was the ONLY tool
-			// executed in the whole turn (a greeting or quick confirmation),
-			// and the spoken text does not announce more work. A progress
-			// update inside a research turn (an ack voice, or a voice alongside
-			// other tools) must let the agent keep working, otherwise the turn
-			// dies before the user gets the real answer.
+			// Voice replies end the turn without an extra model round when the
+			// voice was delivered in this step, it was the only tool in this batch,
+			// and the spoken text does not announce more work. A progress update
+			// inside a research turn (an ack voice, or a voice alongside other tools)
+			// keeps the agent working.
 			if spoken := a.registry.LastVoiceText(); spoken != "" && !hasPending && !hasActivePlanSteps {
-				voiceOnlyThisTurn := toolsExecutedThisTurn == 1 && len(prepared) == 1 && prepared[0].toolName == "send_voice"
-				if voiceOnlyThisTurn && !voiceLooksLikeContinuation(spoken) {
+				voiceIsFinal := len(prepared) == 1 && prepared[0].toolName == "send_voice" && !voiceLooksLikeContinuation(spoken)
+				if voiceIsFinal {
 					completedCleanly = true
 					break
 				}
@@ -1031,6 +1029,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		//   a) Content was purely thinking tokens (now empty after cleaning).
 		//   b) Model returned a completely empty response (no content, no thinking).
 		if strings.TrimSpace(cleanedText) == "" && len(toolCalls) == 0 {
+			// Pop the empty assistant message appended at step 6 so we don't
+			// accumulate consecutive phantom assistant messages across retries.
+			if len(messages) > 0 && messages[len(messages)-1].Role == "assistant" && strings.TrimSpace(messages[len(messages)-1].Content) == "" && len(messages[len(messages)-1].ToolCalls) == 0 {
+				messages = messages[:len(messages)-1]
+			}
+
 			if emptyChatErrRetries < 3 {
 				emptyChatErrRetries++
 				nudge := "Previous attempt returned an empty response. Please produce a visible text response or call a tool."
