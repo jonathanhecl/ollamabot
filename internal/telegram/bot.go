@@ -1370,6 +1370,14 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 				b.sleepMgr.NotifyUserActivity()
 			}
 		},
+		OnMediaResolved: func(mediaRes router.ResolveResult) {
+			for _, att := range mediaRes.Attachments {
+				if att.Kind == "audio" && !att.Unreadable && att.Action != router.ActionSkipped {
+					b.reactMessage(chatID, msg.MessageID, "✅")
+					break
+				}
+			}
+		},
 		OnPlanProgress: func(sessionID string, plan sessions.SessionPlan) {
 			b.notifyPlanProgress(sessionID, plan)
 		},
@@ -1927,6 +1935,68 @@ func (b *Bot) sendChatAction(chatID int64, action string) error {
 	defer resp.Body.Close()
 
 	return nil
+}
+
+// setMessageReaction sets or clears an emoji reaction on a specific message.
+func (b *Bot) setMessageReaction(chatID int64, messageID int64, emoji string) error {
+	type ReactionItem struct {
+		Type  string `json:"type"`
+		Emoji string `json:"emoji"`
+	}
+	type SetMessageReactionRequest struct {
+		ChatID    int64          `json:"chat_id"`
+		MessageID int64          `json:"message_id"`
+		Reaction  []ReactionItem `json:"reaction"`
+	}
+
+	var items []ReactionItem
+	if emoji != "" {
+		items = append(items, ReactionItem{
+			Type:  "emoji",
+			Emoji: emoji,
+		})
+	}
+
+	reqBody := SetMessageReactionRequest{
+		ChatID:    chatID,
+		MessageID: messageID,
+		Reaction:  items,
+	}
+
+	payload, err := json.Marshal(reqBody)
+	if err != nil {
+		return err
+	}
+
+	url := b.apiBase + "/setMessageReaction"
+	resp, err := b.httpClient.Post(url, "application/json", bytes.NewBuffer(payload))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("telegram API error (status %d): %s", resp.StatusCode, string(respBytes))
+	}
+
+	return nil
+}
+
+// reactMessage applies an emoji reaction to a user message, falling back to 👍
+// if the chosen reaction is rejected by the chat's reaction restrictions.
+func (b *Bot) reactMessage(chatID int64, messageID int64, emoji string) {
+	if messageID == 0 {
+		return
+	}
+	if err := b.setMessageReaction(chatID, messageID, emoji); err != nil {
+		log.Printf("[Telegram] Could not set reaction %q on message %d: %v", emoji, messageID, err)
+		if emoji != "👍" {
+			if fbErr := b.setMessageReaction(chatID, messageID, "👍"); fbErr != nil {
+				log.Printf("[Telegram] Fallback reaction 👍 also failed on message %d: %v", messageID, fbErr)
+			}
+		}
+	}
 }
 
 func (b *Bot) getFile(fileID string) (*File, error) {
