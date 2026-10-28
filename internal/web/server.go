@@ -88,6 +88,7 @@ type ModelView struct {
 	IsDefault        bool                           `json:"is_default"`
 	Source           string                         `json:"source"`
 	ModifiedAt       string                         `json:"modified_at"`
+	Voices           []string                       `json:"voices,omitempty"`
 }
 
 type ModelsResponse struct {
@@ -112,6 +113,7 @@ type SettingsResponse struct {
 	ModelEmbeddings              string `json:"model_embeddings"`
 	ModelImage                   string `json:"model_image"`
 	ModelSpeech                  string `json:"model_speech"`
+	SpeechVoice                  string `json:"speech_voice"`
 	ImageSteps                   int    `json:"image_steps"`
 	OllamaThinkEnabled           bool   `json:"ollama_think_enabled"`
 	OllamaMaxTokens              int    `json:"ollama_max_tokens"`
@@ -239,6 +241,8 @@ func (s *Server) ListenAndServe() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/models", s.handleModels)
 	mux.HandleFunc("POST /api/models/reload", s.handleReloadModels)
+	mux.HandleFunc("GET /api/voice/voices", s.handleVoiceVoices)
+	mux.HandleFunc("POST /api/voice/test", s.handleTestVoice)
 	mux.HandleFunc("GET /api/settings", s.handleSettings)
 	mux.HandleFunc("POST /api/settings", s.handleUpdateSettings)
 	mux.HandleFunc("POST /api/chat/stream", s.handleChatStream)
@@ -473,6 +477,7 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 		cfg.OllamaModelEmbed = strings.TrimSpace(input.ModelEmbeddings)
 		cfg.OllamaModelImage = strings.TrimSpace(input.ModelImage)
 		cfg.OllamaModelSpeech = strings.TrimSpace(input.ModelSpeech)
+		cfg.OllamaSpeechVoice = strings.TrimSpace(input.SpeechVoice)
 		cfg.OllamaImageSteps = input.ImageSteps
 		if cfg.OllamaImageSteps <= 0 {
 			cfg.OllamaImageSteps = 4
@@ -661,6 +666,85 @@ func (s *Server) handleReloadModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) handleVoiceVoices(w http.ResponseWriter, r *http.Request) {
+	cfg, client, _, _ := s.deps()
+	model := strings.TrimSpace(r.URL.Query().Get("model"))
+	if model == "" {
+		model = cfg.OllamaModelSpeech
+	}
+	if model == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"model": "", "voices": []string{}})
+		return
+	}
+	show, err := client.Show(r.Context(), model)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("show %s: %w", model, err))
+		return
+	}
+	voices := capabilities.ExtractVoices(show)
+	if voices == nil {
+		voices = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"model":  model,
+		"voices": voices,
+	})
+}
+
+type TestVoiceRequest struct {
+	Model string `json:"model"`
+	Voice string `json:"voice"`
+	Text  string `json:"text"`
+}
+
+func (s *Server) handleTestVoice(w http.ResponseWriter, r *http.Request) {
+	var req TestVoiceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	cfg, client, _, _ := s.deps()
+	model := strings.TrimSpace(req.Model)
+	if model == "" {
+		model = cfg.OllamaModelSpeech
+	}
+	if model == "" {
+		writeError(w, http.StatusBadRequest, errors.New("no speech model configured or specified"))
+		return
+	}
+	text := strings.TrimSpace(req.Text)
+	if text == "" {
+		text = "ollamabot"
+	}
+	voice := strings.TrimSpace(req.Voice)
+	if voice == "" && model == cfg.OllamaModelSpeech {
+		voice = cfg.OllamaSpeechVoice
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Minute)
+	defer cancel()
+
+	res, err := client.Speech(ctx, ollama.SpeechRequest{
+		Model:          model,
+		Input:          text,
+		Voice:          voice,
+		ResponseFormat: ollama.SpeechFormatWAV,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadGateway, fmt.Errorf("speech synthesis failed: %w", err))
+		return
+	}
+
+	contentType := res.ContentType
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "audio/wav"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(res.Audio)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(res.Audio)
 }
 
 func routerConfig(cfg config.Config) router.Config {
@@ -1146,6 +1230,7 @@ func modelView(report capabilities.ModelReport, running *ollama.RunningModel, de
 		Source:           source,
 		Size:             report.Size,
 		ModifiedAt:       report.ModifiedAt,
+		Voices:           report.Voices,
 	}
 	if running != nil {
 		view.Loaded = true
@@ -2184,6 +2269,7 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		ModelEmbeddings:              cfg.OllamaModelEmbed,
 		ModelImage:                   cfg.OllamaModelImage,
 		ModelSpeech:                  cfg.OllamaModelSpeech,
+		SpeechVoice:                  cfg.OllamaSpeechVoice,
 		ImageSteps:                   cfg.OllamaImageSteps,
 		OllamaThinkEnabled:           cfg.OllamaThinkEnabled,
 		OllamaMaxTokens:              cfg.OllamaMaxTokens,

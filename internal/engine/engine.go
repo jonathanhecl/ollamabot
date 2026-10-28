@@ -285,6 +285,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	// Only expose send_voice when a speech model is configured. Channels
 	// without an attachment handler still refuse at execution time.
 	registry.SetSpeechModel(config.ResolveModel(cfg, config.ModelRoleSpeech))
+	registry.SetSpeechVoice(cfg.OllamaSpeechVoice)
 	return registry
 }
 

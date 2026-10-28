@@ -114,6 +114,7 @@ const state = {
   embeddingsModel: localStorage.getItem("ollamabot.embeddingsModel") || "",
   imageModel: localStorage.getItem("ollamabot.imageModel") || "",
   speechModel: localStorage.getItem("ollamabot.speechModel") || "",
+  speechVoice: localStorage.getItem("ollamabot.speechVoice") || "",
   imageSteps: parseInt(localStorage.getItem("ollamabot.imageSteps"), 10) || 4,
   learningModel: localStorage.getItem("ollamabot.learningModel") || "",
   subagentModel: localStorage.getItem("ollamabot.subagentModel") || "",
@@ -1831,12 +1832,14 @@ async function loadSettings() {
   if (state.settings.model_embeddings) state.embeddingsModel = state.settings.model_embeddings;
   if (state.settings.model_image) state.imageModel = state.settings.model_image;
   if (state.settings.model_speech) state.speechModel = state.settings.model_speech;
+  if (state.settings.speech_voice !== undefined) state.speechVoice = state.settings.speech_voice;
   if (state.settings.image_steps) state.imageSteps = state.settings.image_steps;
   localStorage.setItem("ollamabot.visionModel", state.visionModel);
   localStorage.setItem("ollamabot.audioModel", state.audioModel);
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
   localStorage.setItem("ollamabot.imageModel", state.imageModel);
   localStorage.setItem("ollamabot.speechModel", state.speechModel);
+  localStorage.setItem("ollamabot.speechVoice", state.speechVoice);
   localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
 }
 
@@ -1877,6 +1880,7 @@ async function saveSettings(event) {
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
       model_speech: state.speechModel,
+      speech_voice: state.speechVoice,
       image_steps: parseInt(els.ollamaImageSteps.value.trim(), 10) || 4,
       ollama_max_tokens: parseInt(els.ollamaMaxTokens.value.trim(), 10) || 16384,
       ollama_max_context: parseInt(els.ollamaMaxContext.value.trim(), 10) || 0,
@@ -1922,6 +1926,7 @@ async function saveSettings(event) {
   state.embeddingsModel = data.model_embeddings || "";
   state.imageModel = data.model_image || "";
   state.speechModel = data.model_speech || "";
+  state.speechVoice = data.speech_voice || "";
   state.imageSteps = data.image_steps || 4;
   state.learningModel = data.model_learning || "";
   state.subagentModel = data.model_subagent || "";
@@ -1931,6 +1936,7 @@ async function saveSettings(event) {
   localStorage.setItem("ollamabot.embeddingsModel", state.embeddingsModel);
   localStorage.setItem("ollamabot.imageModel", state.imageModel);
   localStorage.setItem("ollamabot.speechModel", state.speechModel);
+  localStorage.setItem("ollamabot.speechVoice", state.speechVoice);
   localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
   localStorage.setItem("ollamabot.learningModel", state.learningModel);
   localStorage.setItem("ollamabot.subagentModel", state.subagentModel);
@@ -1959,6 +1965,7 @@ async function saveRoleModels() {
       model_embeddings: state.embeddingsModel,
       model_image: state.imageModel,
       model_speech: state.speechModel,
+      speech_voice: state.speechVoice,
       image_steps: state.imageSteps || 4,
       ollama_think_enabled: state.settings.ollama_think_enabled !== false,
       web_search_enabled: state.settings.web_search_enabled || false,
@@ -1986,6 +1993,10 @@ async function saveRoleModels() {
 
   if (response.ok) {
     state.settings = await response.json();
+    if (state.settings.speech_voice !== undefined) {
+      state.speechVoice = state.settings.speech_voice || "";
+      localStorage.setItem("ollamabot.speechVoice", state.speechVoice);
+    }
     if (changed && newModel) {
       setTimeout(() => {
         showConfirm({
@@ -2184,6 +2195,77 @@ function formatDateShort(dateStr) {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
+const voiceCache = {};
+let currentTestVoiceAudio = null;
+
+async function fetchModelVoices(modelName) {
+  if (!modelName) return [];
+  if (voiceCache[modelName]) return voiceCache[modelName];
+  const model = state.models.find((m) => m.name === modelName);
+  if (model && model.voices && model.voices.length > 0) {
+    voiceCache[modelName] = model.voices;
+    return model.voices;
+  }
+  try {
+    const res = await fetch(`/api/voice/voices?model=${encodeURIComponent(modelName)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const list = Array.isArray(data.voices) ? data.voices : [];
+      voiceCache[modelName] = list;
+      if (model) model.voices = list;
+      return list;
+    }
+  } catch (err) {
+    console.warn("Could not fetch voices for model", modelName, err);
+  }
+  return [];
+}
+
+async function playVoiceTest(model, voice, text, triggerEl) {
+  if (!model) return;
+  const originalHtml = triggerEl ? triggerEl.innerHTML : "";
+  if (triggerEl) {
+    triggerEl.disabled = true;
+    triggerEl.innerHTML = `⏳ Testing...`;
+  }
+  try {
+    if (currentTestVoiceAudio) {
+      currentTestVoiceAudio.pause();
+      currentTestVoiceAudio = null;
+    }
+    const response = await fetch("/api/voice/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model,
+        voice: voice || "",
+        text: text || "ollamabot"
+      })
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      addSystemMessage(`Voice test failed: ${err.error || response.statusText}`);
+      return;
+    }
+    const blob = await response.blob();
+    const audioUrl = URL.createObjectURL(blob);
+    currentTestVoiceAudio = new Audio(audioUrl);
+    currentTestVoiceAudio.onended = () => {
+      URL.revokeObjectURL(audioUrl);
+      currentTestVoiceAudio = null;
+    };
+    await currentTestVoiceAudio.play();
+  } catch (err) {
+    console.error("Failed to play test audio:", err);
+    addSystemMessage(`Voice playback error: ${err.message || err}`);
+  } finally {
+    if (triggerEl) {
+      triggerEl.disabled = false;
+      triggerEl.innerHTML = originalHtml;
+    }
+  }
+}
+
 function renderModels() {
   els.modelsBody.innerHTML = "";
   const query = state.modelSearchQuery.toLowerCase().trim();
@@ -2378,6 +2460,37 @@ function renderModels() {
       </div>
     ` : "";
 
+    let voicePickerHtml = "";
+    if (isSpeech) {
+      const voices = (model.voices && model.voices.length > 0) ? model.voices : (voiceCache[model.name] || []);
+      let optionsHtml = `<option value="">Default (checkpoint default)</option>`;
+      voices.forEach((v) => {
+        const isSelected = (state.speechVoice || "").toLowerCase() === v.toLowerCase();
+        optionsHtml += `<option value="${escapeAttr(v)}" ${isSelected ? "selected" : ""}>${escapeHtml(v)}</option>`;
+      });
+      voicePickerHtml = `
+        <div class="model-voice-picker" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 6px;">
+            <label style="font-size: 11px; font-weight: 600; color: var(--muted); user-select: none;">Voice:</label>
+            <select class="voice-picker-select" data-model="${escapeAttr(model.name)}" style="background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 3px 8px; font-size: 11px; font-family: inherit; cursor: pointer; outline: none;">
+              ${optionsHtml}
+            </select>
+          </div>
+          <button type="button" class="test-voice-btn ghost-button" data-model="${escapeAttr(model.name)}" style="padding: 3px 8px; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Test voice reading 'ollamabot'">
+            ▶️ Test voice
+          </button>
+        </div>
+      `;
+
+      if (voices.length === 0) {
+        fetchModelVoices(model.name).then((loaded) => {
+          if (loaded && loaded.length > 0) {
+            renderModels();
+          }
+        });
+      }
+    }
+
     card.innerHTML = `
       <div>
         <div class="model-card-header">
@@ -2400,6 +2513,7 @@ function renderModels() {
         </div>
       </div>
       ${roleButtonsContainer}
+      ${voicePickerHtml}
     `;
     els.modelsBody.appendChild(card);
   }
@@ -2419,14 +2533,45 @@ function renderModels() {
         if (state[stateKey] === model) {
           state[stateKey] = "";
           localStorage.setItem(lsKey, "");
+          if (role === "speech") {
+            state.speechVoice = "";
+            localStorage.setItem("ollamabot.speechVoice", "");
+          }
         } else {
           state[stateKey] = model;
           localStorage.setItem(lsKey, model);
+          if (role === "speech") {
+            fetchModelVoices(model).then(() => {
+              renderModels();
+              renderRoleAssignments();
+            });
+          }
         }
         saveRoleModels();
         renderActive();
         renderModels();
       }
+    });
+  });
+
+  els.modelsBody.querySelectorAll(".voice-picker-select").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const chosenVoice = sel.value;
+      const modelName = sel.dataset.model || state.speechModel;
+      state.speechVoice = chosenVoice;
+      localStorage.setItem("ollamabot.speechVoice", chosenVoice);
+      await saveRoleModels();
+      renderModels();
+      renderRoleAssignments();
+      const testBtn = sel.closest(".model-voice-picker")?.querySelector(".test-voice-btn");
+      await playVoiceTest(modelName, chosenVoice, "ollamabot", testBtn);
+    });
+  });
+
+  els.modelsBody.querySelectorAll(".test-voice-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const modelName = btn.dataset.model || state.speechModel;
+      await playVoiceTest(modelName, state.speechVoice, "ollamabot", btn);
     });
   });
 }
@@ -2529,15 +2674,54 @@ function renderRoleAssignments() {
       actionHtml = `<button type="button" class="role-unassign-btn" data-role="${escapeAttr(r.id)}">Unassign</button>`;
     }
 
+    let extraControlsHtml = "";
+    if (r.id === "speech" && r.value) {
+      const model = state.models.find((m) => m.name === r.value);
+      const voices = (model && model.voices && model.voices.length > 0) ? model.voices : (voiceCache[r.value] || []);
+
+      let optionsHtml = `<option value="">Default (checkpoint default)</option>`;
+      voices.forEach((v) => {
+        const isSelected = (state.speechVoice || "").toLowerCase() === v.toLowerCase();
+        optionsHtml += `<option value="${escapeAttr(v)}" ${isSelected ? "selected" : ""}>${escapeHtml(v)}</option>`;
+      });
+
+      extraControlsHtml = `
+        <div class="voice-selector-box" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <label style="font-size: 12px; font-weight: 600; color: var(--muted); user-select: none;">Voice:</label>
+            <select class="voice-picker-select" data-model="${escapeAttr(r.value)}" style="background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 10px; font-size: 12px; font-family: inherit; cursor: pointer; outline: none;">
+              ${optionsHtml}
+            </select>
+          </div>
+          <button type="button" class="test-voice-btn ghost-button" data-model="${escapeAttr(r.value)}" style="padding: 4px 10px; font-size: 12px; display: inline-flex; align-items: center; gap: 4px; cursor: pointer;" title="Test voice reading 'ollamabot'">
+            ▶️ Test voice
+          </button>
+        </div>
+      `;
+
+      if (voices.length === 0) {
+        fetchModelVoices(r.value).then((loaded) => {
+          if (loaded && loaded.length > 0) {
+            renderRoleAssignments();
+          }
+        });
+      }
+    }
+
     card.innerHTML = `
-      <div class="role-assignment-left">
-        <span class="role-assignment-title">${escapeHtml(r.name)}</span>
-        <span class="role-assignment-desc">${escapeHtml(r.desc)}</span>
-      </div>
-      <div class="role-assignment-right">
-        ${badgeHtml}
-        ${warningHtml}
-        ${actionHtml}
+      <div style="display: flex; flex-direction: column; width: 100%;">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; width: 100%;">
+          <div class="role-assignment-left">
+            <span class="role-assignment-title">${escapeHtml(r.name)}</span>
+            <span class="role-assignment-desc">${escapeHtml(r.desc)}</span>
+          </div>
+          <div class="role-assignment-right">
+            ${badgeHtml}
+            ${warningHtml}
+            ${actionHtml}
+          </div>
+        </div>
+        ${extraControlsHtml}
       </div>
     `;
     container.appendChild(card);
@@ -2551,11 +2735,36 @@ function renderRoleAssignments() {
 
       state[stateKey] = "";
       localStorage.setItem(lsKey, "");
+      if (role === "speech") {
+        state.speechVoice = "";
+        localStorage.setItem("ollamabot.speechVoice", "");
+      }
 
       saveRoleModels();
       renderActive();
       renderModels();
       renderRoleAssignments();
+    });
+  });
+
+  container.querySelectorAll(".voice-picker-select").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const chosenVoice = sel.value;
+      const modelName = sel.dataset.model || state.speechModel;
+      state.speechVoice = chosenVoice;
+      localStorage.setItem("ollamabot.speechVoice", chosenVoice);
+      await saveRoleModels();
+      renderModels();
+      renderRoleAssignments();
+      const testBtn = sel.closest(".voice-selector-box")?.querySelector(".test-voice-btn");
+      await playVoiceTest(modelName, chosenVoice, "ollamabot", testBtn);
+    });
+  });
+
+  container.querySelectorAll(".test-voice-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const modelName = btn.dataset.model || state.speechModel;
+      await playVoiceTest(modelName, state.speechVoice, "ollamabot", btn);
     });
   });
 }

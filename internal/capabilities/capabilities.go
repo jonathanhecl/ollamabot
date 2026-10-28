@@ -26,6 +26,7 @@ type ModelReport struct {
 	ContextLength    int64
 	Capabilities     map[string]Status
 	Reported         []string
+	Voices           []string
 	HasAudioEncoder  bool
 	HasVisionEncoder bool
 	ModifiedAt       string
@@ -59,6 +60,7 @@ func FromOllama(tag ollama.ModelTag, show ollama.ShowResponse) ModelReport {
 		ContextLength:    contextLength(show.ModelInfo),
 		Capabilities:     statuses,
 		Reported:         reported,
+		Voices:           ExtractVoices(show),
 		HasAudioEncoder:  hasAudio,
 		HasVisionEncoder: hasVision,
 		ModifiedAt:       tag.ModifiedAt,
@@ -81,6 +83,26 @@ func StatusList(statuses map[string]Status) string {
 func boolValue(value any) bool {
 	asBool, ok := value.(bool)
 	return ok && asBool
+}
+
+func ExtractVoices(show ollama.ShowResponse) []string {
+	if len(show.Voices) > 0 {
+		return append([]string{}, show.Voices...)
+	}
+	if v, ok := show.ModelInfo["voices"]; ok {
+		if list, ok := v.([]any); ok {
+			var out []string
+			for _, item := range list {
+				if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+					out = append(out, strings.TrimSpace(s))
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+	}
+	return nil
 }
 
 func contextLength(info map[string]any) int64 {

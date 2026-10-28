@@ -93,6 +93,21 @@ func TestSetSpeechModelIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestSetSpeechVoice(t *testing.T) {
+	registry := NewRegistry(false, t.TempDir(), nil, nil, "", SearchConfig{})
+	if registry.SpeechVoice() != "" {
+		t.Fatalf("expected empty default voice, got %q", registry.SpeechVoice())
+	}
+	registry.SetSpeechVoice("Zoey")
+	if registry.SpeechVoice() != "Zoey" {
+		t.Fatalf("expected voice Zoey, got %q", registry.SpeechVoice())
+	}
+	registry.SetSpeechVoice("  Freya  ")
+	if registry.SpeechVoice() != "Freya" {
+		t.Fatalf("expected trimmed voice Freya, got %q", registry.SpeechVoice())
+	}
+}
+
 func TestSendVoiceSavesAttachmentAndReportsDelivery(t *testing.T) {
 	handler := &fakeAttachmentHandler{}
 	registry, sessionsPath := newVoiceRegistry(t, "phonon:40m-es", handler)

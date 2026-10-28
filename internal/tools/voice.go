@@ -85,6 +85,17 @@ func (r *Registry) SpeechModel() string {
 	return r.speechModel
 }
 
+// SetSpeechVoice records the preferred voice for the text-to-speech model.
+// An empty voice lets Ollama use the model's default voice.
+func (r *Registry) SetSpeechVoice(voice string) {
+	r.speechVoice = strings.TrimSpace(voice)
+}
+
+// SpeechVoice returns the configured voice name, if any.
+func (r *Registry) SpeechVoice() string {
+	return r.speechVoice
+}
+
 // LastVoiceText returns the spoken text from the most recent successful
 // send_voice call in this turn, or empty when no voice was generated yet.
 func (r *Registry) LastVoiceText() string {
@@ -190,6 +201,7 @@ func (r *Registry) sendVoice(ctx context.Context, args map[string]any) (string, 
 	res, err := r.client.Speech(ctx, ollama.SpeechRequest{
 		Model:          model,
 		Input:          text,
+		Voice:          r.speechVoice,
 		ResponseFormat: ollama.SpeechFormatWAV,
 	})
 	if err != nil {

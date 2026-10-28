@@ -2752,7 +2752,11 @@ func (b *Bot) sendStartupNotification() {
 		sb.WriteString(fmt.Sprintf("• *Memory:* `%s`\n", b.config().OllamaModelEmbed))
 	}
 	if b.config().OllamaModelSpeech != "" {
-		sb.WriteString(fmt.Sprintf("• *Speech:* `%s`\n", b.config().OllamaModelSpeech))
+		if b.config().OllamaSpeechVoice != "" {
+			sb.WriteString(fmt.Sprintf("• *Speech:* `%s` (voice: `%s`)\n", b.config().OllamaModelSpeech, b.config().OllamaSpeechVoice))
+		} else {
+			sb.WriteString(fmt.Sprintf("• *Speech:* `%s`\n", b.config().OllamaModelSpeech))
+		}
 	}
 	sb.WriteString("\n")
 

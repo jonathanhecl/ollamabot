@@ -136,6 +136,7 @@ func TestSaveBasicLoadRoundTrip(t *testing.T) {
 		OllamaModelEmbed:              "roundtrip-embed",
 		OllamaModelImage:              "roundtrip-image",
 		OllamaModelSpeech:             "roundtrip-speech",
+		OllamaSpeechVoice:             "roundtrip-voice",
 		OllamaModelLearning:           "roundtrip-learning",
 		OllamaModelSubagent:           "roundtrip-subagent",
 		OllamaImageSteps:              7,

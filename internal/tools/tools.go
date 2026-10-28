@@ -60,6 +60,7 @@ type Registry struct {
 	searchCfg               SearchConfig
 	imageModel              string
 	speechModel             string
+	speechVoice             string
 	voiceSent               bool
 	voiceSentText           string
 	voiceSentTexts          []string

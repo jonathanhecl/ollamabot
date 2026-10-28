@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
@@ -240,5 +241,53 @@ func TestRunningByName(t *testing.T) {
 	}
 	if len(m) != 2 {
 		t.Errorf("runningByName returned map with size %d; want 2", len(m))
+	}
+}
+
+func TestModelViewVoices(t *testing.T) {
+	report := capabilities.ModelReport{
+		Name:   "phonon:40m-es",
+		Family: "phonon",
+		Voices: []string{"Zoey", "Easton", "Freya"},
+	}
+	view := modelView(report, nil, "phonon:40m-es", "live")
+	if len(view.Voices) != 3 || view.Voices[0] != "Zoey" {
+		t.Fatalf("view.Voices = %#v, want [Zoey Easton Freya]", view.Voices)
+	}
+}
+
+func TestHandleVoiceVoicesEmptyModel(t *testing.T) {
+	s := &Server{
+		cfgMgr: config.NewManager(config.Config{}),
+	}
+	req := httptest.NewRequest("GET", "/api/voice/voices", nil)
+	w := httptest.NewRecorder()
+	s.handleVoiceVoices(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	voices, ok := body["voices"].([]any)
+	if !ok || len(voices) != 0 {
+		t.Fatalf("expected empty voices list, got %v", body["voices"])
+	}
+}
+
+func TestHandleTestVoiceNoModel(t *testing.T) {
+	s := &Server{
+		cfgMgr: config.NewManager(config.Config{}),
+	}
+	req := httptest.NewRequest("POST", "/api/voice/test", strings.NewReader(`{}`))
+	w := httptest.NewRecorder()
+	s.handleTestVoice(w, req)
+
+	resp := w.Result()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
