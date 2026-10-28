@@ -13,6 +13,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -28,6 +29,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -43,6 +45,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -58,6 +61,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -73,6 +77,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -88,6 +93,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -103,6 +109,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -118,6 +125,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -133,6 +141,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -148,6 +157,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -163,6 +173,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -178,6 +189,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -193,6 +205,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -208,6 +221,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -223,6 +237,7 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",
@@ -238,6 +253,23 @@
         "tools": "comprobado"
       },
       "Reported": null,
+      "Voices": null,
+      "HasAudioEncoder": false,
+      "HasVisionEncoder": false,
+      "ModifiedAt": "",
+      "Size": 0
+    },
+    {
+      "Name": "default-model",
+      "Family": "",
+      "Parameters": "",
+      "Quantization": "",
+      "ContextLength": 0,
+      "Capabilities": {
+        "tools": "comprobado"
+      },
+      "Reported": null,
+      "Voices": null,
       "HasAudioEncoder": false,
       "HasVisionEncoder": false,
       "ModifiedAt": "",

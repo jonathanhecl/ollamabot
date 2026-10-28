@@ -592,3 +592,18 @@ Fixed Ollama status 400 error (`Cannot have 2 or more assistant messages at the 
 - `internal/ollama/client.go`: updated `SanitizeMessages` to merge consecutive assistant messages into a single message block and prune trailing blank assistant messages before sending payloads to `/api/chat`.
 - `internal/ollama/client_test.go`: added unit tests for `SanitizeMessages` testing consecutive assistant message merging and trailing empty message removal.
 - `internal/engine/voice_turn_test.go`: added `TestProcessTurnDeliversVoiceAttachmentAfterTool` validating that research followed by `send_voice` completes cleanly without extra empty round-trips.
+
+## 2026-10-27 — Native voice note player in Web UI for send_voice replies
+
+Replaced the technical collapsible tool block (`⚙️ send_voice`) in the web UI with a dedicated voice note card featuring an inline audio player and transcription:
+
+- `internal/web/server.go`: updated `webAttachmentHandler` to emit an `attachment_generated` SSE event over `/api/chat/stream` as soon as audio synthesis completes.
+- `internal/web/static/app.js`: handled `attachment_generated` event, added `renderVoiceStep` to render a styled voice bubble with audio player and transcription in place of the generic tool block, and filtered out duplicate attachment rendering when the voice step is already present.
+- `internal/web/static/styles.css`: added `.step-voice-bubble` styles with synthesizing wave animation, audio player layout, and clear transcription styling.
+
+## 2026-10-27 — Graceful audio recording browser support & toast errors
+
+Improved UX when voice/audio recording is not supported by the browser (e.g. non-secure HTTP contexts or missing MediaDevices):
+
+- `internal/web/static/styles.css`: added `.recording-btn.unsupported` and `[aria-disabled="true"]` styles with muted gray background, line border, not-allowed cursor, and lowered opacity to clearly signal unavailable state.
+- `internal/web/static/app.js`: added `isAudioRecordingSupported()` and `updateRecordSupport()` to dynamically detect secure context and MediaDevices support, graying out the button and attaching a descriptive tooltip. Replaced `addSystemMessage` chat bubble error spam with non-intrusive floating `showToast(..., "error")` notifications when recording cannot start.

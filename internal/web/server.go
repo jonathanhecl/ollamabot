@@ -886,7 +886,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		},
 		AttachmentFactory: func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler {
-			return &webAttachmentHandler{recorder: recorder}
+			return &webAttachmentHandler{
+				server:    s,
+				sessionID: input.SessionID,
+				w:         w,
+				flusher:   flusher,
+				recorder:  recorder,
+			}
 		},
 		OnSleepActivity: func() {
 			if sm != nil {
@@ -2842,14 +2848,36 @@ func (h *webImageProgressHandler) OnError(genID string, err error) {
 	}
 }
 
-// webAttachmentHandler bridges tool-generated attachments into the session recorder.
+// webAttachmentHandler bridges tool-generated attachments into the session recorder and SSE.
 type webAttachmentHandler struct {
-	recorder *sessions.Recorder
+	server    *Server
+	sessionID string
+	w         http.ResponseWriter
+	flusher   http.Flusher
+	recorder  *sessions.Recorder
 }
 
 func (h *webAttachmentHandler) OnAttachmentGenerated(sessionID string, ref string, mime string, path string, transcription string) {
 	if h.recorder != nil {
 		h.recorder.AddAttachmentRefWithTranscription(ref, mime, path, transcription)
+	}
+	if h.w != nil {
+		var apiURL string
+		if strings.TrimSpace(sessionID) != "" {
+			apiURL = fmt.Sprintf("/api/sessions/%s/generations/%s", sessionID, ref)
+		} else {
+			apiURL = fmt.Sprintf("/generations/%s", ref)
+		}
+		writeSSE(h.w, "attachment_generated", map[string]any{
+			"session_id":    sessionID,
+			"name":          ref,
+			"mime":          mime,
+			"url":           apiURL,
+			"transcription": transcription,
+		})
+		if h.flusher != nil {
+			h.flusher.Flush()
+		}
 	}
 }
 

@@ -561,6 +561,7 @@ els.imageInput.addEventListener("change", () => addFiles([...els.imageInput.file
 els.audioInput.addEventListener("change", () => addFiles([...els.audioInput.files], "audio"));
 els.fileInput.addEventListener("change", () => addFileAttachments([...els.fileInput.files]));
 els.recordControl.addEventListener("click", toggleRecording);
+updateRecordSupport();
 if (els.logoutBtn) {
   els.logoutBtn.addEventListener("click", () => {
     localStorage.removeItem("ollamabot.serverPassword");
@@ -2121,6 +2122,7 @@ function setCapabilityVisibility() {
   els.imageControl.hidden = !canImage;
   els.audioControl.hidden = !canAudio;
   els.recordControl.hidden = !canAudio;
+  updateRecordSupport();
   state.attachments = state.attachments.filter((attachment) => attachment.kind === "file" || capabilityFor(attachment.kind));
   renderAttachments();
 }
@@ -3392,6 +3394,28 @@ async function processNextQueueItem() {
         }
         renderMessages();
       },
+      attachment_generated: (value) => {
+        if (!value) return;
+        if (!assistant.attachments) assistant.attachments = [];
+        assistant.attachments.push({
+          name: value.name,
+          mime: value.mime,
+          kind: (value.mime && value.mime.startsWith("audio/")) ? "audio" : ((value.mime && value.mime.startsWith("image/")) ? "image" : "file"),
+          url: value.url,
+          transcription: value.transcription || "",
+        });
+        for (let i = assistant.steps.length - 1; i >= 0; i--) {
+          const step = assistant.steps[i];
+          if ((step.type === "tool_exec" || step.type === "tool_call") && step.name === "send_voice") {
+            step.audioURL = value.url;
+            step.audioName = value.name;
+            if (value.transcription) step.transcription = value.transcription;
+            step.status = "done";
+            break;
+          }
+        }
+        renderMessages();
+      },
       tool_result: (value) => {
         assistant.waiting = true; // Keep loading spinner active until next round chunks arrive
         for (let i = assistant.steps.length - 1; i >= 0; i--) {
@@ -3400,6 +3424,12 @@ async function processNextQueueItem() {
             step.result = value.result;
             if (value.source) step.source = value.source;
             step.status = "done";
+            if (step.name === "send_voice" && !step.audioURL && state.activeSessionId) {
+              const m = String(value.result).match(/(voice_[a-zA-Z0-9_\.]+\.wav)/);
+              if (m) {
+                step.audioURL = generatedImageURL(state.activeSessionId, m[1]);
+              }
+            }
             break;
           }
         }
@@ -4056,6 +4086,80 @@ function getToolDisplayName(name, parsedArgs) {
   return name || "unknown";
 }
 
+function renderVoiceStep(step, parsedArgs, isLive) {
+  const showRunning = isLive && step.status === "running";
+  const isError = step.status === "error";
+  const transcription = parsedArgs?.text || step.transcription || "";
+  let audioURL = step.audioURL || "";
+
+  if (!audioURL && step.result && state.activeSessionId) {
+    const m = String(step.result).match(/(voice_[a-zA-Z0-9_\.]+\.wav)/);
+    if (m) {
+      audioURL = generatedImageURL(state.activeSessionId, m[1]);
+    }
+  }
+
+  // Fallback: check session messages attachments for matching voice file
+  if (!audioURL && state.activeSessionId) {
+    for (const m of (state.messages || [])) {
+      for (const att of (m.attachments || [])) {
+        if (att.kind === "audio" && att.name?.startsWith("voice_") && att.url) {
+          audioURL = att.url;
+          break;
+        }
+      }
+      if (audioURL) break;
+    }
+  }
+
+  const durBadge = step.duration_ms ? `<span class="step-tool-status">${formatDurationMs(step.duration_ms)}</span>` : "";
+
+  if (showRunning && !audioURL) {
+    return `
+      <div class="step-voice-bubble running">
+        <div class="voice-bubble-header">
+          <div class="voice-bubble-title">
+            <span class="voice-icon">🎙️</span>
+            <span>Synthesizing voice note...</span>
+          </div>
+          <div class="voice-wave-anim"><span></span><span></span><span></span><span></span></div>
+        </div>
+        ${transcription ? `<div class="voice-bubble-transcription preview">${escapeHtml(transcription)}</div>` : ""}
+      </div>
+    `;
+  }
+
+  if (isError) {
+    return `
+      <div class="step-voice-bubble error">
+        <div class="voice-bubble-header">
+          <div class="voice-bubble-title" style="color: #ff6e6e;">
+            <span class="voice-icon">⚠️</span>
+            <span>Voice synthesis failed</span>
+          </div>
+          ${durBadge}
+        </div>
+        <div class="voice-bubble-transcription preview">${escapeHtml(String(step.result || "Speech synthesis failed"))}</div>
+      </div>
+    `;
+  }
+
+  const stopAll = `onclick="event.stopPropagation()" onkeydown="event.stopPropagation()"`;
+  return `
+    <div class="step-voice-bubble done" ${stopAll}>
+      <div class="voice-bubble-header">
+        <div class="voice-bubble-title">
+          <span class="voice-icon">🎙️</span>
+          <span>Voice Note</span>
+        </div>
+        ${durBadge}
+      </div>
+      ${audioURL ? `<div class="voice-bubble-audio"><audio controls preload="metadata" src="${escapeAttr(audioURL)}" ${stopAll}></audio></div>` : ""}
+      ${transcription ? `<div class="voice-bubble-transcription">${escapeHtml(transcription)}</div>` : ""}
+    </div>
+  `;
+}
+
 function renderStep(step, isLive = false, isLastStep = false) {
   switch (step.type) {
     case "thinking": {
@@ -4076,6 +4180,9 @@ function renderStep(step, isLive = false, isLastStep = false) {
         argsText = JSON.stringify(parsedArgs, null, 2);
       } catch {
         argsText = String(fn.arguments || "{}");
+      }
+      if (name === "send_voice") {
+        return renderVoiceStep({ type: "tool_exec", name: "send_voice", status: "running" }, parsedArgs, isLive);
       }
       const displayName = getToolDisplayName(name, parsedArgs);
       return `<div class="step step-tool-call"><span class="step-tool-icon">🔧</span> <strong>${escapeHtml(displayName)}</strong><pre>${escapeHtml(argsText)}</pre></div>`;
@@ -4102,6 +4209,9 @@ function renderStep(step, isLive = false, isLastStep = false) {
           completed: 0,
           status: "active",
         }, "inline");
+      }
+      if (step.name === "send_voice") {
+        return renderVoiceStep(step, parsedArgs, isLive);
       }
       const displayName = getToolDisplayName(step.name, parsedArgs);
       const sourceLabel = step.source && step.source !== "internal" ? ` <span class="step-tool-source">(${escapeHtml(step.source)})</span>` : "";
@@ -4535,7 +4645,33 @@ async function populateMicrophones() {
   }
 }
 
+function isAudioRecordingSupported() {
+  return !!(
+    window.isSecureContext !== false &&
+    navigator.mediaDevices &&
+    typeof navigator.mediaDevices.getUserMedia === "function" &&
+    (typeof AudioContext !== "undefined" || typeof webkitAudioContext !== "undefined")
+  );
+}
+
+function updateRecordSupport() {
+  if (!els.recordControl) return;
+  const supported = isAudioRecordingSupported();
+  els.recordControl.classList.toggle("unsupported", !supported);
+  if (!supported) {
+    els.recordControl.setAttribute("aria-disabled", "true");
+    els.recordControl.title = "Audio recording is not supported on this browser (requires HTTPS or localhost)";
+  } else {
+    els.recordControl.removeAttribute("aria-disabled");
+    els.recordControl.removeAttribute("title");
+  }
+}
+
 async function toggleRecording() {
+  if (!isAudioRecordingSupported()) {
+    showToast("Audio recording is not supported on this browser (requires HTTPS or localhost).", "error", 4000);
+    return;
+  }
   if (state.isRecording) {
     stopRecording();
   } else {
@@ -4544,9 +4680,8 @@ async function toggleRecording() {
 }
 
 async function startRecording() {
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    addSystemMessage("Audio recording is not supported on this browser.");
-    renderMessages();
+  if (!isAudioRecordingSupported()) {
+    showToast("Audio recording is not supported on this browser (requires HTTPS or localhost).", "error", 4000);
     return;
   }
   const constraints = {
@@ -4554,7 +4689,8 @@ async function startRecording() {
   };
   try {
     state.audioStream = await navigator.mediaDevices.getUserMedia(constraints);
-    state.audioContext = new AudioContext();
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    state.audioContext = new AudioCtx();
     if (state.audioContext.state === "suspended") {
       await state.audioContext.resume();
     }
@@ -4570,8 +4706,7 @@ async function startRecording() {
     state.isRecording = true;
     updateRecordUI();
   } catch (err) {
-    addSystemMessage(`Could not start voice recording: ${err.message}`);
-    renderMessages();
+    showToast(`Could not start voice recording: ${err.message}`, "error", 4000);
   }
 }
 
@@ -4606,6 +4741,7 @@ async function stopRecording() {
 }
 
 function updateRecordUI() {
+  updateRecordSupport();
   if (state.isRecording) {
     els.recordControl.classList.add("active");
     els.recordControl.querySelector(".record-label").textContent = "Recording...";
@@ -5193,11 +5329,17 @@ function getVisibleMessageAttachments(message) {
       })
       .filter(Boolean)
   );
+  const hasVoiceStep = (message.steps || []).some(
+    (step) => (step.type === "tool_exec" || step.type === "tool_call") && (step.name === "send_voice" || step.call?.function?.name === "send_voice")
+  );
   return attachments.filter((att) => {
-    if (att.kind !== "image" || !att.name?.startsWith("generated_")) {
-      return true;
+    if (att.kind === "image" && att.name?.startsWith("generated_")) {
+      return !stepImageNames.has(att.name);
     }
-    return !stepImageNames.has(att.name);
+    if (att.kind === "audio" && att.name?.startsWith("voice_") && hasVoiceStep) {
+      return false;
+    }
+    return true;
   });
 }
 
