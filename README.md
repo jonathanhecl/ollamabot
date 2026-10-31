@@ -63,13 +63,15 @@ In a single Telegram chat session, you can orchestrate multiple local models for
 | **Config** | `internal/config` | `.env` is the runtime source of truth; `ResolveModel(role)` picks models |
 | **Web channel** | `internal/web` | Local UI, settings editor, session browser, SSE streaming |
 | **Telegram channel** | `internal/telegram` | Bot API, media download, inline approvals, chunked replies |
+| **Device channel** | `internal/device` | Audio device API (ESP32-class): token auth, async turns, spoken replies |
 
 **Web vs Telegram:** same `engine.ProcessTurn` pipeline. The web UI adds configuration panels,
 memory explorer, project dashboard, and richer step/metrics display. Telegram keeps channel-specific
 policies (session expiry, relationship checks, ffmpeg for voice). Neither channel chooses the main
 model at request time—that comes from `OLLAMA_DEFAULT_MODEL` in `.env`.
 
-See [`docs/media-routing.md`](docs/media-routing.md) for the full multimodal routing flow.
+See [`docs/media-routing.md`](docs/media-routing.md) for the full multimodal routing flow and
+[`docs/device-api.md`](docs/device-api.md) for the audio device channel.
 
 ## Channels (pick at least one)
 
@@ -80,6 +82,7 @@ The agent service needs **at least one channel** to run. You can use web, Telegr
 | Web only | `SERVER_ENABLED=true`, no `TELEGRAM_BOT_TOKEN` | Local UI on `SERVER_PORT` |
 | Telegram only | `SERVER_ENABLED=false`, `TELEGRAM_BOT_TOKEN=...` | Bot in foreground |
 | Both | `SERVER_ENABLED=true` + `TELEGRAM_BOT_TOKEN=...` | Web server + Telegram in background |
+| Web + device | `SERVER_ENABLED=true`, `DEVICE_ENABLED=true`, `DEVICE_TOKEN=...` | Web server plus `/api/device/` for audio devices; needs `OLLAMA_MODEL_AUDIO` and `OLLAMA_MODEL_SPEECH` |
 
 If both are disabled, default startup fails with an error asking you to enable one.
 

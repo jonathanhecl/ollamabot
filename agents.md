@@ -17,9 +17,10 @@ exception (Ollama checks without starting web or Telegram).
 Channels (transport only)
   web/server.go     → HTTP, SSE, REST, static UI
   telegram/bot.go   → polling, keyboards, media download, delivery
+  device/device.go  → device token auth, audio upload, turn polling (mounted by web)
         │
         ▼
-  engine.ProcessTurn   ← single entry for every chat turn (web + telegram)
+  engine.ProcessTurn   ← single entry for every chat turn (web + telegram + device)
         │
         ├── config.ResolveModel (from .env, not from client)
         ├── router.ResolveMessages (vision/audio)
@@ -119,6 +120,18 @@ behavior only at the edges (auth, SSE, keyboards, expiry checks, ffmpeg).
 - Inline keyboards for tool approval/clarification/plan
 - Must call `engine.ProcessTurn` after building `router.MediaMessage` list
 
+### Device (`internal/device`)
+
+- HTTP transport mounted by `internal/web` at `/api/device/`, with its own
+  `DEVICE_TOKEN` auth (exempt from the web password)
+- Audio in / audio out: raw uploads, async turns polled by the client, spoken
+  reply synthesized from the final answer through the `OnFinalReply` hook
+- No interactive tools: `ask_clarification`, `present_plan` and `send_voice` are
+  hidden and rejected; risky tools are denied instead of waiting for approval
+- Device → session mapping lives in `sessions/devices.json`; the sessions are
+  normal sessions and appear in the web UI
+- Must call `engine.ProcessTurn`; must not synthesize chat replies itself
+
 ## Implementation rules
 
 - New domain logic → prefer `internal/engine` or existing shared packages, not channel packages.
@@ -138,4 +151,5 @@ behavior only at the edges (auth, SSE, keyboards, expiry checks, ffmpeg).
 | `internal/agent/loop.go` | Agent streaming and tool iteration |
 | `internal/web/server.go` | Web API; thin wrapper around engine |
 | `internal/telegram/bot.go` | Telegram bot; thin wrapper around engine |
+| `internal/device/` | Device HTTP channel (audio in/out, turn polling, session links) |
 | `.env` / `.env.example` | Runtime configuration |

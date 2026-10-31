@@ -607,3 +607,14 @@ Improved UX when voice/audio recording is not supported by the browser (e.g. non
 
 - `internal/web/static/styles.css`: added `.recording-btn.unsupported` and `[aria-disabled="true"]` styles with muted gray background, line border, not-allowed cursor, and lowered opacity to clearly signal unavailable state.
 - `internal/web/static/app.js`: added `isAudioRecordingSupported()` and `updateRecordSupport()` to dynamically detect secure context and MediaDevices support, graying out the button and attaching a descriptive tooltip. Replaced `addSystemMessage` chat bubble error spam with non-intrusive floating `showToast(..., "error")` notifications when recording cannot start.
+
+## 2026-10-31 — Audio device channel for ESP32-class clients
+
+Added an audio-to-audio channel for small devices with a microphone, speaker and screen. A device uploads a clip, polls an asynchronous turn and downloads a spoken reply; the conversation is a normal session visible in the web UI.
+
+- `internal/device`: new channel package with `DEVICE_TOKEN` auth (constant-time, exempt from the web password), `POST /api/device/messages`, `GET /api/device/turns/{id}`, `GET /api/device/turns/{id}/audio` (Range and `?format=pcm`), cancel, new-session relinking, `/api/device/health`, and `sessions/devices.json` for the device → session map.
+- `internal/engine`: added the `OnFinalReply` hook so a channel can render the final answer before the turn is persisted; the device channel uses it to synthesize the spoken reply and attach it to the assistant message.
+- `internal/tools`: `PrepareVoiceText` exported for channels that speak every reply; `ask_clarification`, `present_plan` and `send_voice` are hidden and rejected on the `device` channel; the registry keeps the risk gate active with a deny-all approval handler so risky tools fail instead of waiting for a button nobody can press.
+- `internal/web`: mounts the device routes before the password middleware and validates the device configuration at startup.
+- `internal/config` / `.env.example`: `DEVICE_ENABLED`, `DEVICE_TOKEN`, `DEVICE_MAX_AUDIO_MB`, `DEVICE_TURN_TIMEOUT_MINUTES`, `DEVICE_REPLY_MAX_CHARS`, persisted by `SaveBasic`.
+- `docs/device-api.md`: full HTTP contract, requirements, ESP32 notes and firmware flow.
