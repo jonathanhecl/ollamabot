@@ -15,6 +15,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/config"
@@ -45,18 +47,29 @@ type Deps struct {
 
 // Channel serves the device API. Mount it under /api/device/ on the web mux.
 type Channel struct {
-	deps func() Deps
+	deps  func() Deps
+	turns *turnStore
+
+	linksMu      sync.Mutex
+	sessionLinks map[string]*sessionLinks
 }
 
 // NewChannel builds a device channel over a live dependency provider.
 func NewChannel(deps func() Deps) *Channel {
-	return &Channel{deps: deps}
+	return &Channel{
+		deps:  deps,
+		turns: newTurnStore(2 * time.Hour),
+	}
 }
 
 // Mount registers every device route. The device channel authenticates with its
 // own token, so the web password middleware must skip /api/device/.
 func (c *Channel) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/device/health", c.authenticated(c.handleHealth))
+	mux.HandleFunc("POST /api/device/messages", c.authenticated(c.handleCreateTurn))
+	mux.HandleFunc("GET /api/device/turns/{id}", c.authenticated(c.handleGetTurn))
+	mux.HandleFunc("POST /api/device/turns/{id}/cancel", c.authenticated(c.handleCancelTurn))
+	mux.HandleFunc("POST /api/device/sessions", c.authenticated(c.handleNewSession))
 }
 
 // Validate reports the configuration required to serve device turns. It runs at
@@ -111,6 +124,12 @@ func (c *Channel) handleHealth(w http.ResponseWriter, r *http.Request) {
 	resp.OK = resp.CanTranscribe && resp.CanSpeak
 	if !resp.OK {
 		resp.Error = "device channel is not ready: audio input and speech output are both required"
+	}
+	if id, err := deviceID(r); err == nil {
+		resp.DeviceID = id
+		if deps.SessionStore != nil {
+			resp.SessionID = c.links(deps).Get(id)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

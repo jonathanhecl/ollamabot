@@ -1321,16 +1321,28 @@ func toInt(v any) int {
 func (r *Registry) Definitions() []ollama.Tool {
 	// "auto" and "never" both disable plan confirmation: present_plan is removed
 	// so the model cannot trigger a plan approval flow at all.
-	if r.planConfirmMode == "auto" || r.planConfirmMode == "never" {
-		var filtered []ollama.Tool
-		for _, d := range r.defs {
-			if d.Function.Name != "present_plan" {
-				filtered = append(filtered, d)
+	dropPlan := r.planConfirmMode == "auto" || r.planConfirmMode == "never"
+	// The device channel has no UI and no mid-turn user input: questions,
+	// plans and voice notes must never reach the model as tools there.
+	dropDeviceTools := r.channel == "device"
+	if !dropPlan && !dropDeviceTools {
+		return r.defs
+	}
+	filtered := make([]ollama.Tool, 0, len(r.defs))
+	for _, def := range r.defs {
+		name := def.Function.Name
+		if dropPlan && name == "present_plan" {
+			continue
+		}
+		if dropDeviceTools {
+			switch name {
+			case "ask_clarification", "present_plan", "send_voice":
+				continue
 			}
 		}
-		return filtered
+		filtered = append(filtered, def)
 	}
-	return r.defs
+	return filtered
 }
 
 // TodoStore returns the checklist store instance.
@@ -1373,6 +1385,14 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	name := call.Function.Name
 	if !r.enabled[name] {
 		return "", fmt.Errorf("tool %q is not enabled", name)
+	}
+	if r.channel == "device" {
+		// The device cannot show options, approve plans or play a second audio
+		// file. Guard here too so a stale tool definition cannot block a turn.
+		switch name {
+		case "ask_clarification", "present_plan", "send_voice":
+			return "", fmt.Errorf("tool %q is not available on the device channel: put questions in the spoken reply and let the user answer by voice", name)
+		}
 	}
 
 	args, parseErr := ParseJSONArgs(call.Function.Arguments)

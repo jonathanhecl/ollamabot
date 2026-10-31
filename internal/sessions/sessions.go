@@ -333,6 +333,12 @@ func NewStore(sessionsPath string) *Store {
 	return s
 }
 
+// Dir returns the directory that holds every session, used by channels that
+// persist their own small state next to the conversations.
+func (s *Store) Dir() string {
+	return s.dir
+}
+
 func (s *Store) sessionDir(id string) string {
 	return filepath.Join(s.dir, id)
 }
