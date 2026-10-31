@@ -178,6 +178,9 @@ func run(args []string) error {
 				"  1. Enable the web server by setting: SERVER_ENABLED=true\n"+
 				"  2. Enable the Telegram bot by setting: TELEGRAM_BOT_TOKEN=your_bot_token_here\n", *envPath)
 		}
+		if cfgMgr.Get().DeviceEnabled && !hasServer {
+			return fmt.Errorf("DEVICE_ENABLED=true requires the web server: set SERVER_ENABLED=true")
+		}
 
 		if hasTelegram {
 			if hasServer {

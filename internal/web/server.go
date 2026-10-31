@@ -21,6 +21,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/capabilities"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/device"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/learning"
 	"github.com/jonathanhecl/ollamabot/internal/mcp"
@@ -48,6 +49,7 @@ type Server struct {
 	sessionStore        *sessions.Store
 	memoryStore         *memory.Store
 	approvalService     *sessions.ApprovalService
+	device              *device.Channel
 	autoMgr             *agent.AutonomousManager
 	goalMgr             *agent.GoalManager
 	planMonitor         *agent.PlanMonitor
@@ -158,7 +160,7 @@ func NewServerWithEnv(cfg *config.Manager, client *ollama.Client, runner *probe.
 	mr := router.New(client, routerConfig(cfg.Get()))
 	ss := sessions.NewStore(cfg.Get().SessionsPath)
 	ms := memory.NewStore(cfg.Get().MemoryPath)
-	return &Server{
+	s := &Server{
 		cfgMgr:            cfg,
 		envPath:           envPath,
 		client:            client,
@@ -172,6 +174,23 @@ func NewServerWithEnv(cfg *config.Manager, client *ollama.Client, runner *probe.
 		clarifications:    make(map[string]chan string),
 		planConfirmations: make(map[string]pendingWebPlanConfirmation),
 		activeSessions:    make(map[string]context.CancelFunc),
+	}
+	s.device = device.NewChannel(func() device.Deps { return s.deviceDeps() })
+	return s
+}
+
+// deviceDeps exposes the live server dependencies to the device channel.
+func (s *Server) deviceDeps() device.Deps {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return device.Deps{
+		ConfigMgr:        s.cfgMgr,
+		Client:           s.client,
+		SessionStore:     s.sessionStore,
+		MemoryStore:      s.memoryStore,
+		CachePath:        s.cachePath,
+		MCPManager:       s.mcpManager,
+		SchedulerManager: s.schedulerMgr,
 	}
 }
 
@@ -238,7 +257,17 @@ func (s *Server) SetSchedulerManager(sm *scheduler.Manager) {
 }
 
 func (s *Server) ListenAndServe() error {
+	if err := s.device.Validate(); err != nil {
+		return fmt.Errorf("device channel: %w", err)
+	}
+	cfg := s.config()
+	if cfg.DeviceEnabled && !cfg.ServerExposeNetwork {
+		log.Println("[device] Warning: SERVER_EXPOSE_NETWORK=false binds the web server to 127.0.0.1; a physical device will not reach it")
+	}
 	mux := http.NewServeMux()
+	if s.device != nil {
+		s.device.Mount(mux)
+	}
 	mux.HandleFunc("GET /api/models", s.handleModels)
 	mux.HandleFunc("POST /api/models/reload", s.handleReloadModels)
 	mux.HandleFunc("GET /api/voice/voices", s.handleVoiceVoices)
@@ -299,7 +328,7 @@ func (s *Server) ListenAndServe() error {
 	}
 	mux.Handle("/", http.FileServer(http.FS(static)))
 
-	cfg := s.config()
+	cfg = s.config()
 	port := strings.TrimPrefix(strings.TrimSpace(cfg.ServerPort), ":")
 	if port == "" {
 		port = "8080"
@@ -331,6 +360,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 
 		// Allow unauthenticated access to generated images so <img> tags work
 		if strings.HasPrefix(r.URL.Path, "/api/sessions/") && strings.Contains(r.URL.Path, "/generations/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Device clients authenticate with their own token; the web password
+		// must not block them, and the device handler rejects them when the
+		// channel is disabled.
+		if strings.HasPrefix(r.URL.Path, "/api/device/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -848,13 +885,13 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	var turnRecorder *sessions.Recorder
 	result, err := engine.ProcessTurn(agentCtx, engine.Deps{
-		ConfigMgr:       s.cfgMgr,
-		Client:          client,
-		SessionStore:    s.sessionStore,
-		MemoryStore:     s.memoryStore,
-		CachePath:       s.cachePath,
-		ApprovalService: s.approvalService,
-		MCPManager:      mcpMgr,
+		ConfigMgr:        s.cfgMgr,
+		Client:           client,
+		SessionStore:     s.sessionStore,
+		MemoryStore:      s.memoryStore,
+		CachePath:        s.cachePath,
+		ApprovalService:  s.approvalService,
+		MCPManager:       mcpMgr,
 		SchedulerManager: s.schedulerMgr,
 		ApprovalHandler: &webApprovalHandler{
 			server:  s,
@@ -3044,4 +3081,3 @@ func (s *Server) handleCancelSchedulerTask(w http.ResponseWriter, r *http.Reques
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
 }
-
