@@ -27,14 +27,28 @@ type ImageProgressHandlerFactory func(recorder *sessions.Recorder) tools.ImagePr
 type AttachmentHandlerFactory func(recorder *sessions.Recorder) tools.AttachmentGeneratedHandler
 type PlanProgressHandler func(sessionID string, plan sessions.SessionPlan)
 
+// FinalReplyContext describes the assistant answer of a finished turn, before
+// it is persisted. Channels that render the reply in a specific medium (for
+// example, speech for a device) use it to produce the artifact and register it
+// on the assistant message through Recorder.
+type FinalReplyContext struct {
+	SessionID string
+	Channel   string
+	Text      string
+	Recorder  *sessions.Recorder
+}
+
+// FinalReplyHandler runs after the agent finishes and before the turn is saved.
+type FinalReplyHandler func(ctx context.Context, reply FinalReplyContext)
+
 type Deps struct {
-	ConfigMgr    *config.Manager
-	Client       *ollama.Client
-	Runner       *probe.Runner
-	SessionStore *sessions.Store
-	MemoryStore  *memory.Store
-	CachePath    string
-	MCPManager   *mcp.Manager
+	ConfigMgr        *config.Manager
+	Client           *ollama.Client
+	Runner           *probe.Runner
+	SessionStore     *sessions.Store
+	MemoryStore      *memory.Store
+	CachePath        string
+	MCPManager       *mcp.Manager
 	SchedulerManager tools.SchedulerService
 
 	ApprovalHandler         tools.ApprovalHandler
@@ -48,6 +62,7 @@ type Deps struct {
 	OnSleepActivity  func()
 	OnMediaResolved  func(router.ResolveResult)
 	OnPlanProgress   func(sessionID string, plan sessions.SessionPlan)
+	OnFinalReply     FinalReplyHandler
 	OnRecoveryStatus func(string)
 	OOMRetryDelay    time.Duration
 }
@@ -218,6 +233,16 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		return result, runErr
 	}
 
+	result.FinalAnswer = agent.CleanThinkingTokens(LastAssistantContent(finalHistory))
+	if deps.OnFinalReply != nil && strings.TrimSpace(result.FinalAnswer) != "" {
+		deps.OnFinalReply(ctx, FinalReplyContext{
+			SessionID: req.SessionID,
+			Channel:   req.Channel,
+			Text:      result.FinalAnswer,
+			Recorder:  recorder,
+		})
+	}
+
 	savedMessages, saveErr := recorder.FinalizeAndSave(finalHistory)
 	if saveErr != nil {
 		log.Printf("[Engine] Failed to persist final session snapshot: %v", saveErr)
@@ -228,7 +253,6 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	turnDurationMs := time.Since(turnStart).Milliseconds()
 	telemetry.Global.RecordTurn(model, req.Channel, recorder.Metrics(), turnDurationMs)
 
-	result.FinalAnswer = agent.CleanThinkingTokens(LastAssistantContent(finalHistory))
 	if strings.TrimSpace(req.SessionID) != "" && cfg.SessionAutoName && result.FinalAnswer != "" {
 		if err := AutoNameSession(ctx, cfg, deps.Client, deps.SessionStore, req.SessionID, result.FinalAnswer); err != nil {
 			log.Printf("[Engine] Auto-name failed for session %s: %v", req.SessionID, err)

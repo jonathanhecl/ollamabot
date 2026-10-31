@@ -2,12 +2,17 @@ package device
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
@@ -23,9 +28,34 @@ const (
 // fakeOllama answers the two calls a device turn makes: the structured audio
 // transcription and the streaming agent reply. A non-nil gate holds the
 // streaming reply until the test releases it.
-func fakeOllama(t *testing.T, answer string, gate <-chan struct{}) *httptest.Server {
+type fakeOllama struct {
+	*httptest.Server
+	mu          sync.Mutex
+	speechInput string
+	speechModel string
+}
+
+func (f *fakeOllama) lastSpeech() (input, model string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.speechInput, f.speechModel
+}
+
+func fakeOllamaServer(t *testing.T, answer string, gate <-chan struct{}) *fakeOllama {
 	t.Helper()
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fake := &fakeOllama{}
+	fake.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/audio/speech" {
+			var speech ollama.SpeechRequest
+			_ = json.NewDecoder(r.Body).Decode(&speech)
+			fake.mu.Lock()
+			fake.speechInput = speech.Input
+			fake.speechModel = speech.Model
+			fake.mu.Unlock()
+			w.Header().Set("Content-Type", "audio/wav")
+			_, _ = w.Write(testWAV())
+			return
+		}
 		var req ollama.ChatRequest
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if req.Stream == nil || !*req.Stream {
@@ -49,11 +79,17 @@ func fakeOllama(t *testing.T, answer string, gate <-chan struct{}) *httptest.Ser
 		})
 		_ = json.NewEncoder(w).Encode(ollama.ChatResponse{Done: true})
 	}))
+	return fake
 }
 
-func newDeviceHarness(t *testing.T, gate <-chan struct{}) (*http.ServeMux, *sessions.Store, config.Config) {
+func newDeviceHarness(t *testing.T, gate <-chan struct{}) (*http.ServeMux, *sessions.Store, config.Config, *fakeOllama) {
 	t.Helper()
-	server := fakeOllama(t, "The kitchen light is on.", gate)
+	return newDeviceHarnessAnswer(t, "The kitchen light is on.", gate)
+}
+
+func newDeviceHarnessAnswer(t *testing.T, answer string, gate <-chan struct{}) (*http.ServeMux, *sessions.Store, config.Config, *fakeOllama) {
+	t.Helper()
+	server := fakeOllamaServer(t, answer, gate)
 	t.Cleanup(server.Close)
 	cfg := config.Config{
 		OllamaBaseURL:        server.URL,
@@ -83,7 +119,7 @@ func newDeviceHarness(t *testing.T, gate <-chan struct{}) (*http.ServeMux, *sess
 		}
 	})
 	t.Cleanup(func() { channel.turns.cancelAll(2 * time.Second) })
-	return deviceMux(channel), store, cfg
+	return deviceMux(channel), store, cfg, server
 }
 
 func postAudio(t *testing.T, mux *http.ServeMux, deviceID, contentType string, interrupt bool) *httptest.ResponseRecorder {
@@ -137,7 +173,7 @@ func waitForTurnStatus(t *testing.T, mux *http.ServeMux, deviceID, turnID string
 }
 
 func TestTurnCompletesAndStoresSession(t *testing.T) {
-	mux, store, _ := newDeviceHarness(t, nil)
+	mux, store, _, _ := newDeviceHarness(t, nil)
 	rec := postAudio(t, mux, testDeviceID, "audio/wav", false)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, body %s", rec.Code, rec.Body.String())
@@ -184,7 +220,7 @@ func TestTurnCompletesAndStoresSession(t *testing.T) {
 
 func TestBusyDeviceGetsConflictUntilCancel(t *testing.T) {
 	gate := make(chan struct{})
-	mux, _, _ := newDeviceHarness(t, gate)
+	mux, _, _, _ := newDeviceHarness(t, gate)
 	first := postAudio(t, mux, testDeviceID, "audio/wav", false)
 	if first.Code != http.StatusAccepted {
 		t.Fatalf("first status = %d, body %s", first.Code, first.Body.String())
@@ -222,7 +258,7 @@ func TestBusyDeviceGetsConflictUntilCancel(t *testing.T) {
 }
 
 func TestTurnIsScopedToItsDevice(t *testing.T) {
-	mux, _, _ := newDeviceHarness(t, nil)
+	mux, _, _, _ := newDeviceHarness(t, nil)
 	rec := postAudio(t, mux, testDeviceID, "audio/wav", false)
 	var created createTurnResponse
 	_ = json.Unmarshal(rec.Body.Bytes(), &created)
@@ -237,7 +273,7 @@ func TestTurnIsScopedToItsDevice(t *testing.T) {
 }
 
 func TestNewSessionRelinksDevice(t *testing.T) {
-	mux, _, cfg := newDeviceHarness(t, nil)
+	mux, _, cfg, _ := newDeviceHarness(t, nil)
 	first := postAudio(t, mux, testDeviceID, "audio/wav", false)
 	var created createTurnResponse
 	_ = json.Unmarshal(first.Body.Bytes(), &created)
@@ -265,7 +301,7 @@ func TestNewSessionRelinksDevice(t *testing.T) {
 }
 
 func TestRejectsUnsupportedContentType(t *testing.T) {
-	mux, _, _ := newDeviceHarness(t, nil)
+	mux, _, _, _ := newDeviceHarness(t, nil)
 	rec := postAudio(t, mux, testDeviceID, "text/plain", false)
 	if rec.Code != http.StatusUnsupportedMediaType {
 		t.Fatalf("status = %d, want 415", rec.Code)
@@ -293,5 +329,153 @@ func TestScreenTextStripsMarkdown(t *testing.T) {
 				t.Fatalf("screenText = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func testPCM() []byte {
+	pcm := make([]byte, 64)
+	for i := range pcm {
+		pcm[i] = byte(i % 8)
+	}
+	return pcm
+}
+
+func testWAV() []byte {
+	pcm := testPCM()
+	header := make([]byte, 44)
+	copy(header[0:4], "RIFF")
+	binary.LittleEndian.PutUint32(header[4:8], uint32(36+len(pcm)))
+	copy(header[8:12], "WAVE")
+	copy(header[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(header[16:20], 16)
+	binary.LittleEndian.PutUint16(header[20:22], 1)
+	binary.LittleEndian.PutUint16(header[22:24], 1)
+	binary.LittleEndian.PutUint32(header[24:28], 16000)
+	binary.LittleEndian.PutUint32(header[28:32], 32000)
+	binary.LittleEndian.PutUint16(header[32:34], 2)
+	binary.LittleEndian.PutUint16(header[34:36], 16)
+	copy(header[36:40], "data")
+	binary.LittleEndian.PutUint32(header[40:44], uint32(len(pcm)))
+	return append(header, pcm...)
+}
+
+func getTurnAudio(t *testing.T, mux *http.ServeMux, deviceID, turnID, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/device/turns/"+turnID+"/audio"+query, nil)
+	req.Header.Set("X-Device-Token", testDeviceToken)
+	req.Header.Set("X-Device-Id", deviceID)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestTurnSpeaksReply(t *testing.T) {
+	mux, store, _, fake := newDeviceHarness(t, nil)
+	rec := postAudio(t, mux, testDeviceID, "audio/wav", false)
+	var created createTurnResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &created)
+
+	view := waitForTurnStatus(t, mux, testDeviceID, created.TurnID, StatusReady, StatusFailed)
+	if view.Status != StatusReady {
+		t.Fatalf("turn failed: %s", view.Error)
+	}
+	if !view.AudioReady {
+		t.Fatal("reply audio was not synthesized")
+	}
+	if view.AudioFormat != "wav" || view.AudioMIME != "audio/wav" {
+		t.Fatalf("audio metadata = %q/%q", view.AudioFormat, view.AudioMIME)
+	}
+	if view.AudioRate != 16000 || view.AudioChannels != 1 || view.AudioBits != 16 {
+		t.Fatalf("wav format = %dHz %dch %dbit", view.AudioRate, view.AudioChannels, view.AudioBits)
+	}
+	if view.AudioURL != "/api/device/turns/"+created.TurnID+"/audio" {
+		t.Fatalf("audio_url = %q", view.AudioURL)
+	}
+
+	input, model := fake.lastSpeech()
+	if model != "speech-model" {
+		t.Fatalf("speech model = %q", model)
+	}
+	if input != "The kitchen light is on." {
+		t.Fatalf("spoken text = %q", input)
+	}
+
+	wav := getTurnAudio(t, mux, testDeviceID, created.TurnID, "")
+	if wav.Code != http.StatusOK {
+		t.Fatalf("audio status = %d, body %s", wav.Code, wav.Body.String())
+	}
+	if wav.Header().Get("Content-Type") != "audio/wav" {
+		t.Fatalf("audio content type = %q", wav.Header().Get("Content-Type"))
+	}
+	if wav.Header().Get("X-Audio-Rate") != "16000" {
+		t.Fatalf("X-Audio-Rate = %q", wav.Header().Get("X-Audio-Rate"))
+	}
+	if !bytes.HasPrefix(wav.Body.Bytes(), []byte("RIFF")) {
+		t.Fatal("audio body is not a WAV file")
+	}
+
+	sess, err := store.Get(created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := false
+	for _, msg := range sess.Messages {
+		if strings.Contains(string(msg), "device_reply_") {
+			attached = true
+		}
+	}
+	if !attached {
+		t.Fatalf("spoken reply was not attached to the session: %s", sess.Messages)
+	}
+
+	pcm := getTurnAudio(t, mux, testDeviceID, created.TurnID, "?format=pcm")
+	if pcm.Code != http.StatusOK {
+		t.Fatalf("pcm status = %d, body %s", pcm.Code, pcm.Body.String())
+	}
+	if pcm.Header().Get("Content-Type") != "audio/pcm" {
+		t.Fatalf("pcm content type = %q", pcm.Header().Get("Content-Type"))
+	}
+	gotPCM, _ := io.ReadAll(pcm.Body)
+	if !bytes.Equal(gotPCM, testPCM()) {
+		t.Fatalf("pcm body = %d bytes, want %d", len(gotPCM), len(testPCM()))
+	}
+}
+
+func TestSpokenReplyIsCappedAndClean(t *testing.T) {
+	longAnswer := "**Done.** " + strings.Repeat("This is a long sentence. ", 40)
+	mux, _, _, fake := newDeviceHarnessAnswer(t, longAnswer, nil)
+	first := postAudio(t, mux, testDeviceID, "audio/wav", false)
+	var created createTurnResponse
+	_ = json.Unmarshal(first.Body.Bytes(), &created)
+	waitForTurnStatus(t, mux, testDeviceID, created.TurnID, StatusReady, StatusFailed)
+
+	input, _ := fake.lastSpeech()
+	if strings.Contains(input, "*") || strings.Contains(input, "**") {
+		t.Fatalf("spoken text kept markdown: %q", input)
+	}
+	if utf8.RuneCountInString(input) > 200 {
+		t.Fatalf("spoken text has %d runes, want <= 200", utf8.RuneCountInString(input))
+	}
+	if !strings.HasPrefix(input, "Done.") {
+		t.Fatalf("spoken text = %q", input)
+	}
+
+	// The full answer remains in the session; only the speech is capped.
+	view := getTurn(t, mux, testDeviceID, created.TurnID)
+	if len(view.DisplayText) > displayTextLimit+1 {
+		t.Fatalf("display_text has %d chars", len(view.DisplayText))
+	}
+}
+
+func TestWAVHelpers(t *testing.T) {
+	rate, channels, bits := wavFormat(testWAV())
+	if rate != 16000 || channels != 1 || bits != 16 {
+		t.Fatalf("wavFormat = %d/%d/%d", rate, channels, bits)
+	}
+	if !bytes.Equal(wavData(testWAV()), testPCM()) {
+		t.Fatal("wavData did not strip the header")
+	}
+	if raw := []byte{1, 2, 3}; !bytes.Equal(wavData(raw), raw) {
+		t.Fatal("wavData changed a non-WAV payload")
 	}
 }

@@ -33,6 +33,7 @@ const (
 const (
 	stageThinking = "thinking"
 	stageHeard    = "heard you"
+	stageSpeaking = "speaking"
 	stageDone     = "done"
 )
 
@@ -84,6 +85,9 @@ type TurnView struct {
 	Error         string    `json:"error,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
+
+	// audioPath is the on-disk reply file; it stays out of the JSON payload.
+	audioPath string
 }
 
 func (t *Turn) view() TurnView {
@@ -103,6 +107,7 @@ func (t *Turn) view() TurnView {
 		Error:         t.Error,
 		CreatedAt:     t.CreatedAt,
 		UpdatedAt:     t.UpdatedAt,
+		audioPath:     t.AudioPath,
 	}
 	if t.AudioPath != "" && t.AudioBytes > 0 {
 		view.AudioReady = true
@@ -516,6 +521,15 @@ func (c *Channel) runTurn(ctx context.Context, cancel context.CancelFunc, turnID
 		return
 	}
 
+	if ctx.Err() != nil {
+		c.turns.update(turnID, func(turn *Turn) {
+			turn.Status = StatusCanceled
+			turn.Stage = StatusCanceled
+			turn.Error = "turn canceled"
+		})
+		return
+	}
+
 	answer := strings.TrimSpace(result.FinalAnswer)
 	c.turns.update(turnID, func(turn *Turn) {
 		turn.Status = StatusReady
@@ -542,6 +556,26 @@ func (c *Channel) engineDeps(turnID string) engine.Deps {
 		MCPManager:       deps.MCPManager,
 		SchedulerManager: deps.SchedulerManager,
 		ApprovalHandler:  denyApprovals{},
+		OnFinalReply: func(ctx context.Context, reply engine.FinalReplyContext) {
+			c.turns.update(turnID, func(turn *Turn) {
+				turn.Status = StatusSpeaking
+				turn.Stage = stageSpeaking
+			})
+			audio, err := c.synthesizeReply(ctx, deps.ConfigMgr.Get(), deps, reply, turnID)
+			if err != nil {
+				log.Printf("[device] spoken reply unavailable for session %s: %v", reply.SessionID, err)
+				return
+			}
+			c.turns.update(turnID, func(turn *Turn) {
+				turn.AudioPath = audio.Path
+				turn.AudioMIME = audio.MIME
+				turn.AudioFormat = "wav"
+				turn.AudioBytes = audio.Bytes
+				turn.AudioRate = audio.Rate
+				turn.AudioChannels = audio.Channels
+				turn.AudioBits = audio.Bits
+			})
+		},
 		OnMediaResolved: func(resolved router.ResolveResult) {
 			for _, attachment := range resolved.Attachments {
 				if attachment.Kind == "audio" && strings.TrimSpace(attachment.Transcription) != "" {

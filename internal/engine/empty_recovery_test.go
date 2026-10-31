@@ -41,10 +41,10 @@ func TestProcessTurnRecoversFromThinkingOnlyLoop(t *testing.T) {
 				if !body.Stream {
 					// Final recovery call: plain non-streaming answer.
 					_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
-						Model:        "main-model",
-						Done:         true,
-						DoneReason:   "stop",
-						Message:      ollama.Message{Role: "assistant", Content: recoveryText},
+						Model:      "main-model",
+						Done:       true,
+						DoneReason: "stop",
+						Message:    ollama.Message{Role: "assistant", Content: recoveryText},
 					})
 					return
 				}

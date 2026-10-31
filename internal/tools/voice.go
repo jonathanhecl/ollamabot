@@ -277,3 +277,25 @@ func cleanSpeechText(input string) string {
 	text = spaceRuns.ReplaceAllString(text, " ")
 	return strings.TrimSpace(text)
 }
+
+// PrepareVoiceText turns an assistant reply into text a speech model can read
+// aloud and caps it to maxChars. It applies the same cleaning rules as the
+// send_voice tool, so channels that speak every reply never read Markdown or
+// code aloud. A non-positive limit keeps the voice-note budget.
+func PrepareVoiceText(input string, maxChars int) string {
+	if maxChars <= 0 {
+		maxChars = voiceMaxChars
+	}
+	cleaned := cleanSpeechText(input)
+	runes := []rune(cleaned)
+	if len(runes) <= maxChars {
+		return cleaned
+	}
+	cut := runes[:maxChars]
+	for i := len(cut) - 1; i >= maxChars/2; i-- {
+		if cut[i] == '.' || cut[i] == '!' || cut[i] == '?' {
+			return strings.TrimSpace(string(cut[:i+1]))
+		}
+	}
+	return strings.TrimSpace(string(cut))
+}

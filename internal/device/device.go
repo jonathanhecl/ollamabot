@@ -68,6 +68,7 @@ func (c *Channel) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/device/health", c.authenticated(c.handleHealth))
 	mux.HandleFunc("POST /api/device/messages", c.authenticated(c.handleCreateTurn))
 	mux.HandleFunc("GET /api/device/turns/{id}", c.authenticated(c.handleGetTurn))
+	mux.HandleFunc("GET /api/device/turns/{id}/audio", c.authenticated(c.handleTurnAudio))
 	mux.HandleFunc("POST /api/device/turns/{id}/cancel", c.authenticated(c.handleCancelTurn))
 	mux.HandleFunc("POST /api/device/sessions", c.authenticated(c.handleNewSession))
 }
