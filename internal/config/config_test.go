@@ -87,6 +87,92 @@ func TestLoadStartupNotification(t *testing.T) {
 	}
 }
 
+func TestLoadDeviceSettings(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        map[string]string
+		enabled    bool
+		token      string
+		maxAudioMB int
+		timeoutMin int
+		replyChars int
+	}{
+		{
+			name: "disabled with defaults",
+			env: map[string]string{
+				"DEVICE_ENABLED":              "",
+				"DEVICE_TOKEN":                "",
+				"DEVICE_MAX_AUDIO_MB":         "",
+				"DEVICE_TURN_TIMEOUT_MINUTES": "",
+				"DEVICE_REPLY_MAX_CHARS":      "",
+			},
+			maxAudioMB: 15,
+			timeoutMin: 5,
+			replyChars: 900,
+		},
+		{
+			name: "enabled with overrides",
+			env: map[string]string{
+				"DEVICE_ENABLED":              "true",
+				"DEVICE_TOKEN":                "  device-secret  ",
+				"DEVICE_MAX_AUDIO_MB":         "24",
+				"DEVICE_TURN_TIMEOUT_MINUTES": "9",
+				"DEVICE_REPLY_MAX_CHARS":      "1200",
+			},
+			enabled:    true,
+			token:      "device-secret",
+			maxAudioMB: 24,
+			timeoutMin: 9,
+			replyChars: 1200,
+		},
+		{
+			name: "invalid numbers keep defaults",
+			env: map[string]string{
+				"DEVICE_ENABLED":              "yes",
+				"DEVICE_TOKEN":                "device-secret",
+				"DEVICE_MAX_AUDIO_MB":         "zero",
+				"DEVICE_TURN_TIMEOUT_MINUTES": "-1",
+				"DEVICE_REPLY_MAX_CHARS":      "0",
+			},
+			enabled:    true,
+			token:      "device-secret",
+			maxAudioMB: 15,
+			timeoutMin: 5,
+			replyChars: 900,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for key, value := range tt.env {
+				t.Setenv(key, value)
+			}
+			path := t.TempDir() + "/.env"
+			if err := os.WriteFile(path, []byte("OLLAMA_BASE_URL=http://localhost:11434\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DeviceEnabled != tt.enabled {
+				t.Fatalf("DeviceEnabled = %v, want %v", cfg.DeviceEnabled, tt.enabled)
+			}
+			if cfg.DeviceToken != tt.token {
+				t.Fatalf("DeviceToken = %q, want %q", cfg.DeviceToken, tt.token)
+			}
+			if cfg.DeviceMaxAudioMB != tt.maxAudioMB {
+				t.Fatalf("DeviceMaxAudioMB = %d, want %d", cfg.DeviceMaxAudioMB, tt.maxAudioMB)
+			}
+			if cfg.DeviceTurnTimeoutMin != tt.timeoutMin {
+				t.Fatalf("DeviceTurnTimeoutMin = %d, want %d", cfg.DeviceTurnTimeoutMin, tt.timeoutMin)
+			}
+			if cfg.DeviceReplyMaxChars != tt.replyChars {
+				t.Fatalf("DeviceReplyMaxChars = %d, want %d", cfg.DeviceReplyMaxChars, tt.replyChars)
+			}
+		})
+	}
+}
+
 func TestSaveBasicLoadRoundTrip(t *testing.T) {
 	// Env vars take precedence over the file in Load, so clear them to
 	// prove the file itself round-trips every persisted setting.
@@ -107,6 +193,8 @@ func TestSaveBasicLoadRoundTrip(t *testing.T) {
 		"SUBAGENT_TIMEOUT_MINUTES", "AUTONOMOUS_STALE_TASK_MINUTES",
 		"AUTONOMOUS_VERIFICATION_ENABLED", "WEB_SEARCH_PRIORITY",
 		"SEARCH_PROVIDERS", "WEB_SEARCH_BRAVE_API_KEY", "WEB_SEARCH_TAVILY_API_KEY",
+		"DEVICE_ENABLED", "DEVICE_TOKEN", "DEVICE_MAX_AUDIO_MB",
+		"DEVICE_TURN_TIMEOUT_MINUTES", "DEVICE_REPLY_MAX_CHARS",
 	}
 	saved := map[string]string{}
 	had := map[string]bool{}
@@ -172,6 +260,11 @@ func TestSaveBasicLoadRoundTrip(t *testing.T) {
 		SubagentTimeoutMinutes:        15,
 		AutonomousStaleTaskMinutes:    45,
 		AutonomousVerificationEnabled: false,
+		DeviceEnabled:                 true,
+		DeviceToken:                   "roundtrip-device-token",
+		DeviceMaxAudioMB:              24,
+		DeviceTurnTimeoutMin:          9,
+		DeviceReplyMaxChars:           1200,
 	}
 
 	path := t.TempDir() + "/.env"

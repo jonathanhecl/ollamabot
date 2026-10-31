@@ -61,6 +61,11 @@ type Config struct {
 	SubagentTimeoutMinutes        int
 	AutonomousStaleTaskMinutes    int
 	AutonomousVerificationEnabled bool
+	DeviceEnabled                 bool
+	DeviceToken                   string
+	DeviceMaxAudioMB              int
+	DeviceTurnTimeoutMin          int
+	DeviceReplyMaxChars           int
 }
 
 func Load(path string) (Config, error) {
@@ -114,6 +119,9 @@ func Load(path string) (Config, error) {
 		SubagentTimeoutMinutes:        10,
 		AutonomousStaleTaskMinutes:    30,
 		AutonomousVerificationEnabled: true,
+		DeviceMaxAudioMB:              15,
+		DeviceTurnTimeoutMin:          5,
+		DeviceReplyMaxChars:           900,
 	}
 	apply := func(key string) string {
 		if value, ok := os.LookupEnv(key); ok {
@@ -252,6 +260,25 @@ func Load(path string) (Config, error) {
 			cfg.AutonomousVerificationEnabled = val
 		}
 	}
+	if value := apply("DEVICE_ENABLED"); value != "" {
+		cfg.DeviceEnabled = parseBool(value)
+	}
+	cfg.DeviceToken = strings.TrimSpace(apply("DEVICE_TOKEN"))
+	if value := apply("DEVICE_MAX_AUDIO_MB"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.DeviceMaxAudioMB = val
+		}
+	}
+	if value := apply("DEVICE_TURN_TIMEOUT_MINUTES"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.DeviceTurnTimeoutMin = val
+		}
+	}
+	if value := apply("DEVICE_REPLY_MAX_CHARS"); value != "" {
+		if val, err := strconv.Atoi(value); err == nil && val > 0 {
+			cfg.DeviceReplyMaxChars = val
+		}
+	}
 	if value := apply("WEB_SEARCH_PRIORITY"); value != "" {
 		cfg.SearchProviders = splitCSV(value)
 	} else if value := apply("SEARCH_PROVIDERS"); value != "" {
@@ -313,6 +340,9 @@ func defaultInteractiveConfig(baseURL string) Config {
 		TelegramAuthorizedIDs:        nil,
 		TelegramStartupNotification:  false,
 		PlanConfirmation:             "smart",
+		DeviceMaxAudioMB:             15,
+		DeviceTurnTimeoutMin:         5,
+		DeviceReplyMaxChars:          900,
 		WorkspaceRaw:                 "workspace",
 		SessionsPathRaw:              "sessions",
 		MemoryPathRaw:                "memory",
@@ -581,6 +611,12 @@ func SaveBasic(path string, cfg Config) error {
 			"TELEGRAM_BOT_TOKEN=%s\n"+
 			"TELEGRAM_AUTHORIZED_IDS=%s\n"+
 			"TELEGRAM_STARTUP_NOTIFICATION=%t\n\n"+
+			"# Device Channel\n"+
+			"DEVICE_ENABLED=%t\n"+
+			"DEVICE_TOKEN=%s\n"+
+			"DEVICE_MAX_AUDIO_MB=%d\n"+
+			"DEVICE_TURN_TIMEOUT_MINUTES=%d\n"+
+			"DEVICE_REPLY_MAX_CHARS=%d\n\n"+
 			"# Paths\n"+
 			"WORKSPACE_PATH=%s\n"+
 			"SESSIONS_PATH=%s\n"+
@@ -624,6 +660,11 @@ func SaveBasic(path string, cfg Config) error {
 		cfg.TelegramBotToken,
 		strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		cfg.TelegramStartupNotification,
+		cfg.DeviceEnabled,
+		cfg.DeviceToken,
+		cfg.DeviceMaxAudioMB,
+		cfg.DeviceTurnTimeoutMin,
+		cfg.DeviceReplyMaxChars,
 		workspacePath,
 		sessionsPath,
 		memoryPath,
