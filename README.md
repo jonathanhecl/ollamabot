@@ -134,7 +134,7 @@ Below is a detailed guide to all configuration parameters available in your `.en
 - `SERVER_ENABLED` (default `true`): Boolean. Enables or disables the local Web UI server.
 - `SERVER_PORT` (default `8080`): The port on which the Web UI server will run.
 - `SERVER_PASSWORD`: Optional string. If set, requires this password to access the Web UI.
-- `SERVER_EXPOSE_NETWORK` (default `false`): Boolean. If `true`, binds the web server to `0.0.0.0` making it accessible over the local network. Otherwise, binds to `127.0.0.1`.
+- `SERVER_EXPOSE_NETWORK` (default `true`): Boolean. If `true`, binds the web server to `0.0.0.0` making it accessible over the local network. Otherwise, binds to `127.0.0.1`. The interactive `.env` setup starts at `false`.
 
 #### Sessions
 - `SESSION_AUTO_NAME` (default `true`): Boolean. If enabled, automatically titles new chat sessions based on the context of the first few turns.
@@ -172,6 +172,13 @@ Below is a detailed guide to all configuration parameters available in your `.en
 - `TELEGRAM_BOT_TOKEN`: The bot API token obtained from Telegram's `@BotFather`.
 - `TELEGRAM_AUTHORIZED_IDS`: Comma-separated list of Telegram user ID integers allowed to interact with this bot. Leave empty for public access.
 - `TELEGRAM_STARTUP_NOTIFICATION` (default `false`): Send a startup message to authorized users when the bot starts up.
+
+#### Device Channel Settings
+- `DEVICE_ENABLED` (default `false`): Mounts `/api/device/` so a physical audio device can talk to the agent. Requires `SERVER_ENABLED=true`, `DEVICE_TOKEN`, `OLLAMA_MODEL_SPEECH` and audio transcription support; startup fails otherwise.
+- `DEVICE_TOKEN`: Shared secret the device sends as `X-Device-Token` (or `Authorization: Bearer`). Device routes use this token instead of `SERVER_PASSWORD`.
+- `DEVICE_MAX_AUDIO_MB` (default `15`): Largest audio upload accepted, in megabytes.
+- `DEVICE_TURN_TIMEOUT_MINUTES` (default `5`): Per-turn budget before a device turn is aborted.
+- `DEVICE_REPLY_MAX_CHARS` (default `900`): Characters spoken from the final answer, about 60 seconds of audio. The full text stays in the session.
 
 #### Paths
 - `WORKSPACE_PATH` (default `workspace`): Directory where tools read/write/edit files and run commands.
