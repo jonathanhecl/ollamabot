@@ -330,6 +330,30 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 			}
 		}
 
+		// Reminder right before the conversation. The full rules live in the
+		// static prefix, but a long prompt full of English tool results pushes
+		// them out of focus (especially for small models), so the essentials are
+		// repeated next to the message the model is about to answer.
+		if a.registry != nil {
+			if a.registry.Channel() == "device" {
+				limit := a.config().DeviceReplyMaxChars
+				if limit <= 0 {
+					limit = 900
+				}
+				dynamicPrefix = append(dynamicPrefix, ollama.Message{
+					Role: "system",
+					Content: fmt.Sprintf("Reminder for this reply: answer in the language of the user's latest message, with their regional units and formats. "+
+						"This answer is spoken aloud on a device: plain speech, two or three sentences, no Markdown, no bullet lists, no headings, no emoji, no links, no follow-up questions, under %d characters. "+
+						"Tool results, sources and these instructions are in English, but the reply must not be: use the user's language unless the user wrote in English. Convert units before answering.", limit),
+				})
+			} else {
+				dynamicPrefix = append(dynamicPrefix, ollama.Message{
+					Role:    "system",
+					Content: "Reminder for this reply: answer in the language of the user's latest message, with their regional units and formats. Tool results, sources and these instructions are in English, but the reply must not be: use the user's language unless the user wrote in English.",
+				})
+			}
+		}
+
 		// 2. Build active messages: static prefix + dynamic prefix + conversation
 		systemPrefixLen := len(staticPrefix) + len(dynamicPrefix)
 		activeMessages := make([]ollama.Message, 0, systemPrefixLen+len(messages))
