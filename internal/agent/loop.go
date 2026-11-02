@@ -1352,6 +1352,19 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 		})
 	}
 
+	// Language and regional conventions: the model must answer the way the user
+	// speaks, not the way the system prompt, tools or sources do.
+	prefix = append(prefix, ollama.Message{
+		Role: "system",
+		Content: "## Language and Regional Conventions\n" +
+			"Answer in the language of the user's latest message. For a voice device, that is the language of the transcription. " +
+			"Never switch to English or to another language just because these instructions, a tool result, a web page or a source is in English: translate the content and answer in the user's language. Keep code, identifiers, commands, file paths and proper nouns untranslated.\n" +
+			"Follow the user's regional conventions, not the defaults of the sources: measurement system (metric or imperial), temperature scale (Celsius or Fahrenheit), distances, weight, currency, date format, time format (12h or 24h) and decimal separators. A Spanish speaker in Argentina expects Celsius, metric units, 24-hour time and dates like 2/11/2026.\n" +
+			"When a tool or a source returns data in another convention (for example weather in Fahrenheit, distances in miles, prices in dollars, or dates in US format), convert it to the user's convention before answering, and never mix two systems in the same answer.\n" +
+			"If the user's convention is genuinely unknown, follow the language and region of their message and state the unit you used; never silently default to US units.\n" +
+			"Before sending a reply, re-read it: language, units, numbers and formats must match the user. When the user corrects a unit, language or format, apply it for the rest of the conversation and store it as a preference with memory_add.",
+	})
+
 	// Memory tools instruction (static)
 	if a.config().OllamaModelEmbed != "" {
 		prefix = append(prefix, ollama.Message{

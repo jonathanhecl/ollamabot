@@ -117,6 +117,126 @@ Device turns now render like any other channel in the web UI, and Device Mode is
 - **Device turn failures (`internal/device/turns.go`, `internal/tools/tools.go`, `internal/agent/loop.go`)**: `send_files` is no longer offered or executed on the device channel (it cannot receive files and the loop guard killed the whole turn when the model retried it), the Device Mode prompt no longer hints at sending details as files, and engine errors are logged while the device only receives a short user-facing sentence.
 - **Failure trace (`internal/sessions/recorder.go`, `internal/engine/engine.go`, `internal/web/static`)**: `Recorder.RecordFailure` writes an `error` step (and a short reason as the message text when the model produced none) before the engine snapshots an aborted turn; the web renders it as an always-visible red "turn failed" block, so the session review shows what stopped the run.
 - **Live device stage (`internal/device/turns.go`)**: a `turnStageHandler` wraps the recorder handler and reports `stage: working` with the running tool in `activity` while tools execute, returning to `thinking` after each result; legacy device titles are also normalized on contact in `ensureSession`, not only at startup.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+- **Device turn failures (`internal/device/turns.go`, `internal/tools/tools.go`, `internal/agent/loop.go`)**: `send_files` is no longer offered or executed on the device channel (it cannot receive files and the loop guard killed the whole turn when the model retried it), the Device Mode prompt no longer hints at sending details as files, and engine errors are logged while the device only receives a short user-facing sentence.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+- **Device turn failures (`internal/device/turns.go`, `internal/tools/tools.go`, `internal/agent/loop.go`)**: `send_files` is no longer offered or executed on the device channel (it cannot receive files and the loop guard killed the whole turn when the model retried it), the Device Mode prompt no longer hints at sending details as files, and engine errors are logged while the device only receives a short user-facing sentence.
+- **Failure trace (`internal/sessions/recorder.go`, `internal/engine/engine.go`, `internal/web/static`)**: `Recorder.RecordFailure` writes an `error` step (and a short reason as the message text when the model produced none) before the engine snapshots an aborted turn; the web renders it as an always-visible red "turn failed" block, so the session review shows what stopped the run.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+- **Device turn failures (`internal/device/turns.go`, `internal/tools/tools.go`, `internal/agent/loop.go`)**: `send_files` is no longer offered or executed on the device channel (it cannot receive files and the loop guard killed the whole turn when the model retried it), the Device Mode prompt no longer hints at sending details as files, and engine errors are logged while the device only receives a short user-facing sentence.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+# Progress
+
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
+- **Device turn failures (`internal/device/turns.go`, `internal/tools/tools.go`, `internal/agent/loop.go`)**: `send_files` is no longer offered or executed on the device channel (it cannot receive files and the loop guard killed the whole turn when the model retried it), the Device Mode prompt no longer hints at sending details as files, and engine errors are logged while the device only receives a short user-facing sentence.
+- **Failure trace (`internal/sessions/recorder.go`, `internal/engine/engine.go`, `internal/web/static`)**: `Recorder.RecordFailure` writes an `error` step (and a short reason as the message text when the model produced none) before the engine snapshots an aborted turn; the web renders it as an always-visible red "turn failed" block, so the session review shows what stopped the run.
+- **Live device stage (`internal/device/turns.go`)**: a `turnStageHandler` wraps the recorder handler and reports `stage: working` with the running tool in `activity` while tools execute, returning to `thinking` after each result; legacy device titles are also normalized on contact in `ensureSession`, not only at startup.
+- **Language and regional conventions (`internal/agent/loop.go`, `internal/agent/agent.go`)**: every turn now carries a system block requiring replies in the user's language (the transcription language on device) and their regional conventions (units, temperature scale, currency, date/time format, decimals), converting whatever a tool or source returns instead of defaulting to US units, re-reading the reply before sending and storing corrections as a preference; the default SOUL asks the agent to record reply language and regional conventions in USER_PROFILE.md.
 
 ## 2026-11-02 — Web Settings: Device Channel Configuration
 
