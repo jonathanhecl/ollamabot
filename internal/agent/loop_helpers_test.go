@@ -78,3 +78,23 @@ func TestRepetitiveLoopHint(t *testing.T) {
 	// nil registry must not panic.
 	_ = repetitiveLoopHint("vault_list", nil)
 }
+
+// TestLoopCallKeyUsesArguments guards the repetition detector: the approval
+// grant key collapses most tools to "tool:*", which made two different URLs or
+// two different search queries count as the same call and aborted the turn.
+func TestLoopCallKeyUsesArguments(t *testing.T) {
+	first := loopCallKey("fetch_webpage", map[string]any{"url": "https://a.example"})
+	second := loopCallKey("fetch_webpage", map[string]any{"url": "https://b.example"})
+	if first == second {
+		t.Fatal("different URLs share a loop key")
+	}
+	same := loopCallKey("fetch_webpage", map[string]any{"url": "https://a.example"})
+	if first != same {
+		t.Fatal("identical calls do not share a loop key")
+	}
+	query1 := loopCallKey("web_search", map[string]any{"query": "clima hoy"})
+	query2 := loopCallKey("web_search", map[string]any{"query": "temperatura"})
+	if query1 == query2 {
+		t.Fatal("different queries share a loop key")
+	}
+}

@@ -52,8 +52,6 @@ type Channel struct {
 
 	linksMu      sync.Mutex
 	sessionLinks map[string]*sessionLinks
-
-	migrateOnce sync.Once
 }
 
 // NewChannel builds a device channel over a live dependency provider.
@@ -67,7 +65,6 @@ func NewChannel(deps func() Deps) *Channel {
 // Mount registers every device route. The device channel authenticates with its
 // own token, so the web password middleware must skip /api/device/.
 func (c *Channel) Mount(mux *http.ServeMux) {
-	c.migrateLegacyTitles()
 	mux.HandleFunc("GET /api/device/health", c.authenticated(c.handleHealth))
 	mux.HandleFunc("POST /api/device/messages", c.authenticated(c.handleCreateTurn))
 	mux.HandleFunc("GET /api/device/turns/{id}", c.authenticated(c.handleGetTurn))

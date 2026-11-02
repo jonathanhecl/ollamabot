@@ -549,69 +549,20 @@ func TestWAVHelpers(t *testing.T) {
 	}
 }
 
-func TestNormalizeDeviceTitle(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"Device epaper-94a5d71d0470", "Device 94a5d71d0470"},
-		{"device EPAPER-kitchen-1", "Device kitchen-1"},
-		{"Device epaper", "Device"},
-		{"Device kitchen-1", ""},
-		{"Telegram Chat (42)", ""},
-		{"New session", ""},
-	}
-	for _, tc := range cases {
-		if got := normalizeDeviceTitle(tc.in); got != tc.want {
-			t.Fatalf("normalizeDeviceTitle(%q) = %q, want %q", tc.in, got, tc.want)
-		}
-	}
-}
-
-func TestMigrateLegacyDeviceTitles(t *testing.T) {
-	store := sessions.NewStore(t.TempDir())
-	legacy := sessions.Session{ID: sessions.GenerateID(), Title: "Device epaper-94a5d71d0470"}
-	current := sessions.Session{ID: sessions.GenerateID(), Title: "Device kitchen-1"}
-	other := sessions.Session{ID: sessions.GenerateID(), Title: "Telegram Chat (42)"}
-	for _, sess := range []sessions.Session{legacy, current, other} {
-		if err := store.Save(sess); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	channel := NewChannel(func() Deps { return Deps{SessionStore: store} })
-	channel.migrateLegacyTitles()
-	channel.migrateLegacyTitles() // second run must be a no-op
-
-	if sess, err := store.Get(legacy.ID); err != nil {
-		t.Fatal(err)
-	} else if sess.Title != "Device 94a5d71d0470" {
-		t.Fatalf("legacy title = %q", sess.Title)
-	}
-	if sess, err := store.Get(current.ID); err != nil {
-		t.Fatal(err)
-	} else if sess.Title != "Device kitchen-1" {
-		t.Fatalf("current title changed to %q", sess.Title)
-	}
-	if sess, err := store.Get(other.ID); err != nil {
-		t.Fatal(err)
-	} else if sess.Title != "Telegram Chat (42)" {
-		t.Fatalf("unrelated title changed to %q", sess.Title)
-	}
-}
-
 // stubStreamHandler absorbs agent stream callbacks; turnStageHandler only needs
 // to forward to something that accepts them.
 type stubStreamHandler struct{}
 
-func (stubStreamHandler) OnThinking(string)                       {}
-func (stubStreamHandler) OnContent(string)                        {}
-func (stubStreamHandler) OnToolCall(ollama.ToolCall)              {}
-func (stubStreamHandler) OnToolStart(string, any, string)         {}
-func (stubStreamHandler) OnToolResult(string, string, string)     {}
-func (stubStreamHandler) OnMediaPreProcessing(string)             {}
-func (stubStreamHandler) OnDone(ollama.ChatResponse)              {}
-func (stubStreamHandler) OnEvent(string, any)                     {}
-func (stubStreamHandler) OnContextOptimizationStart(int, float64) {}
-func (stubStreamHandler) OnContextOptimizationEnd(int, float64, float64) {
-}
+func (stubStreamHandler) OnThinking(string)                                {}
+func (stubStreamHandler) OnContent(string)                                 {}
+func (stubStreamHandler) OnToolCall(ollama.ToolCall)                       {}
+func (stubStreamHandler) OnToolStart(string, any, string)                  {}
+func (stubStreamHandler) OnToolResult(string, string, string)              {}
+func (stubStreamHandler) OnMediaPreProcessing(string)                      {}
+func (stubStreamHandler) OnDone(ollama.ChatResponse)                       {}
+func (stubStreamHandler) OnEvent(string, any)                              {}
+func (stubStreamHandler) OnContextOptimizationStart(int, float64)          {}
+func (stubStreamHandler) OnContextOptimizationEnd(int, float64, float64)   {}
 func (stubStreamHandler) OnContextOptimized([]ollama.Message, string, int) {}
 
 func TestTurnStageHandlerReportsToolWork(t *testing.T) {
@@ -632,23 +583,5 @@ func TestTurnStageHandlerReportsToolWork(t *testing.T) {
 	view, _ = turns.view("t1")
 	if view.Stage != stageThinking || view.Activity != "" {
 		t.Fatalf("stage after tool result = %q/%q, want thinking/empty", view.Stage, view.Activity)
-	}
-}
-
-func TestEnsureSessionRenamesLegacyTitle(t *testing.T) {
-	store := sessions.NewStore(t.TempDir())
-	legacy := sessions.Session{ID: "sess-legacy", Title: "Device epaper-94a5d71d0470"}
-	if err := store.Save(legacy); err != nil {
-		t.Fatal(err)
-	}
-	channel := NewChannel(func() Deps { return Deps{SessionStore: store} })
-	channel.normalizeSessionTitle(Deps{SessionStore: store}, legacy)
-
-	sess, err := store.Get("sess-legacy")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if sess.Title != "Device 94a5d71d0470" {
-		t.Fatalf("title = %q", sess.Title)
 	}
 }

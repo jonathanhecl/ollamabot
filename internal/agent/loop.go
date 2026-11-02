@@ -885,8 +885,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				}
 
 				// Check for repetitive loops.
-				signature, label := sessions.FormatApprovalSignature(toolName, params, a.config().Workspace)
-				key := toolName + ":" + signature
+				_, label := sessions.FormatApprovalSignature(toolName, params, a.config().Workspace)
+				// Loop detection needs the real arguments. FormatApprovalSignature
+				// returns a coarse grant key ("tool:*") for most tools because it
+				// exists for "remember this decision" grants: using it here made two
+				// different URLs or two different search queries look identical.
+				key := loopCallKey(toolName, params)
 				toolCallCounts[key]++
 				repeatCount := toolCallCounts[key]
 				toolGlobalCounts[toolName]++
@@ -899,30 +903,25 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// to prevent wasting time in multi-minute prompt evaluation loops.
 				isNoOpCall := isNoOpToolCall(toolName, params)
 				isNetworkTool := isNetworkFetchTool(toolName)
+				// A plain tool error is not a loop: the model may retry once with
+				// the same arguments (a flaky page, a transient network failure).
+				// Abort only when the exact same call keeps failing, or right away
+				// when the user denied it or the schema is wrong.
 				abortThreshold := 3
-				if isDeniedOrTimeout || isMCPValidationError || isError {
+				if isDeniedOrTimeout || isMCPValidationError || isNoOpCall {
 					abortThreshold = 2
-					// Voice synthesis fails transiently (model cold loads, or the
-					// speech model was busy transcribing moments earlier). Give
-					// send_voice one extra attempt before aborting the turn.
-					if toolName == "send_voice" {
-						abortThreshold = 3
-					}
-				} else if isNoOpCall || isNetworkTool {
-					abortThreshold = 3
 				}
 
 				// Global per-tool cap: even with different arguments, calling
 				// a network tool too many times in one turn means the model is
 				// thrashing. Warn at networkWarnThreshold, abort at
 				// networkAbortThreshold.
+				// Many different URLs or queries are how real research looks, so
+				// this only nudges the model: the turn aborts on genuine repeats
+				// (same tool and same arguments), never on the tool name alone.
 				networkWarnThreshold := 8
-				networkAbortThreshold := 12
-				if isNetworkTool && globalCount >= networkAbortThreshold {
-					repetitiveLoopErr = fmt.Errorf("detected excessive network tool usage: %s called %d times total in this turn (across different URLs/queries). Stop fetching and synthesize an answer from the data you already have, or ask the user for clarification", toolName, globalCount)
-					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
-				} else if isNetworkTool && globalCount >= networkWarnThreshold {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called %s %d times total in this turn. You have enough data to answer — synthesize your response from what you already fetched. Further fetching will be blocked soon.]", result, toolName, globalCount)
+				if isNetworkTool && globalCount >= networkWarnThreshold {
+					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called %s %d times in this turn. If you already have enough data, synthesize an answer instead of fetching more.]", result, toolName, globalCount)
 				}
 
 				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
@@ -1594,6 +1593,16 @@ func isNoOpToolCall(toolName string, params map[string]any) bool {
 // warning message when a tool is being called repeatedly. The old generic hint
 // ("verify the contents of the file using read_file") was harmful for non-read
 // tools because it pushed the model toward more file operations.
+// loopCallKey identifies a tool invocation for repetition detection: the tool
+// plus its exact arguments, canonically encoded (json.Marshal sorts map keys).
+func loopCallKey(toolName string, params map[string]any) string {
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		return toolName
+	}
+	return toolName + ":" + string(encoded)
+}
+
 func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
 	// If the tool is an MCP tool, suggest checking the MCP server or using a
 	// different MCP tool instead of looping.
