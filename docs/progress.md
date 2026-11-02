@@ -1,5 +1,18 @@
 # Progress
 
+## 2026-11-02 — Web Settings: Device Channel Configuration
+
+Added full configuration support for the audio Device Channel (ESP32 / hardware clients) directly in the Web UI Settings:
+
+- **Web Server REST API (`internal/web/server.go`)**:
+  - Expanded `SettingsResponse` to include `device_enabled`, `device_token`, `device_max_audio_mb`, `device_turn_timeout_minutes`, and `device_reply_max_chars`.
+  - Updated `handleUpdateSettings` to parse and apply device channel settings in `config.Manager`, persisting them to `.env` via `config.SaveBasic`.
+- **Web UI (`internal/web/static/index.html`, `internal/web/static/app.js`)**:
+  - Added a dedicated "📻 Device" tab in the Settings modal with toggle switch, password visibility toggle for `deviceToken`, and configurable options for upload limits, timeout, and max reply length.
+  - Wired real-time display toggle and synchronization with `GET /api/settings` and `POST /api/settings`.
+- **Testing (`internal/web/server_test.go`)**:
+  - Added unit test `TestDeviceSettingsAPI` validating reading, updating, and persisting device settings to `.env`.
+
 ## 2026-08-29 — Scheduled Reminders & Autonomous Background Tasks (Scheduler)
 
 Implemented a robust, lightweight background scheduler and reminder system across the agent pipeline (`internal/scheduler`, `internal/tools`, `internal/engine`, `internal/telegram`, `internal/web`, `cmd/ollamabot`):

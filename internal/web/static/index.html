@@ -559,6 +559,7 @@
           <button type="button" class="tab-btn" data-tab="server">🌐 Server</button>
           <button type="button" class="tab-btn" data-tab="sessions">💬 Sessions</button>
           <button type="button" class="tab-btn" data-tab="telegram">📱 Telegram</button>
+          <button type="button" class="tab-btn" data-tab="device">📻 Device</button>
           <button type="button" class="tab-btn" data-tab="paths">📁 Paths</button>
           <button type="button" class="tab-btn" data-tab="sleep-mode">🧠 Sleep Mode</button>
           <button type="button" class="tab-btn" data-tab="web-search">🔍 Web Search</button>
@@ -681,6 +682,55 @@
                 <input id="telegramStartupNotification" type="checkbox" />
                 <span>Send startup notification (🚀 OllamaBot Initialized)</span>
               </label>
+            </div>
+          </div>
+          
+          <!-- Device Tab -->
+          <div class="tab-content" id="tab-device">
+            <div class="checkbox-row" style="margin-bottom: 14px;">
+              <label class="think-toggle">
+                <input id="deviceEnabled" type="checkbox" />
+                <span>Enable Device Channel (Audio Clients / ESP32)</span>
+              </label>
+            </div>
+            <!-- Device Options Container -->
+            <div id="deviceContainer" style="display: none; border-left: 2px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; gap: 10px;">
+              <label>
+                Device Token
+                <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
+                  <input id="deviceToken" type="password" placeholder="Shared secret for X-Device-Token or Bearer" style="width: 100%; padding-right: 40px;" autocomplete="off" />
+                  <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
+                </div>
+                <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                  Shared secret sent in <code>X-Device-Token</code> or <code>Authorization: Bearer</code> header. Required when Device Channel is enabled.
+                </small>
+              </label>
+              <label style="margin-top: 4px;">
+                Max Audio Size (MB)
+                <input id="deviceMaxAudioMB" type="number" placeholder="15" min="1" />
+                <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                  Maximum accepted upload size for audio clips. Default: 15.
+                </small>
+              </label>
+              <label style="margin-top: 4px;">
+                Turn Timeout (Minutes)
+                <input id="deviceTurnTimeout" type="number" placeholder="5" min="1" />
+                <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                  Time limit per turn before being canceled. Default: 5.
+                </small>
+              </label>
+              <label style="margin-top: 4px;">
+                Spoken Reply Max Characters
+                <input id="deviceReplyMaxChars" type="number" placeholder="900" min="50" />
+                <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
+                  Characters synthesized to speech; full reply text is still recorded in the session. Default: 900.
+                </small>
+              </label>
+              <div style="margin-top: 6px; padding: 10px; background: var(--bg-secondary, rgba(255,255,255,0.03)); border: 1px solid var(--line); border-radius: 6px;">
+                <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; display: block;">
+                  💡 <strong>Requirements:</strong> Physical devices on LAN require <code>Server expose network</code> enabled (in the Server tab), an audio transcription model (in Ollama settings or model router), and a speech model (<code>OLLAMA_MODEL_SPEECH</code>).
+                </small>
+              </div>
             </div>
           </div>
           

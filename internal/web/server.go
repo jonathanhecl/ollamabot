@@ -140,6 +140,11 @@ type SettingsResponse struct {
 	TelegramAuthorizedIDs        string `json:"telegram_authorized_ids"` // comma-separated
 	TelegramStartupNotification  bool   `json:"telegram_startup_notification"`
 	SubagentTimeoutMinutes       int    `json:"subagent_timeout_minutes"`
+	DeviceEnabled                bool   `json:"device_enabled"`
+	DeviceToken                  string `json:"device_token"`
+	DeviceMaxAudioMB             int    `json:"device_max_audio_mb"`
+	DeviceTurnTimeoutMin         int    `json:"device_turn_timeout_minutes"`
+	DeviceReplyMaxChars          int    `json:"device_reply_max_chars"`
 }
 
 // MediaMessage extends ollama.Message with per-image kind metadata sent by the
@@ -554,6 +559,23 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			cfg.TelegramAuthorizedIDs = ids
+		}
+		cfg.DeviceEnabled = input.DeviceEnabled
+		newDeviceToken := strings.TrimSpace(input.DeviceToken)
+		if newDeviceToken != "***" {
+			cfg.DeviceToken = newDeviceToken
+		}
+		cfg.DeviceMaxAudioMB = input.DeviceMaxAudioMB
+		if cfg.DeviceMaxAudioMB <= 0 {
+			cfg.DeviceMaxAudioMB = 15
+		}
+		cfg.DeviceTurnTimeoutMin = input.DeviceTurnTimeoutMin
+		if cfg.DeviceTurnTimeoutMin <= 0 {
+			cfg.DeviceTurnTimeoutMin = 5
+		}
+		cfg.DeviceReplyMaxChars = input.DeviceReplyMaxChars
+		if cfg.DeviceReplyMaxChars <= 0 {
+			cfg.DeviceReplyMaxChars = 900
 		}
 		cfg.Workspace = workspace
 		cfg.WorkspaceRaw = workspaceRaw
@@ -2336,6 +2358,11 @@ func settingsResponse(cfg config.Config) SettingsResponse {
 		TelegramAuthorizedIDs:        strings.Join(cfg.TelegramAuthorizedIDs, ","),
 		TelegramStartupNotification:  cfg.TelegramStartupNotification,
 		SubagentTimeoutMinutes:       cfg.SubagentTimeoutMinutes,
+		DeviceEnabled:                cfg.DeviceEnabled,
+		DeviceToken:                  cfg.DeviceToken,
+		DeviceMaxAudioMB:             cfg.DeviceMaxAudioMB,
+		DeviceTurnTimeoutMin:         cfg.DeviceTurnTimeoutMin,
+		DeviceReplyMaxChars:          cfg.DeviceReplyMaxChars,
 	}
 }
 

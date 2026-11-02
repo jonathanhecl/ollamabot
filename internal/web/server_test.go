@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -705,3 +706,99 @@ func TestTelemetryEndpoints(t *testing.T) {
 		t.Fatalf("expected 200 OK from /api/telemetry/reset, got %d", resetW.Result().StatusCode)
 	}
 }
+
+func TestDeviceSettingsAPI(t *testing.T) {
+	tmpDir := t.TempDir()
+	envPath := filepath.Join(tmpDir, ".env")
+	initialCfg := config.Config{
+		OllamaBaseURL:        "http://localhost:11434",
+		DeviceEnabled:        false,
+		DeviceToken:          "",
+		DeviceMaxAudioMB:     15,
+		DeviceTurnTimeoutMin: 5,
+		DeviceReplyMaxChars:  900,
+		Workspace:            filepath.Join(tmpDir, "workspace"),
+		SessionsPath:         filepath.Join(tmpDir, "sessions"),
+		MemoryPath:           filepath.Join(tmpDir, "memory"),
+		SkillsPath:           filepath.Join(tmpDir, "skills"),
+	}
+
+	s := &Server{
+		cfgMgr:  config.NewManager(initialCfg),
+		envPath: envPath,
+	}
+
+	// 1. GET /api/settings initial state
+	req := httptest.NewRequest(http.MethodGet, "/api/settings", nil)
+	w := httptest.NewRecorder()
+	s.handleSettings(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("GET /api/settings status = %d", w.Result().StatusCode)
+	}
+	var getResp SettingsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &getResp); err != nil {
+		t.Fatalf("unmarshal GET response: %v", err)
+	}
+	if getResp.DeviceEnabled {
+		t.Errorf("expected DeviceEnabled=false initially")
+	}
+	if getResp.DeviceMaxAudioMB != 15 {
+		t.Errorf("expected DeviceMaxAudioMB=15, got %d", getResp.DeviceMaxAudioMB)
+	}
+
+	// 2. POST /api/settings to enable device channel and update parameters
+	updatePayload := getResp
+	updatePayload.DeviceEnabled = true
+	updatePayload.DeviceToken = "my-secret-token"
+	updatePayload.DeviceMaxAudioMB = 20
+	updatePayload.DeviceTurnTimeoutMin = 8
+	updatePayload.DeviceReplyMaxChars = 1200
+
+	body, err := json.Marshal(updatePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	postReq := httptest.NewRequest(http.MethodPost, "/api/settings", bytes.NewReader(body))
+	postW := httptest.NewRecorder()
+	s.handleUpdateSettings(postW, postReq)
+	if postW.Result().StatusCode != http.StatusOK {
+		t.Fatalf("POST /api/settings status = %d, body: %s", postW.Result().StatusCode, postW.Body.String())
+	}
+
+	var postResp SettingsResponse
+	if err := json.Unmarshal(postW.Body.Bytes(), &postResp); err != nil {
+		t.Fatalf("unmarshal POST response: %v", err)
+	}
+	if !postResp.DeviceEnabled {
+		t.Errorf("expected DeviceEnabled=true after update")
+	}
+	if postResp.DeviceToken != "my-secret-token" {
+		t.Errorf("expected DeviceToken='my-secret-token', got %q", postResp.DeviceToken)
+	}
+	if postResp.DeviceMaxAudioMB != 20 {
+		t.Errorf("expected DeviceMaxAudioMB=20, got %d", postResp.DeviceMaxAudioMB)
+	}
+	if postResp.DeviceTurnTimeoutMin != 8 {
+		t.Errorf("expected DeviceTurnTimeoutMin=8, got %d", postResp.DeviceTurnTimeoutMin)
+	}
+	if postResp.DeviceReplyMaxChars != 1200 {
+		t.Errorf("expected DeviceReplyMaxChars=1200, got %d", postResp.DeviceReplyMaxChars)
+	}
+
+	// Verify persistence in .env file
+	envBytes, err := os.ReadFile(envPath)
+	if err != nil {
+		t.Fatalf("reading saved .env: %v", err)
+	}
+	envStr := string(envBytes)
+	if !strings.Contains(envStr, "DEVICE_ENABLED=true") {
+		t.Errorf("saved .env missing DEVICE_ENABLED=true:\n%s", envStr)
+	}
+	if !strings.Contains(envStr, "DEVICE_TOKEN=my-secret-token") {
+		t.Errorf("saved .env missing DEVICE_TOKEN=my-secret-token:\n%s", envStr)
+	}
+	if !strings.Contains(envStr, "DEVICE_MAX_AUDIO_MB=20") {
+		t.Errorf("saved .env missing DEVICE_MAX_AUDIO_MB=20:\n%s", envStr)
+	}
+}
+

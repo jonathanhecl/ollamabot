@@ -213,6 +213,12 @@ const els = {
   telegramBotToken: document.querySelector("#telegramBotToken"),
   telegramAuthorizedIds: document.querySelector("#telegramAuthorizedIds"),
   telegramStartupNotification: document.querySelector("#telegramStartupNotification"),
+  deviceEnabled: document.querySelector("#deviceEnabled"),
+  deviceContainer: document.querySelector("#deviceContainer"),
+  deviceToken: document.querySelector("#deviceToken"),
+  deviceMaxAudioMB: document.querySelector("#deviceMaxAudioMB"),
+  deviceTurnTimeout: document.querySelector("#deviceTurnTimeout"),
+  deviceReplyMaxChars: document.querySelector("#deviceReplyMaxChars"),
   sleepModeToggle: document.querySelector("#sleepModeToggle"),
   sleepModeInactivity: document.querySelector("#sleepModeInactivity"),
   sleepModeResumeDelay: document.querySelector("#sleepModeResumeDelay"),
@@ -495,6 +501,12 @@ els.openSettings.addEventListener("click", async () => {
   els.telegramBotToken.value = state.settings.telegram_bot_token || "";
   els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
   els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
+  els.deviceEnabled.checked = !!state.settings.device_enabled;
+  els.deviceContainer.style.display = state.settings.device_enabled ? "flex" : "none";
+  els.deviceToken.value = state.settings.device_token || "";
+  els.deviceMaxAudioMB.value = state.settings.device_max_audio_mb || 15;
+  els.deviceTurnTimeout.value = state.settings.device_turn_timeout_minutes || 5;
+  els.deviceReplyMaxChars.value = state.settings.device_reply_max_chars || 900;
   els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
   els.serverEnabled.checked = state.settings.server_enabled !== false;
   els.serverPassword.value = state.settings.server_password || "";
@@ -553,6 +565,13 @@ if (els.sleepModeToggle) {
   els.sleepModeToggle.addEventListener("change", (e) => {
     if (els.sleepModeContainer) {
       els.sleepModeContainer.style.display = e.target.checked ? "block" : "none";
+    }
+  });
+}
+if (els.deviceEnabled) {
+  els.deviceEnabled.addEventListener("change", (e) => {
+    if (els.deviceContainer) {
+      els.deviceContainer.style.display = e.target.checked ? "flex" : "none";
     }
   });
 }
@@ -1898,6 +1917,11 @@ async function saveSettings(event) {
       telegram_bot_token: els.telegramBotToken.value.trim(),
       telegram_authorized_ids: els.telegramAuthorizedIds.value.trim(),
       telegram_startup_notification: els.telegramStartupNotification.checked,
+      device_enabled: els.deviceEnabled.checked,
+      device_token: els.deviceToken.value.trim(),
+      device_max_audio_mb: parseInt(els.deviceMaxAudioMB.value.trim(), 10) || 15,
+      device_turn_timeout_minutes: parseInt(els.deviceTurnTimeout.value.trim(), 10) || 5,
+      device_reply_max_chars: parseInt(els.deviceReplyMaxChars.value.trim(), 10) || 900,
       plan_confirmation: els.planConfirmationSelect.value,
       server_port: els.webPort.value.trim() || "8080",
       sleep_mode_enabled: els.sleepModeToggle.checked,
@@ -1988,6 +2012,11 @@ async function saveRoleModels() {
       telegram_bot_token: state.settings.telegram_bot_token || "",
       telegram_authorized_ids: state.settings.telegram_authorized_ids || "",
       telegram_startup_notification: state.settings.telegram_startup_notification !== false,
+      device_enabled: state.settings.device_enabled || false,
+      device_token: state.settings.device_token || "",
+      device_max_audio_mb: state.settings.device_max_audio_mb || 15,
+      device_turn_timeout_minutes: state.settings.device_turn_timeout_minutes || 5,
+      device_reply_max_chars: state.settings.device_reply_max_chars || 900,
       plan_confirmation: state.settings.plan_confirmation || "smart",
     }),
   });
