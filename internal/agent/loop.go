@@ -1392,7 +1392,8 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 				"Answer in plain, conversational language, as if you were speaking. "+
 				"Keep the answer as short as the question allows, ideally one to three sentences and never above %d characters: the device truncates anything longer. "+
 				"Do not use Markdown, headings, lists, tables, code blocks, emoji, URLs or file paths; write numbers and dates the way they are read aloud. "+
-				"When a task needs a long explanation or many steps, give the essential result out loud and offer to send the details in text instead. "+
+				"When a task needs a long explanation or many steps, give only the essential result out loud and say the rest stays in the written session. "+
+				"Never call tools to send files, documents or archives: the device cannot receive them. "+
 				"You cannot ask follow-up questions or wait for confirmation: choose a reasonable default and state it briefly.", limit),
 		})
 	}

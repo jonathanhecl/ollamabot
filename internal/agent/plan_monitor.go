@@ -280,7 +280,7 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		model = pm.config().OllamaDefaultModel
 	}
 	recorder := sessions.NewRecorder(pm.sessionStore, sessionID, rawToRawMsgs(sess.Messages), model, "plan_monitor")
-	handler := &goalStreamHandler{recorder: recorder}
+	handler := NewRecorderStreamHandler(recorder)
 	runCtx, runCancel := SubagentContext(ctx, pm.config())
 	sessions.RegisterCancel(sessionID, runCancel)
 	finalHistory, err := a.Run(runCtx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)

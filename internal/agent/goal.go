@@ -416,7 +416,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
 			recorder = sessions.NewRecorder(g.sessionStore, sessionID, rawToRawMsgs(sess.Messages), g.config().OllamaDefaultModel, "goal")
-			handler := &goalStreamHandler{recorder: recorder}
+			handler := NewRecorderStreamHandler(recorder)
 			runCtx, runCancel := SubagentContext(ctx, g.config())
 			sessions.RegisterCancel(sessionID, runCancel)
 			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
@@ -655,39 +655,6 @@ Respond with a JSON object conforming to the schema.`, objective)
 	}
 
 	return ev.Achieved, ev.Reasoning, nil
-}
-
-// goalStreamHandler routes background goal/plan agent streams into a session
-// Recorder so tool steps (and other decisions) appear in the session timeline
-// exactly like a normal web/Telegram turn.
-type goalStreamHandler struct {
-	recorder *sessions.Recorder
-}
-
-func (h *goalStreamHandler) OnThinking(delta string) { h.recorder.OnThinking(delta) }
-func (h *goalStreamHandler) OnContent(delta string)  { h.recorder.OnContent(delta) }
-func (h *goalStreamHandler) OnToolCall(call ollama.ToolCall) {
-	h.recorder.OnToolCall(call)
-}
-func (h *goalStreamHandler) OnToolStart(name string, args any, source string) {
-	h.recorder.OnToolStart(name, args, source)
-}
-func (h *goalStreamHandler) OnToolResult(name string, result string, source string) {
-	h.recorder.OnToolResult(name, result, source)
-}
-func (h *goalStreamHandler) OnMediaPreProcessing(content string) { h.recorder.OnMediaPreProcessing(content) }
-func (h *goalStreamHandler) OnDone(resp ollama.ChatResponse)     { h.recorder.OnDone(resp) }
-func (h *goalStreamHandler) OnEvent(kind string, data any) {
-	h.recorder.RecordEvent(kind, sessions.EventContent(kind, data), data)
-}
-func (h *goalStreamHandler) OnContextOptimizationStart(tokensBefore int, percentBefore float64) {
-	h.recorder.OnContextOptimizationStart(tokensBefore, percentBefore)
-}
-func (h *goalStreamHandler) OnContextOptimizationEnd(tokensAfter int, percentAfter float64, durationSeconds float64) {
-	h.recorder.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
-}
-func (h *goalStreamHandler) OnContextOptimized(optimizedMessages []ollama.Message, summary string, numKept int) {
-	h.recorder.UpdateHistory(optimizedMessages, summary, numKept)
 }
 
 // rawToRawMsgs decodes persisted session messages into RawMsg so they can be

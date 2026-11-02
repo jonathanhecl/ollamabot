@@ -1384,13 +1384,16 @@ function startSessionPolling() {
             }
           }
           
+          const wasBusy = state.agentBusy;
+          state.agentBusy = !!activeSess.agent_busy;
           if (msgsChanged) {
             state.messages = normalized;
             renderMessages();
             renderAttachments();
             updateContextBar();
+          } else if (wasBusy && !state.agentBusy && state.messages.length > 0) {
+            renderMessages();
           }
-          state.agentBusy = !!activeSess.agent_busy;
           state.pendingApproval = normalizeApprovalPayload(activeSess.pending_approval || state.pendingApproval);
           renderApprovalCard();
           updateComposerUI();
@@ -1455,6 +1458,8 @@ function startRealtimeEvents() {
       state.agentBusy = !!payload.busy;
       updateComposerUI();
       if (!state.agentBusy) {
+        // The turn finished: drop the waiting indicator from the timeline.
+        if (state.messages.length > 0) renderMessages();
         processNextQueueItem();
       }
     } catch (err) {
@@ -3559,24 +3564,10 @@ async function processNextQueueItem() {
   }
 }
 
-// Returns true if any assistant response is currently in progress (local or remote)
-function isAnyAssistantInProgress() {
-  const lastMsg = state.messages[state.messages.length - 1];
-  if (lastMsg && lastMsg.role === "assistant") {
-    const hasMetrics = lastMsg.metrics && lastMsg.metrics.total_duration;
-    if (!hasMetrics) {
-      const ts = lastMsg.timestamp ? new Date(lastMsg.timestamp) : null;
-      const now = new Date();
-      if (ts && (now - ts) < 60000) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
 function updateComposerUI() {
-  const remoteBusy = state.agentBusy || isAnyAssistantInProgress();
+  // Only the server knows whether a turn is running; a finished reply never
+  // counts as busy, whatever channel produced it.
+  const remoteBusy = state.agentBusy;
   const processing = state.isProcessing || remoteBusy;
   const awaitingApproval = !!state.pendingApproval && !processing;
   const bootstrapping = !state.bootstrapReady;
@@ -3728,20 +3719,6 @@ function renderMessages() {
   delete els.messages.dataset.emptyStateKey;
   els.messages.innerHTML = "";
 
-  // Detect if the last message is an assistant still in progress (e.g. from Telegram)
-  const lastMsg = state.messages[state.messages.length - 1];
-  let lastAssistantInProgress = false;
-  if (lastMsg && lastMsg.role === "assistant") {
-    const hasMetrics = lastMsg.metrics && lastMsg.metrics.total_duration;
-    if (!hasMetrics) {
-      const ts = lastMsg.timestamp ? new Date(lastMsg.timestamp) : null;
-      const now = new Date();
-      if (ts && (now - ts) < 60000) {
-        lastAssistantInProgress = true;
-      }
-    }
-  }
-
   let msgIdx = 0;
   for (const message of grouped) {
     if (message.role === "system") {
@@ -3761,7 +3738,9 @@ function renderMessages() {
 
     // For remote (Telegram/background) in-progress messages, synthesize waiting/streaming states
     const isLastMsg = message === grouped[grouped.length - 1];
-    const isRemoteProcessing = state.ollamaConnected && (lastAssistantInProgress || state.agentBusy) && isLastMsg && message.role === "assistant";
+    // A turn from another channel (Telegram, device) shows the waiting dots
+    // only while the server reports it as busy for this session.
+    const isRemoteProcessing = state.ollamaConnected && state.agentBusy && isLastMsg && message.role === "assistant";
     const effectiveWaiting = message.waiting || isRemoteProcessing;
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 

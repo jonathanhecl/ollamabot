@@ -243,6 +243,19 @@ func (r *Recorder) getOrCreateCurrentAssistantMsg() *RawMsg {
 	return msg
 }
 
+// getOrCreateAttachmentMsg returns the assistant message the attachment belongs
+// to. An attachment produced right after the model finished (spoken replies are
+// synthesized in OnFinalReply, after the stream ended) belongs to the turn that
+// just ended, so it must not open a new turn.
+func (r *Recorder) getOrCreateAttachmentMsg() *RawMsg {
+	if r.turnEnded && len(r.activeMessages) > 0 && r.activeMessages[len(r.activeMessages)-1].Role == "assistant" {
+		msg := &r.activeMessages[len(r.activeMessages)-1]
+		msg.Timestamp = time.Now().Format(time.RFC3339)
+		return msg
+	}
+	return r.getOrCreateAssistantMsg()
+}
+
 func (r *Recorder) OnThinking(delta string) {
 	r.mu.Lock()
 	r.getOrCreateAssistantMsg()
@@ -562,7 +575,7 @@ func (r *Recorder) AddAttachmentRef(ref string, mime string, path string) {
 // without the model spending another round-trip to repeat it.
 func (r *Recorder) AddAttachmentRefWithTranscription(ref string, mime string, path string, transcription string) {
 	r.mu.Lock()
-	msg := r.getOrCreateAssistantMsg()
+	msg := r.getOrCreateAttachmentMsg()
 	msg.AttachmentRefs = append(msg.AttachmentRefs, ref)
 
 	kind := "file"

@@ -1323,7 +1323,9 @@ func (r *Registry) Definitions() []ollama.Tool {
 	// so the model cannot trigger a plan approval flow at all.
 	dropPlan := r.planConfirmMode == "auto" || r.planConfirmMode == "never"
 	// The device channel has no UI and no mid-turn user input: questions,
-	// plans and voice notes must never reach the model as tools there.
+	// plans, voice notes and file deliveries must never reach the model as
+	// tools there. send_files especially: the device cannot receive files, and
+	// a model that keeps calling it stalls the whole turn in the loop guard.
 	dropDeviceTools := r.channel == "device"
 	if !dropPlan && !dropDeviceTools {
 		return r.defs
@@ -1336,7 +1338,7 @@ func (r *Registry) Definitions() []ollama.Tool {
 		}
 		if dropDeviceTools {
 			switch name {
-			case "ask_clarification", "present_plan", "send_voice":
+			case "ask_clarification", "present_plan", "send_voice", "send_files":
 				continue
 			}
 		}
@@ -1392,6 +1394,8 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		switch name {
 		case "ask_clarification", "present_plan", "send_voice":
 			return "", fmt.Errorf("tool %q is not available on the device channel: put questions in the spoken reply and let the user answer by voice", name)
+		case "send_files":
+			return "", fmt.Errorf("tool %q is not available on the device channel: it has no way to receive files", name)
 		}
 	}
 

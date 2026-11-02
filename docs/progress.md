@@ -10,6 +10,8 @@ Device turns now render like any other channel in the web UI, and Device Mode is
 - **Legacy titles (`internal/device/turns.go`)**: a one-time migration at mount renames sessions stored as "Device epaper-<id>" to "Device <id>", so existing devices stop showing the retired wording in the sidebar.
 - **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
 - **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+- **Turn completion (`internal/sessions/recorder.go`, `internal/agent/stream_recorder.go`)**: exported recorder-only stream handler; the device channel now records content, tool steps and metrics like web/Telegram, and a spoken reply attached after the stream ended lands on the turn that produced it instead of opening a new one.
+- **No phantom "processing" (`internal/web/static/app.js`)**: the timeline and composer rely on the server `agent_busy` flag instead of guessing from a missing `metrics` block and a 60s timestamp window; the view re-renders when a turn goes idle, so the waiting dots and the "Queue" button clear by themselves.
 
 ## 2026-11-02 — Web Settings: Device Channel Configuration
 
