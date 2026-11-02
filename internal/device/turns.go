@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/router"
@@ -561,11 +562,14 @@ func (c *Channel) runTurn(ctx context.Context, cancel context.CancelFunc, turnID
 		BaseHistory: history,
 	})
 	if err != nil {
+		// Internal failures (loop guard, model errors, tool crashes) stay in the
+		// log: the device only gets a short sentence it can show and speak.
+		log.Printf("[device] turn %s failed for session %s: %v", turnID, sessionID, err)
 		status := StatusFailed
-		message := err.Error()
+		message := "I could not complete that request."
 		if ctx.Err() != nil {
 			status = StatusCanceled
-			message = "turn canceled"
+			message = "Turn canceled."
 		}
 		c.turns.update(turnID, func(turn *Turn) {
 			turn.Status = status
@@ -646,6 +650,12 @@ func (c *Channel) engineDeps(turnID string) engine.Deps {
 		MCPManager:       deps.MCPManager,
 		SchedulerManager: deps.SchedulerManager,
 		ApprovalHandler:  denyApprovals{},
+		// Device turns have no transport to stream to, but the session still
+		// needs the recorder so the web timeline receives the tool steps,
+		// timings and metrics of a normal turn.
+		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
+			return agent.NewRecorderStreamHandler(recorder)
+		},
 		OnFinalReply: func(ctx context.Context, reply engine.FinalReplyContext) {
 			c.turns.update(turnID, func(turn *Turn) {
 				turn.Status = StatusSpeaking
