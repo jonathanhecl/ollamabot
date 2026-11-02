@@ -467,6 +467,59 @@ func (c *Channel) createSession(deviceID string) (string, error) {
 	return sess.ID, nil
 }
 
+// migrateLegacyTitles rewrites the device session titles created by older
+// builds ("Device epaper-<id>") to the current "Device <id>" form. It runs once
+// when the channel mounts, so existing devices do not keep the retired wording
+// in the web UI and in the session list.
+func (c *Channel) migrateLegacyTitles() {
+	c.migrateOnce.Do(func() {
+		deps := c.deps()
+		if deps.SessionStore == nil {
+			return
+		}
+		list, err := deps.SessionStore.List()
+		if err != nil {
+			log.Printf("[device] could not list sessions to rename legacy titles: %v", err)
+			return
+		}
+		for _, entry := range list {
+			title := normalizeDeviceTitle(entry.Title)
+			if title == "" {
+				continue
+			}
+			sess, err := deps.SessionStore.Get(entry.ID)
+			if err != nil {
+				continue
+			}
+			sess.Title = title
+			if err := deps.SessionStore.Save(sess); err != nil {
+				log.Printf("[device] could not rename session %s: %v", entry.ID, err)
+				continue
+			}
+			sessions.NotifyUpdate(entry.ID)
+		}
+	})
+}
+
+// normalizeDeviceTitle converts a legacy device session title to the current
+// form and returns "" when the title needs no change.
+func normalizeDeviceTitle(title string) string {
+	trimmed := strings.TrimSpace(title)
+	if !strings.HasPrefix(strings.ToLower(trimmed), "device ") {
+		return ""
+	}
+	rest := strings.TrimSpace(trimmed[len("device "):])
+	if !strings.HasPrefix(strings.ToLower(rest), "epaper") {
+		return ""
+	}
+	rest = strings.TrimSpace(rest[len("epaper"):])
+	rest = strings.TrimLeft(rest, "-–—: ")
+	if rest == "" {
+		return "Device"
+	}
+	return "Device " + rest
+}
+
 // links returns the persisted device → session map, cached per sessions path.
 func (c *Channel) links(deps Deps) *sessionLinks {
 	path := deviceLinksFile

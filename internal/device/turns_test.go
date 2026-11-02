@@ -548,3 +548,51 @@ func TestWAVHelpers(t *testing.T) {
 		t.Fatal("wavData changed a non-WAV payload")
 	}
 }
+
+func TestNormalizeDeviceTitle(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"Device epaper-94a5d71d0470", "Device 94a5d71d0470"},
+		{"device EPAPER-kitchen-1", "Device kitchen-1"},
+		{"Device epaper", "Device"},
+		{"Device kitchen-1", ""},
+		{"Telegram Chat (42)", ""},
+		{"New session", ""},
+	}
+	for _, tc := range cases {
+		if got := normalizeDeviceTitle(tc.in); got != tc.want {
+			t.Fatalf("normalizeDeviceTitle(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestMigrateLegacyDeviceTitles(t *testing.T) {
+	store := sessions.NewStore(t.TempDir())
+	legacy := sessions.Session{ID: sessions.GenerateID(), Title: "Device epaper-94a5d71d0470"}
+	current := sessions.Session{ID: sessions.GenerateID(), Title: "Device kitchen-1"}
+	other := sessions.Session{ID: sessions.GenerateID(), Title: "Telegram Chat (42)"}
+	for _, sess := range []sessions.Session{legacy, current, other} {
+		if err := store.Save(sess); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	channel := NewChannel(func() Deps { return Deps{SessionStore: store} })
+	channel.migrateLegacyTitles()
+	channel.migrateLegacyTitles() // second run must be a no-op
+
+	if sess, err := store.Get(legacy.ID); err != nil {
+		t.Fatal(err)
+	} else if sess.Title != "Device 94a5d71d0470" {
+		t.Fatalf("legacy title = %q", sess.Title)
+	}
+	if sess, err := store.Get(current.ID); err != nil {
+		t.Fatal(err)
+	} else if sess.Title != "Device kitchen-1" {
+		t.Fatalf("current title changed to %q", sess.Title)
+	}
+	if sess, err := store.Get(other.ID); err != nil {
+		t.Fatal(err)
+	} else if sess.Title != "Telegram Chat (42)" {
+		t.Fatalf("unrelated title changed to %q", sess.Title)
+	}
+}
