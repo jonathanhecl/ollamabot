@@ -4280,6 +4280,12 @@ function renderStep(step, isLive = false, isLastStep = false) {
       }
       return `<details class="step step-event"><summary><span class="step-tool-icon">ℹ️</span> ${escapeHtml(label)}${dur}</summary>${dataHtml}</details>`;
     }
+    case "error": {
+      // A failed or aborted turn: always visible, so the session review shows
+      // what stopped the run even when the model produced no text.
+      const label = step.content || "Turn failed.";
+      return `<details class="step step-error" open><summary><span class="step-tool-icon">⚠️</span> <strong>turn failed</strong></summary><pre>${escapeHtml(label)}</pre></details>`;
+    }
     case "image_progress": {
       let status = step.status;
       if (step.imageURL) {

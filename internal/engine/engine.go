@@ -227,6 +227,9 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	}
 	result.FinalHistory = finalHistory
 	if runErr != nil {
+		// Leave the failure in the timeline: the web is where a turn is reviewed
+		// later, and an aborted turn would otherwise show an empty card.
+		recorder.RecordFailure(runErr)
 		if _, saveErr := recorder.SnapshotAndSave(); saveErr != nil {
 			log.Printf("[Engine] Failed to persist partial session snapshot: %v", saveErr)
 		}

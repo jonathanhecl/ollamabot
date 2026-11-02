@@ -1,7 +1,9 @@
 package sessions
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -450,6 +452,35 @@ func (r *Recorder) UpdatePlanProgress(plan SessionPlan) {
 }
 
 func (r *Recorder) OnMediaPreProcessing(content string) {}
+
+// RecordFailure writes a failed or aborted turn into the session timeline, so
+// the web shows what happened instead of an empty assistant card. The full
+// error stays in the session for review; channels that speak to the user keep
+// sending their own short sentence.
+func (r *Recorder) RecordFailure(turnErr error) {
+	if r == nil || turnErr == nil {
+		return
+	}
+	message := strings.TrimSpace(turnErr.Error())
+	if errors.Is(turnErr, context.Canceled) {
+		message = "Turn canceled."
+	}
+	if message == "" {
+		message = "Unknown error."
+	}
+	r.mu.Lock()
+	msg := r.getOrCreateCurrentAssistantMsg()
+	r.currentTurn.Steps = append(r.currentTurn.Steps, Step{
+		Type:      "error",
+		Content:   message,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+	})
+	if strings.TrimSpace(msg.Content) == "" {
+		msg.Content = "⚠️ " + message
+	}
+	r.mu.Unlock()
+	r.NotifyUpdate(true)
+}
 
 // RecordEvent appends a generic, human-readable decision/event to the current
 // turn timeline (e.g. model selection, memory recall, context optimization).
