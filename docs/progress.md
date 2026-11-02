@@ -1,8 +1,18 @@
 # Progress
 
+## 2026-11-02 — Device Mode sessions in the web timeline
+
+Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:
+
+- **Session persistence (`internal/device/turns.go`)**: every incoming audio is stored as a real user message (`device_audio_<turnID>.<ext>`, `Kind: audio`) before the turn runs, and the turn is processed with `BaseHistory` + `MediaMessagesFromRaw`, so `engine.ApplyMediaMetadata` fills the transcription on that user message. Each turn now produces its own user/assistant pair instead of an empty user bubble and merged assistant cards.
+- **Web rendering (`internal/web/static/app.js`)**: audio attachments resolve their URL from the session attachment route for any audio file, not only `voice_*`, so `device_reply_*.wav` play in the timeline with their transcription.
+- **Model policy (`internal/agent/loop.go`, `internal/tools/scheduler_tools.go`)**: new `Registry.Channel()` accessor; when the turn runs on the device channel a "Device Mode" system instruction asks for short spoken answers (plain language, 1–3 sentences, no Markdown, bounded by `DEVICE_REPLY_MAX_CHARS`).
+- **UI wording**: "Device Mode" everywhere in Settings, no hardware-specific naming left; fixed `#deviceContainer` being always expanded (duplicated `display` in the inline style) and `loadSettings()` now populating the device fields on load.
+- **Tests**: `internal/device/turns_test.go` asserts the persisted user audio attachment, its transcription, and the [user, assistant, user, assistant] sequence across two turns.
+
 ## 2026-11-02 — Web Settings: Device Channel Configuration
 
-Added full configuration support for the audio Device Channel (ESP32 / hardware clients) directly in the Web UI Settings:
+Added full configuration support for Device Mode (audio clients) directly in the Web UI Settings:
 
 - **Web Server REST API (`internal/web/server.go`)**:
   - Expanded `SettingsResponse` to include `device_enabled`, `device_token`, `device_max_audio_mb`, `device_turn_timeout_minutes`, and `device_reply_max_chars`.
@@ -621,7 +631,7 @@ Improved UX when voice/audio recording is not supported by the browser (e.g. non
 - `internal/web/static/styles.css`: added `.recording-btn.unsupported` and `[aria-disabled="true"]` styles with muted gray background, line border, not-allowed cursor, and lowered opacity to clearly signal unavailable state.
 - `internal/web/static/app.js`: added `isAudioRecordingSupported()` and `updateRecordSupport()` to dynamically detect secure context and MediaDevices support, graying out the button and attaching a descriptive tooltip. Replaced `addSystemMessage` chat bubble error spam with non-intrusive floating `showToast(..., "error")` notifications when recording cannot start.
 
-## 2026-10-31 — Audio device channel for ESP32-class clients
+## 2026-10-31 — Device Mode for audio clients
 
 Added an audio-to-audio channel for small devices with a microphone, speaker and screen. A device uploads a clip, polls an asynchronous turn and downloads a spoken reply; the conversation is a normal session visible in the web UI.
 
@@ -630,4 +640,4 @@ Added an audio-to-audio channel for small devices with a microphone, speaker and
 - `internal/tools`: `PrepareVoiceText` exported for channels that speak every reply; `ask_clarification`, `present_plan` and `send_voice` are hidden and rejected on the `device` channel; the registry keeps the risk gate active with a deny-all approval handler so risky tools fail instead of waiting for a button nobody can press.
 - `internal/web`: mounts the device routes before the password middleware and validates the device configuration at startup.
 - `internal/config` / `.env.example`: `DEVICE_ENABLED`, `DEVICE_TOKEN`, `DEVICE_MAX_AUDIO_MB`, `DEVICE_TURN_TIMEOUT_MINUTES`, `DEVICE_REPLY_MAX_CHARS`, persisted by `SaveBasic`.
-- `docs/device-api.md`: full HTTP contract, requirements, ESP32 notes and firmware flow.
+- `docs/device-api.md`: full HTTP contract, requirements, device notes and firmware flow.

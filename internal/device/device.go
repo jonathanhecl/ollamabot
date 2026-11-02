@@ -1,5 +1,5 @@
-// Package device implements the HTTP channel used by small audio devices
-// (ESP32-class hardware with a microphone, a speaker and a screen) that talk to
+// Package device implements the HTTP channel used by audio devices (a
+// microphone, a speaker and a screen, or just a speaker) that talk to
 // ollamabot audio-to-audio.
 //
 // The channel is transport only: it authenticates the device, accepts audio,

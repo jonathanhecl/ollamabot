@@ -13,7 +13,6 @@ import (
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
-	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
@@ -496,15 +495,17 @@ func (c *Channel) runTurn(ctx context.Context, cancel context.CancelFunc, turnID
 		turn.Stage = stageThinking
 	})
 
-	encoded := base64.StdEncoding.EncodeToString(audio)
-	media := router.MediaMessage{
-		Message:    ollama.Message{Role: "user", Images: []string{encoded}},
-		ImageKinds: []string{"audio"},
+	deps := c.deps()
+	history := append(engine.LoadSessionRawMessages(deps.SessionStore, sessionID), userAudioMessage(turnID, audioType, audio))
+	if err := engine.SaveRawMessages(deps.SessionStore, sessionID, history); err != nil {
+		log.Printf("[device] could not persist the incoming audio for session %s: %v", sessionID, err)
 	}
+
 	result, err := engine.ProcessTurn(ctx, c.engineDeps(turnID), engine.TurnRequest{
-		SessionID: sessionID,
-		Channel:   ChannelName,
-		Messages:  []router.MediaMessage{media},
+		SessionID:   sessionID,
+		Channel:     ChannelName,
+		Messages:    engine.MediaMessagesFromRaw(history),
+		BaseHistory: history,
 	})
 	if err != nil {
 		status := StatusFailed
@@ -539,6 +540,42 @@ func (c *Channel) runTurn(ctx context.Context, cancel context.CancelFunc, turnID
 			turn.DisplayText = "No reply."
 		}
 	})
+}
+
+// userAudioMessage turns the uploaded recording into a regular user message, so
+// the session timeline shows the audio with its transcription, the same way the
+// web and Telegram channels do.
+func userAudioMessage(turnID, audioType string, audio []byte) sessions.RawMsg {
+	encoded := base64.StdEncoding.EncodeToString(audio)
+	return sessions.RawMsg{
+		Role:       "user",
+		Timestamp:  time.Now().Format(time.RFC3339),
+		Channel:    ChannelName,
+		Images:     []string{encoded},
+		ImageKinds: []string{"audio"},
+		Attachments: []sessions.AttachmentMeta{{
+			Name: "device_audio_" + turnID + audioExtension(audioType),
+			Mime: audioType,
+			Kind: "audio",
+			Data: encoded,
+			Size: int64(len(audio)),
+		}},
+	}
+}
+
+func audioExtension(audioType string) string {
+	switch audioType {
+	case "audio/pcm":
+		return ".pcm"
+	case "audio/ogg":
+		return ".ogg"
+	case "audio/mpeg":
+		return ".mp3"
+	case "audio/mp4":
+		return ".m4a"
+	default:
+		return ".wav"
+	}
 }
 
 // engineDeps wires the shared engine for a device turn. The device never

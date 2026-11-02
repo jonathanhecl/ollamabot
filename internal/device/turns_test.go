@@ -208,6 +208,42 @@ func TestTurnCompletesAndStoresSession(t *testing.T) {
 		t.Fatalf("session title = %q", sess.Title)
 	}
 
+	// The uploaded audio is persisted as a real user message with its
+	// transcription, so the web timeline renders the same blocks as web and
+	// Telegram turns.
+	msgs := decodeMessages(t, sess)
+	if len(msgs) < 2 {
+		t.Fatalf("session has %d messages, want user + assistant", len(msgs))
+	}
+	if msgs[0].Role != "user" {
+		t.Fatalf("first message role = %q, want user", msgs[0].Role)
+	}
+	if len(msgs[0].Attachments) != 1 {
+		t.Fatalf("user message has %d attachments, want 1", len(msgs[0].Attachments))
+	}
+	audio := msgs[0].Attachments[0]
+	if audio.Kind != "audio" || audio.Name == "" {
+		t.Fatalf("user attachment = %+v, want a named audio attachment", audio)
+	}
+	if !strings.HasPrefix(audio.Name, "device_audio_") || !strings.HasSuffix(audio.Name, ".wav") {
+		t.Fatalf("user audio name = %q", audio.Name)
+	}
+	if audio.Mime != "audio/wav" {
+		t.Fatalf("user audio mime = %q", audio.Mime)
+	}
+	if audio.Transcription != "turn on the kitchen light" {
+		t.Fatalf("user audio transcription = %q", audio.Transcription)
+	}
+	if audio.Data == "" || audio.ProcessedBy == "" {
+		t.Fatalf("user audio metadata missing: data=%d bytes processed_by=%q", len(audio.Data), audio.ProcessedBy)
+	}
+	if len(msgs[0].Images) != 1 || msgs[0].Images[0] == "" {
+		t.Fatalf("user message kept %d images, want the recording", len(msgs[0].Images))
+	}
+	if msgs[1].Role != "assistant" {
+		t.Fatalf("second message role = %q, want assistant", msgs[1].Role)
+	}
+
 	// The next turn continues the same conversation.
 	rec = postAudio(t, mux, testDeviceID, "audio/wav", false)
 	var second createTurnResponse
@@ -216,6 +252,39 @@ func TestTurnCompletesAndStoresSession(t *testing.T) {
 		t.Fatalf("second turn moved to session %q", second.SessionID)
 	}
 	waitForTurnStatus(t, mux, testDeviceID, second.TurnID, StatusReady, StatusFailed)
+
+	// Each exchange keeps its own user and assistant blocks; two assistant
+	// messages never sit next to each other, or the web UI merges them.
+	sess, err = store.Get(created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs = decodeMessages(t, sess)
+	if len(msgs) != 4 {
+		t.Fatalf("session has %d messages after two turns, want 4", len(msgs))
+	}
+	wantRoles := []string{"user", "assistant", "user", "assistant"}
+	for i, want := range wantRoles {
+		if msgs[i].Role != want {
+			t.Fatalf("message %d role = %q, want %q", i, msgs[i].Role, want)
+		}
+	}
+	if msgs[2].Attachments[0].Transcription != "turn on the kitchen light" {
+		t.Fatalf("second turn transcription = %q", msgs[2].Attachments[0].Transcription)
+	}
+}
+
+func decodeMessages(t *testing.T, sess sessions.Session) []sessions.RawMsg {
+	t.Helper()
+	out := make([]sessions.RawMsg, 0, len(sess.Messages))
+	for _, raw := range sess.Messages {
+		var msg sessions.RawMsg
+		if err := json.Unmarshal(raw, &msg); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func TestBusyDeviceGetsConflictUntilCancel(t *testing.T) {

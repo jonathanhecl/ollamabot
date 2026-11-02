@@ -1798,6 +1798,12 @@ async function loadSettings() {
   els.telegramBotToken.value = state.settings.telegram_bot_token || "";
   els.telegramAuthorizedIds.value = state.settings.telegram_authorized_ids || "";
   els.telegramStartupNotification.checked = state.settings.telegram_startup_notification !== false;
+  els.deviceEnabled.checked = !!state.settings.device_enabled;
+  els.deviceContainer.style.display = state.settings.device_enabled ? "flex" : "none";
+  els.deviceToken.value = state.settings.device_token || "";
+  els.deviceMaxAudioMB.value = state.settings.device_max_audio_mb || 15;
+  els.deviceTurnTimeout.value = state.settings.device_turn_timeout_minutes || 5;
+  els.deviceReplyMaxChars.value = state.settings.device_reply_max_chars || 900;
   els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
 
   const searchEnabled = !!state.settings.web_search_enabled;
@@ -5387,7 +5393,7 @@ function normalizeRawMessages(rawMessages) {
       if ((!url || url === "undefined") && att.kind === "image" && att.name?.startsWith("generated_") && state.activeSessionId) {
         url = generatedImageURL(state.activeSessionId, att.name);
       }
-      if ((!url || url === "undefined") && att.kind === "audio" && att.name?.startsWith("voice_") && state.activeSessionId) {
+      if ((!url || url === "undefined") && att.kind === "audio" && att.name && state.activeSessionId) {
         // Synthesized replies live next to generated images in the session
         // attachments directory, so the same download route serves them.
         url = generatedImageURL(state.activeSessionId, att.name);

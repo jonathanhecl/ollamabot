@@ -690,11 +690,11 @@
             <div class="checkbox-row" style="margin-bottom: 14px;">
               <label class="think-toggle">
                 <input id="deviceEnabled" type="checkbox" />
-                <span>Enable Device Channel (Audio Clients / ESP32)</span>
+                <span>Enable Device Mode</span>
               </label>
             </div>
             <!-- Device Options Container -->
-            <div id="deviceContainer" style="display: none; border-left: 2px solid var(--line); padding-left: 14px; display: flex; flex-direction: column; gap: 10px;">
+            <div id="deviceContainer" style="display: none; border-left: 2px solid var(--line); padding-left: 14px; flex-direction: column; gap: 10px;">
               <label>
                 Device Token
                 <div class="password-input-wrapper" style="position: relative; display: flex; align-items: center; width: 100%;">
@@ -702,7 +702,7 @@
                   <button type="button" class="password-toggle-btn" style="position: absolute; right: 8px; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; height: 100%; width: 32px; padding: 0; outline: none; user-select: none;" title="Toggle visibility">👁️</button>
                 </div>
                 <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; margin-top: 4px; display: block;">
-                  Shared secret sent in <code>X-Device-Token</code> or <code>Authorization: Bearer</code> header. Required when Device Channel is enabled.
+                  Shared secret sent in <code>X-Device-Token</code> or <code>Authorization: Bearer</code> header. Required when Device Mode is enabled.
                 </small>
               </label>
               <label style="margin-top: 4px;">
@@ -728,7 +728,7 @@
               </label>
               <div style="margin-top: 6px; padding: 10px; background: var(--bg-secondary, rgba(255,255,255,0.03)); border: 1px solid var(--line); border-radius: 6px;">
                 <small style="color: var(--muted); font-size: 0.82em; line-height: 1.4; display: block;">
-                  💡 <strong>Requirements:</strong> Physical devices on LAN require <code>Server expose network</code> enabled (in the Server tab), an audio transcription model (in Ollama settings or model router), and a speech model (<code>OLLAMA_MODEL_SPEECH</code>).
+                  💡 <strong>Requirements:</strong> Devices on the local network require <code>Server expose network</code> enabled (in the Server tab), an audio transcription model (in Ollama settings or model router), and a speech model (<code>OLLAMA_MODEL_SPEECH</code>).
                 </small>
               </div>
             </div>

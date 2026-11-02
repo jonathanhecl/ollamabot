@@ -7,7 +7,7 @@ This folder holds the living state of the project: what's done, what's pending, 
 - [ollama-usage.md](ollama-usage.md): practical guide to using the Ollama API in this project.
 - [ollama-reference.md](ollama-reference.md): generated reference with minimal payloads and source links.
 - [media-routing.md](media-routing.md): full media routing flow for audio/image attachments, including the decision matrix and SSE event format.
-- [device-api.md](device-api.md): HTTP contract for the audio device channel (ESP32-class clients), including auth, turn lifecycle, spoken replies and firmware flow.
+- [device-api.md](device-api.md): HTTP contract for the audio device channel, including auth, turn lifecycle, spoken replies and client flow.
 
 ## Current Status
 
@@ -23,7 +23,7 @@ The system is fully implemented in Go and can:
 - Save a cached snapshot of models/expected results.
 - Serve a local web UI for browsing models, capabilities, memory, sessions, skills, and chatting with a main model.
 - Run a Telegram bot with full feature parity: chat, media, inline keyboards, session management, goals, projects, and feedback.
-- Serve an audio-to-audio device channel: authenticated uploads, asynchronous turns and spoken replies for ESP32-class clients.
+- Serve an audio-to-audio device channel: authenticated uploads, asynchronous turns and spoken replies for device clients.
 - Execute an autonomous agent loop with 20+ tools, plan management, goals, and background projects.
 - Perform multimodal routing (vision/audio) with structured transcription and dedicated model roles.
 - Manage long-term RAG memory with local embeddings.

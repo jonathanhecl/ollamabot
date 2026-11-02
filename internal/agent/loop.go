@@ -1378,6 +1378,25 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 		})
 	}
 
+	// Device channel: the reply is spoken aloud on a small screen-less client, so
+	// the agent must keep it short and free of markup.
+	if a.registry != nil && a.registry.Channel() == "device" {
+		limit := a.config().DeviceReplyMaxChars
+		if limit <= 0 {
+			limit = 900
+		}
+		prefix = append(prefix, ollama.Message{
+			Role: "system",
+			Content: fmt.Sprintf("## Device Mode\n"+
+				"You are answering a voice device: your reply is synthesized into speech and played on a small screen-less client. "+
+				"Answer in plain, conversational language, as if you were speaking. "+
+				"Keep the answer as short as the question allows, ideally one to three sentences and never above %d characters: the device truncates anything longer. "+
+				"Do not use Markdown, headings, lists, tables, code blocks, emoji, URLs or file paths; write numbers and dates the way they are read aloud. "+
+				"When a task needs a long explanation or many steps, give the essential result out loud and offer to send the details in text instead. "+
+				"You cannot ask follow-up questions or wait for confirmation: choose a reasonable default and state it briefly.", limit),
+		})
+	}
+
 	// Image generation instruction (static)
 	if strings.TrimSpace(a.config().OllamaModelImage) != "" {
 		prefix = append(prefix, ollama.Message{

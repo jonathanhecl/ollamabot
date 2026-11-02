@@ -63,7 +63,7 @@ In a single Telegram chat session, you can orchestrate multiple local models for
 | **Config** | `internal/config` | `.env` is the runtime source of truth; `ResolveModel(role)` picks models |
 | **Web channel** | `internal/web` | Local UI, settings editor, session browser, SSE streaming |
 | **Telegram channel** | `internal/telegram` | Bot API, media download, inline approvals, chunked replies |
-| **Device channel** | `internal/device` | Audio device API (ESP32-class): token auth, async turns, spoken replies |
+| **Device channel** | `internal/device` | Device Mode: audio in, spoken replies, token auth, async turns |
 
 **Web vs Telegram:** same `engine.ProcessTurn` pipeline. The web UI adds configuration panels,
 memory explorer, project dashboard, and richer step/metrics display. Telegram keeps channel-specific

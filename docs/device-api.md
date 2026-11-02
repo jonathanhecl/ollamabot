@@ -1,8 +1,8 @@
 # Device Channel API
 
-The device channel lets a small audio device — an ESP32 with a microphone, a
-speaker and a screen — talk to ollamabot audio-to-audio. The device records a
-clip, uploads it, polls for progress and downloads a spoken reply.
+The device channel lets an audio device — a microphone, a speaker and a screen,
+or nothing more than a speaker — talk to ollamabot audio-to-audio. The device
+records a clip, uploads it, polls for progress and downloads a spoken reply.
 
 A device turn is a normal session turn: it runs `engine.ProcessTurn` with its
 own conversation, appears in the web UI with its history and its spoken reply,
@@ -302,10 +302,20 @@ other session.
   button nobody can press. Safe tools keep working.
 - **Deterministic speech.** Every reply is spoken once from the final answer, not
   through `send_voice`, so there is exactly one audio file per turn.
+- **Short spoken answers.** The system prompt tells the model it is answering a
+  voice device: plain conversational language, no Markdown, one to three
+  sentences and never more than `DEVICE_REPLY_MAX_CHARS`. Long explanations are
+  summarized out loud, and the model picks a reasonable default instead of
+  asking a question it cannot get answered.
+- **Full session detail.** The uploaded clip is persisted as a regular user
+  message — recording, MIME type and transcription — and the spoken reply is an
+  assistant attachment with its own transcription. Each exchange therefore
+  renders in the web UI with its own user block, assistant block and model
+  steps, exactly like a web or Telegram turn.
 - **Capped speech.** `DEVICE_REPLY_MAX_CHARS` limits what is spoken; the full
   answer and the transcript stay in the session and in the web UI.
 
-## ESP32 notes
+## Device notes
 
 - 8 MB of PSRAM is enough for a typical reply: 900 characters at 24 kHz, 16-bit
   mono is about 2.9 MB. `Range` support makes partial playback possible without

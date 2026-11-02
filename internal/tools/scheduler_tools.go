@@ -127,6 +127,15 @@ func (r *Registry) SetChannel(channel string) {
 	r.channel = channel
 }
 
+// Channel reports the transport the current turn came from ("web", "telegram",
+// "device"...). The agent uses it to adapt its answer to the channel.
+func (r *Registry) Channel() string {
+	if r == nil {
+		return ""
+	}
+	return r.channel
+}
+
 func (r *Registry) SetTargetChatID(chatID int64) {
 	r.targetChatID = chatID
 }
