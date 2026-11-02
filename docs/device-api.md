@@ -115,6 +115,7 @@ queued → processing → speaking → ready
 |--------|---------|---------------------------|
 | `queued` | `queued` | Show "sending"; the turn has not started yet |
 | `processing` | `thinking` | Show a thinking animation |
+| `processing` | `working` | A tool is running; `activity` names it (e.g. `web_search`) |
 | `processing` | `heard you` | Show the transcript; the agent is working |
 | `speaking` | `speaking` | Audio is being synthesized; show the final text if you have it |
 | `ready` | `done` | Show `display_text` and play `audio_url` when `audio_ready` |
@@ -191,6 +192,7 @@ first ten seconds. The full payload:
   "session_id": "abc123",
   "status": "ready",
   "stage": "done",
+  "activity": "",
   "display_text": "The kitchen light is on.",
   "transcript": "turn on the kitchen light",
   "audio_ready": true,
@@ -210,6 +212,7 @@ first ten seconds. The full payload:
 |-------|--------------|---------|
 | `turn_id`, `session_id`, `status` | always | Identity and state |
 | `stage` | not `queued` failures | Short screen label from the table above |
+| `activity` | `stage` is `working` | Name of the tool the agent is running |
 | `display_text` | `ready` | Plain text for the screen, ~180 chars |
 | `transcript` | transcription succeeded | What the device said, as text |
 | `audio_ready` | always | `true` only when a reply file exists |

@@ -32,6 +32,7 @@ const (
 
 const (
 	stageThinking = "thinking"
+	stageWorking  = "working"
 	stageHeard    = "heard you"
 	stageSpeaking = "speaking"
 	stageDone     = "done"
@@ -47,6 +48,7 @@ type Turn struct {
 	SessionID   string
 	Status      string
 	Stage       string
+	Activity    string
 	DisplayText string
 	Transcript  string
 	Error       string
@@ -72,6 +74,7 @@ type TurnView struct {
 	SessionID     string    `json:"session_id"`
 	Status        string    `json:"status"`
 	Stage         string    `json:"stage,omitempty"`
+	Activity      string    `json:"activity,omitempty"`
 	DisplayText   string    `json:"display_text,omitempty"`
 	Transcript    string    `json:"transcript,omitempty"`
 	AudioReady    bool      `json:"audio_ready"`
@@ -96,6 +99,7 @@ func (t *Turn) view() TurnView {
 		SessionID:     t.SessionID,
 		Status:        t.Status,
 		Stage:         t.Stage,
+		Activity:      t.Activity,
 		DisplayText:   t.DisplayText,
 		Transcript:    t.Transcript,
 		AudioMIME:     t.AudioMIME,
@@ -443,7 +447,10 @@ func (c *Channel) ensureSession(deviceID string) (string, error) {
 	deps := c.deps()
 	links := c.links(deps)
 	if id := links.Get(deviceID); id != "" {
-		if _, err := deps.SessionStore.Get(id); err == nil {
+		if sess, err := deps.SessionStore.Get(id); err == nil {
+			// Self-heal legacy titles on contact as well: a session created by an
+			// older build is renamed even if the startup sweep already ran.
+			c.normalizeSessionTitle(deps, sess)
 			return id, nil
 		}
 	}
@@ -492,11 +499,13 @@ func (c *Channel) migrateLegacyTitles() {
 			if err != nil {
 				continue
 			}
+			previous := sess.Title
 			sess.Title = title
 			if err := deps.SessionStore.Save(sess); err != nil {
 				log.Printf("[device] could not rename session %s: %v", entry.ID, err)
 				continue
 			}
+			log.Printf("[device] renamed legacy session title %q -> %q", previous, title)
 			sessions.NotifyUpdate(entry.ID)
 		}
 	})
@@ -519,6 +528,21 @@ func normalizeDeviceTitle(title string) string {
 		return "Device"
 	}
 	return "Device " + rest
+}
+
+// normalizeSessionTitle rewrites a stored legacy device title in place.
+func (c *Channel) normalizeSessionTitle(deps Deps, sess sessions.Session) {
+	title := normalizeDeviceTitle(sess.Title)
+	if title == "" {
+		return
+	}
+	sess.Title = title
+	if err := deps.SessionStore.Save(sess); err != nil {
+		log.Printf("[device] could not rename session %s: %v", sess.ID, err)
+		return
+	}
+	log.Printf("[device] renamed legacy session title %q -> %q", sess.Title, title)
+	sessions.NotifyUpdate(sess.ID)
 }
 
 // links returns the persisted device → session map, cached per sessions path.
@@ -654,7 +678,12 @@ func (c *Channel) engineDeps(turnID string) engine.Deps {
 		// needs the recorder so the web timeline receives the tool steps,
 		// timings and metrics of a normal turn.
 		StreamHandlerFactory: func(recorder *sessions.Recorder, model string) agent.StreamHandler {
-			return agent.NewRecorderStreamHandler(recorder)
+			return &turnStageHandler{
+				StreamHandler: agent.NewRecorderStreamHandler(recorder),
+				update: func(fn func(*Turn)) {
+					c.turns.update(turnID, fn)
+				},
+			}
 		},
 		OnFinalReply: func(ctx context.Context, reply engine.FinalReplyContext) {
 			c.turns.update(turnID, func(turn *Turn) {
@@ -689,6 +718,42 @@ func (c *Channel) engineDeps(turnID string) engine.Deps {
 			}
 		},
 	}
+}
+
+// turnStageHandler keeps the device informed while the agent works: the stage
+// moves to "working" with the running tool name and returns to "thinking" once
+// the tool finishes, so the client can show progress during a long tool loop.
+// Everything else is forwarded to the recorder handler unchanged.
+type turnStageHandler struct {
+	agent.StreamHandler
+	update func(func(*Turn))
+}
+
+func (h *turnStageHandler) OnThinking(delta string) {
+	h.update(func(t *Turn) {
+		if t.Stage != stageWorking {
+			t.Stage = stageThinking
+		}
+	})
+	h.StreamHandler.OnThinking(delta)
+}
+
+func (h *turnStageHandler) OnToolStart(name string, args any, source string) {
+	h.update(func(t *Turn) {
+		t.Stage = stageWorking
+		t.Activity = name
+	})
+	h.StreamHandler.OnToolStart(name, args, source)
+}
+
+func (h *turnStageHandler) OnToolResult(name, result, source string) {
+	h.update(func(t *Turn) {
+		if t.Stage == stageWorking && t.Activity == name {
+			t.Stage = stageThinking
+			t.Activity = ""
+		}
+	})
+	h.StreamHandler.OnToolResult(name, result, source)
 }
 
 // denyApprovals answers every risky-tool request with a denial. The tool layer

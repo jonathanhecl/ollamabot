@@ -596,3 +596,59 @@ func TestMigrateLegacyDeviceTitles(t *testing.T) {
 		t.Fatalf("unrelated title changed to %q", sess.Title)
 	}
 }
+
+// stubStreamHandler absorbs agent stream callbacks; turnStageHandler only needs
+// to forward to something that accepts them.
+type stubStreamHandler struct{}
+
+func (stubStreamHandler) OnThinking(string)                       {}
+func (stubStreamHandler) OnContent(string)                        {}
+func (stubStreamHandler) OnToolCall(ollama.ToolCall)              {}
+func (stubStreamHandler) OnToolStart(string, any, string)         {}
+func (stubStreamHandler) OnToolResult(string, string, string)     {}
+func (stubStreamHandler) OnMediaPreProcessing(string)             {}
+func (stubStreamHandler) OnDone(ollama.ChatResponse)              {}
+func (stubStreamHandler) OnEvent(string, any)                     {}
+func (stubStreamHandler) OnContextOptimizationStart(int, float64) {}
+func (stubStreamHandler) OnContextOptimizationEnd(int, float64, float64) {
+}
+func (stubStreamHandler) OnContextOptimized([]ollama.Message, string, int) {}
+
+func TestTurnStageHandlerReportsToolWork(t *testing.T) {
+	turns := newTurnStore(time.Hour)
+	turns.create(&Turn{ID: "t1", Stage: stageThinking})
+	handler := &turnStageHandler{
+		StreamHandler: stubStreamHandler{},
+		update:        func(fn func(*Turn)) { turns.update("t1", fn) },
+	}
+
+	handler.OnToolStart("web_search", map[string]any{"query": "clima"}, "internal")
+	view, _ := turns.view("t1")
+	if view.Stage != stageWorking || view.Activity != "web_search" {
+		t.Fatalf("stage after tool start = %q/%q, want working/web_search", view.Stage, view.Activity)
+	}
+
+	handler.OnToolResult("web_search", "ok", "internal")
+	view, _ = turns.view("t1")
+	if view.Stage != stageThinking || view.Activity != "" {
+		t.Fatalf("stage after tool result = %q/%q, want thinking/empty", view.Stage, view.Activity)
+	}
+}
+
+func TestEnsureSessionRenamesLegacyTitle(t *testing.T) {
+	store := sessions.NewStore(t.TempDir())
+	legacy := sessions.Session{ID: "sess-legacy", Title: "Device epaper-94a5d71d0470"}
+	if err := store.Save(legacy); err != nil {
+		t.Fatal(err)
+	}
+	channel := NewChannel(func() Deps { return Deps{SessionStore: store} })
+	channel.normalizeSessionTitle(Deps{SessionStore: store}, legacy)
+
+	sess, err := store.Get("sess-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Title != "Device 94a5d71d0470" {
+		t.Fatalf("title = %q", sess.Title)
+	}
+}
