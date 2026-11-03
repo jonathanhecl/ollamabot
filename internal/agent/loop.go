@@ -907,6 +907,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Action or plan approval was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool or plan call. Inform the user that the action was not approved/timed out and ask how to proceed.]", result)
 				} else if isMCPValidationError {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The MCP tool rejected the provided arguments (schema validation error -32602). Do NOT retry with identical arguments; verify tool parameter schema or try a different approach.]", result)
+				} else if isError {
+					hint := fmt.Sprintf("\n\n[SYSTEM HINT: Tool '%s' execution failed. Do NOT repeat the exact same call with identical arguments. Review the error above and decide: (1) correct your parameters, (2) try an alternative tool, or (3) ask the user for clarification / inform them of the error.]", toolName)
+					if toolName == "list_files" || toolName == "read_file" {
+						hint = fmt.Sprintf("\n\n[SYSTEM HINT: Tool '%s' failed. If you intended to inspect the workspace directory, use path \".\". Do NOT repeat the exact same call.]", toolName)
+					}
+					result = result + hint
 				}
 
 				// Check for repetitive loops.

@@ -128,6 +128,23 @@ func TestReadFileTooLarge(t *testing.T) {
 	}
 }
 
+func TestListFilesWorkspaceAlias(t *testing.T) {
+	ws := t.TempDir()
+	if err := os.WriteFile(filepath.Join(ws, "demo.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	// Calling ListFiles with searchPath="workspace" when no "workspace" subdir exists
+	// should treat it as workspace root "." rather than failing.
+	res, err := ListFiles(ws, "workspace", false, "")
+	if err != nil {
+		t.Fatalf("ListFiles with 'workspace' failed: %v", err)
+	}
+	if !containsSubstring(res, "demo.txt") {
+		t.Fatalf("expected result to contain demo.txt, got %q", res)
+	}
+}
+
 func containsSubstring(s, sub string) bool {
 	return len(s) >= len(sub) && (s == sub || len(s) > 0 && findSubstring(s, sub))
 }

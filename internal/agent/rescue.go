@@ -195,6 +195,15 @@ func (m *pathMemory) Resolve(p string) (abs string, rescued bool, ok bool) {
 			return joined, false, true
 		}
 	}
+	// If the path refers to the workspace root name (e.g. "workspace" or basename of cwd)
+	// and does not exist as a subpath, resolve to cwd.
+	clean := filepath.Clean(p)
+	if clean == "workspace" || clean == "." || strings.EqualFold(clean, filepath.Base(m.cwd)) {
+		if _, err := os.Stat(filepath.Join(m.cwd, clean)); err != nil {
+			return m.cwd, true, true
+		}
+	}
+
 	if c, ok := m.rescueUniqueBasename(p); ok {
 		return c, true, true
 	}
@@ -226,7 +235,7 @@ func pathParamKeyForTool(toolName string) string {
 	switch toolName {
 	case "write_file", "edit_file", "apply_diff":
 		return "file_path"
-	case "read_file":
+	case "read_file", "list_files", "search_files":
 		return "path"
 	}
 	return ""

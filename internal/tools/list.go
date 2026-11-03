@@ -13,6 +13,16 @@ import (
 // When recursive is true, walks all subdirectories. When includeGlob is set,
 // only files matching the glob pattern are returned.
 func ListFiles(workspace, searchPath string, recursive bool, includeGlob string) (string, error) {
+	// If searchPath references the workspace name itself (e.g. "workspace" or basename(workspace)),
+	// and workspace/searchPath does not exist, treat it as referring to the workspace root "."
+	if searchPath != "" && searchPath != "." {
+		clean := filepath.Clean(searchPath)
+		if clean == "workspace" || clean == "./workspace" || strings.EqualFold(clean, filepath.Base(workspace)) {
+			if _, err := os.Stat(filepath.Join(workspace, clean)); err != nil {
+				searchPath = "."
+			}
+		}
+	}
 	root, err := ResolveAndValidatePath(workspace, searchPath)
 	if err != nil {
 		return "", err

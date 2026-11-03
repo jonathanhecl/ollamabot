@@ -41,6 +41,16 @@ func TestPathMemoryRescue(t *testing.T) {
 	if !ok || abs != targetFile {
 		t.Errorf("expected path memory rescue, got abs=%q, rescued=%v, ok=%v", abs, rescued, ok)
 	}
+
+	// 4. "workspace" or cwd basename resolves to cwd
+	abs, rescued, ok = pm.Resolve("workspace")
+	if !ok || abs != temp {
+		t.Errorf("expected 'workspace' to resolve to temp (%q), got abs=%q, ok=%v", temp, abs, ok)
+	}
+	abs, rescued, ok = pm.Resolve(filepath.Base(temp))
+	if !ok || abs != temp {
+		t.Errorf("expected cwd basename to resolve to temp (%q), got abs=%q, ok=%v", temp, abs, ok)
+	}
 }
 
 func TestPathMemoryWalkAndSuggestions(t *testing.T) {
