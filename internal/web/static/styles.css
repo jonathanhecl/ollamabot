@@ -501,22 +501,23 @@ h2 {
 
 /* --- Queued Message State --- */
 .message.queued {
-  opacity: 0.55;
-  border-style: dashed;
-  background: rgba(24, 27, 21, 0.45);
+  opacity: 0.9;
+  border: 1px dashed rgba(255, 179, 71, 0.5);
+  background: rgba(32, 28, 18, 0.7);
+  box-shadow: 0 0 12px rgba(255, 179, 71, 0.08);
   transition: opacity 0.3s ease, border-style 0.3s ease, background 0.3s ease;
 }
 
 .queued-badge {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 4px;
   letter-spacing: 0.05em;
-  background: rgba(255, 179, 71, 0.08);
+  background: rgba(255, 179, 71, 0.16);
   color: #ffb347;
-  border: 1px solid rgba(255, 179, 71, 0.2);
+  border: 1px solid rgba(255, 179, 71, 0.35);
   margin-left: 8px;
   display: inline-flex;
   align-items: center;

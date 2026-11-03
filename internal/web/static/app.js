@@ -154,6 +154,57 @@ const state = {
   showDebugEvents: localStorage.getItem("ollamabot.showDebugEvents") === "true",
 };
 
+function getQueueStorageKey(sessionId) {
+  return `ollamabot.queue.${sessionId || "default"}`;
+}
+
+function loadPersistedQueue(sessionId) {
+  if (!sessionId) return [];
+  try {
+    const raw = localStorage.getItem(getQueueStorageKey(sessionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    console.warn("Failed to load persisted queue:", e);
+    return [];
+  }
+}
+
+function savePersistedQueue(sessionId, queue) {
+  if (!sessionId) return;
+  try {
+    const valid = (queue || [])
+      .filter((item) => item && item.role === "user" && item.processed === false)
+      .map((item) => {
+        // Strip heavy base64 images from storage if size > 500KB to prevent quota blowout
+        const safeAttachments = (item.attachments || []).map((att) => {
+          if (att.data && att.data.length > 500000) {
+            const { data, ...rest } = att;
+            return rest;
+          }
+          return att;
+        });
+        return {
+          role: "user",
+          sessionId: item.sessionId || sessionId,
+          queueId: item.queueId,
+          content: item.content || "",
+          timestamp: item.timestamp || new Date().toISOString(),
+          processed: false,
+          attachments: safeAttachments,
+        };
+      });
+    if (valid.length === 0) {
+      localStorage.removeItem(getQueueStorageKey(sessionId));
+    } else {
+      localStorage.setItem(getQueueStorageKey(sessionId), JSON.stringify(valid));
+    }
+  } catch (e) {
+    console.warn("Failed to save persisted queue:", e);
+  }
+}
+
 let bootstrapPromise = null;
 
 function waitForBootstrap() {
@@ -1386,11 +1437,10 @@ function startSessionPolling() {
           updateComposerUI();
         }
 
-        if (newSessions.length > 0 && !state.isProcessing) {
-          // Switch to the newest session if it was created externally (e.g. by Telegram)
+        if (newSessions.length > 0 && !state.isProcessing && !state.activeSessionId) {
           const newest = fetchedSessions[0];
-          if (newest && newest.id !== state.activeSessionId) {
-            console.log("[Session Polling] Switching to newly created session:", newest.id);
+          if (newest) {
+            console.log("[Session Polling] Initializing active session:", newest.id);
             await loadSession(newest.id);
           }
         }
@@ -1423,7 +1473,11 @@ function startSessionPolling() {
           const wasBusy = state.agentBusy;
           state.agentBusy = !!activeSess.agent_busy;
           if (msgsChanged) {
-            const pendingQueued = (state.messages || []).filter(m => m.role === "user" && m.processed === false);
+            const serverQueueIds = new Set(normalized.map((m) => m.queueId).filter(Boolean));
+            // Keep pending queued messages that haven't landed in server history yet
+            const pendingQueued = (state.messageQueue || []).filter((m) => m.role === "user" && m.processed === false && !serverQueueIds.has(m.queueId));
+            state.messageQueue = pendingQueued;
+            savePersistedQueue(state.activeSessionId, state.messageQueue);
             state.messages = [...normalized, ...pendingQueued];
             renderMessages();
             renderAttachments();
@@ -1434,7 +1488,7 @@ function startSessionPolling() {
           state.pendingApproval = normalizeApprovalPayload(activeSess.pending_approval || state.pendingApproval);
           renderApprovalCard();
           updateComposerUI();
-          if (!state.agentBusy) {
+          if (!state.agentBusy && state.messageQueue.length > 0) {
             processNextQueueItem();
           }
         }
@@ -3075,6 +3129,7 @@ async function sendMessage(event) {
   // Push the message with processed = false to state
   const userMessage = {
     role: "user",
+    sessionId: state.activeSessionId,
     content,
     images,
     attachments: visibleAttachments,
@@ -3091,18 +3146,29 @@ async function sendMessage(event) {
   renderMessages();
   updateContextBar();
 
-  // Push user query to client-side sequential queue
+  // Push user query to client-side sequential queue and persist
   state.messageQueue.push(userMessage);
+  savePersistedQueue(state.activeSessionId, state.messageQueue);
   processNextQueueItem();
 }
 
 function removeQueuedMessage(queueId) {
   if (!queueId) return;
   const msgIdx = state.messages.findIndex((msg) => msg.queueId === queueId && msg.processed === false);
-  if (msgIdx === -1) return;
+  let removed = null;
+  if (msgIdx !== -1) {
+    [removed] = state.messages.splice(msgIdx, 1);
+  }
 
-  const [removed] = state.messages.splice(msgIdx, 1);
-  state.messageQueue = state.messageQueue.filter((item) => item !== removed && item.queueId !== queueId);
+  const queueIdx = state.messageQueue.findIndex((item) => item.queueId === queueId);
+  if (queueIdx !== -1) {
+    if (!removed) removed = state.messageQueue[queueIdx];
+    state.messageQueue.splice(queueIdx, 1);
+  } else {
+    state.messageQueue = state.messageQueue.filter((item) => item !== removed && item.queueId !== queueId);
+  }
+
+  savePersistedQueue(state.activeSessionId, state.messageQueue);
 
   // Restore cancelled message text and attachments to composer for editing
   if (removed) {
@@ -3153,6 +3219,7 @@ async function processNextQueueItem() {
 
   const nextItem = state.messageQueue.shift();
   nextItem.processed = true;
+  savePersistedQueue(state.activeSessionId, state.messageQueue);
 
   // Filter history up to and including the current user query!
   const outboundMessages = [];
@@ -3286,6 +3353,7 @@ async function processNextQueueItem() {
       }
       nextItem.processed = false;
       state.messageQueue.unshift(nextItem);
+      savePersistedQueue(state.activeSessionId, state.messageQueue);
       state.agentBusy = true;
       renderMessages();
       updateComposerUI();
@@ -3600,6 +3668,7 @@ async function processNextQueueItem() {
       if (assistantIdx !== -1) state.messages.splice(assistantIdx, 1);
       nextItem.processed = false;
       state.messageQueue.unshift(nextItem);
+      savePersistedQueue(state.activeSessionId, state.messageQueue);
     }
   } finally {
     // Stream is fully closed by the server. All rounds are complete!
@@ -3608,10 +3677,7 @@ async function processNextQueueItem() {
     assistant.timestamp = new Date().toISOString();
     renderMessages();
     updateContextBar();
-    // Transcriptions are always provided by the backend via the structured
-    // media_pre_processing event (even in passthrough mode), so no fallback
-    // hack is needed here. Audio base64 is filtered out of outbound history
-    // per-attachment; attachments keep their data for playback/persistence.
+    savePersistedQueue(state.activeSessionId, state.messageQueue);
 
     try {
       await loadSession(state.activeSessionId);
@@ -3625,7 +3691,7 @@ async function processNextQueueItem() {
     updateComposerUI();
 
     // Process next item in the queue only if Ollama is online.
-    if (state.ollamaConnected) {
+    if (state.ollamaConnected && state.messageQueue.length > 0) {
       processNextQueueItem();
     }
   }
@@ -3891,9 +3957,11 @@ function renderMessages() {
       `;
     }
     
-    const queuedBadge = isQueued ? ` <span class="queued-badge">⏳ In Queue</span>` : "";
+    const queueIndex = isQueued ? queued.indexOf(message) : -1;
+    const queuePosText = queueIndex >= 0 ? ` #${queueIndex + 1}` : "";
+    const queuedBadge = isQueued ? ` <span class="queued-badge">⏳ In Queue${queuePosText}</span>` : "";
     const queuedActions = isQueued
-      ? `<button class="queued-remove-btn" type="button" title="Remove from queue">Remove</button>`
+      ? `<button class="queued-remove-btn" type="button" title="Cancel and edit message">Cancel</button>`
       : "";
     let contentHtml = "";
     let roleName = message.role;
@@ -5744,6 +5812,7 @@ async function createClientSession() {
   localStorage.setItem("ollamabot.activeSessionId", tempId);
   state.messages = [];
   state.attachments = [];
+  state.messageQueue = [];
   const sessionsList = state.sessions || [];
   sessionsList.unshift(sess);
   state.sessions = sessionsList;
@@ -5773,6 +5842,10 @@ async function loadSession(id) {
       return;
     }
     const sess = await response.json();
+    // Persist current session queue before switching to another session
+    if (state.activeSessionId && state.activeSessionId !== sess.id) {
+      savePersistedQueue(state.activeSessionId, state.messageQueue);
+    }
     state.activeSessionId = sess.id;
     localStorage.setItem("ollamabot.activeSessionId", sess.id);
     state.activePlan = sess.active_plan || null;
@@ -5781,8 +5854,15 @@ async function loadSession(id) {
     renderPinnedPlan();
     renderApprovalCard();
     const serverMessages = normalizeRawMessages(sess.messages || []);
-    const pendingQueued = (state.messages || []).filter((m) => m.role === "user" && m.processed === false);
-    state.messages = [...serverMessages, ...pendingQueued];
+    
+    // Load persisted queue for THIS session
+    const persistedQueue = loadPersistedQueue(sess.id);
+    const serverQueueIds = new Set(serverMessages.map((m) => m.queueId).filter(Boolean));
+    const activeQueued = persistedQueue.filter((m) => !serverQueueIds.has(m.queueId));
+    state.messageQueue = activeQueued.map((item) => ({ ...item, processed: false }));
+    savePersistedQueue(sess.id, state.messageQueue);
+
+    state.messages = [...serverMessages, ...state.messageQueue];
     syncActiveModel();
     renderMessages();
     renderAttachments();
@@ -5790,6 +5870,9 @@ async function loadSession(id) {
     renderSessions();
     els.prompt.focus();
     updateComposerUI();
+    if (!state.agentBusy && !state.isProcessing && state.messageQueue.length > 0) {
+      processNextQueueItem();
+    }
   } catch (e) {
     console.warn("loadSession failed:", e);
   }
