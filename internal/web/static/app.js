@@ -1377,6 +1377,11 @@ dropZone.addEventListener("drop", (e) => {
 els.newSessionBtn.addEventListener("click", async () => {
   await waitForBootstrap();
   syncActiveModel();
+  if (window.innerWidth <= 768 && !state.sidebarCollapsed) {
+    state.sidebarCollapsed = true;
+    applySidebarState();
+    if (els.drawerBackdrop) els.drawerBackdrop.style.display = "none";
+  }
   await createSession();
 });
 
