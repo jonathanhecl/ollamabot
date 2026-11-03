@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
+)
 
 func TestIsNoOpToolCall(t *testing.T) {
 	cases := []struct {
@@ -96,5 +100,62 @@ func TestLoopCallKeyUsesArguments(t *testing.T) {
 	query2 := loopCallKey("web_search", map[string]any{"query": "temperatura"})
 	if query1 == query2 {
 		t.Fatal("different queries share a loop key")
+	}
+}
+
+func TestSanitizeRequestMessages(t *testing.T) {
+	// Case 1: Assistant message with tool calls followed by user message -> tool calls stripped
+	input := []ollama.Message{
+		{Role: "user", Content: "Hello"},
+		{
+			Role:    "assistant",
+			Content: "Let me check",
+			ToolCalls: []ollama.ToolCall{
+				{Function: ollama.ToolFunction{Name: "list_files"}},
+			},
+		},
+		{Role: "user", Content: "New question"},
+	}
+
+	sanitized := sanitizeRequestMessages(input)
+	if len(sanitized[1].ToolCalls) != 0 {
+		t.Fatalf("expected tool calls to be stripped when followed by user message, got %d", len(sanitized[1].ToolCalls))
+	}
+
+	// Case 2: Assistant message with tool calls followed by tool message -> tool calls preserved
+	inputValid := []ollama.Message{
+		{Role: "user", Content: "Hello"},
+		{
+			Role:    "assistant",
+			Content: "",
+			ToolCalls: []ollama.ToolCall{
+				{Function: ollama.ToolFunction{Name: "list_files"}},
+			},
+		},
+		{Role: "tool", Name: "list_files", Content: "file1.txt"},
+	}
+
+	sanitizedValid := sanitizeRequestMessages(inputValid)
+	if len(sanitizedValid[1].ToolCalls) != 1 {
+		t.Fatalf("expected tool calls to be preserved when followed by tool message, got %d", len(sanitizedValid[1].ToolCalls))
+	}
+
+	// Case 3: Trailing assistant message with tool calls -> tool calls stripped and placeholder added
+	inputTrailing := []ollama.Message{
+		{Role: "user", Content: "Hello"},
+		{
+			Role:    "assistant",
+			Content: "",
+			ToolCalls: []ollama.ToolCall{
+				{Function: ollama.ToolFunction{Name: "list_files"}},
+			},
+		},
+	}
+	sanitizedTrailing := sanitizeRequestMessages(inputTrailing)
+	if len(sanitizedTrailing[1].ToolCalls) != 0 {
+		t.Fatalf("expected trailing assistant tool calls to be stripped, got %d", len(sanitizedTrailing[1].ToolCalls))
+	}
+	if sanitizedTrailing[1].Content == "" {
+		t.Fatal("expected non-empty content after stripping trailing tool calls")
 	}
 }

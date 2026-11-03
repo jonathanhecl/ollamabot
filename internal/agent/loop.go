@@ -518,6 +518,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				requestMessages[idx].Content = fmt.Sprintf("<think>\n%s\n</think>\n%s", msg.Thinking, msg.Content)
 			}
 		}
+		requestMessages = sanitizeRequestMessages(requestMessages)
 
 		req := ollama.ChatRequest{
 			Model:    model,
@@ -1611,6 +1612,30 @@ func isNoOpToolCall(toolName string, params map[string]any) bool {
 		}
 	}
 	return meaningful == 0
+}
+
+// sanitizeRequestMessages ensures that assistant messages containing tool calls
+// are valid according to Ollama's API requirements:
+// If an assistant message has ToolCalls, the immediately following message(s) must have role "tool".
+// If an assistant message in history has ToolCalls without matching subsequent tool messages,
+// or is followed by a user/system message, its ToolCalls must be stripped to prevent:
+// "Cannot continue an assistant message that contains tool calls." (status 400).
+func sanitizeRequestMessages(messages []ollama.Message) []ollama.Message {
+	cleaned := make([]ollama.Message, 0, len(messages))
+	for i := 0; i < len(messages); i++ {
+		msg := messages[i]
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			hasNextTool := (i+1 < len(messages)) && messages[i+1].Role == "tool"
+			if !hasNextTool {
+				msg.ToolCalls = nil
+				if strings.TrimSpace(msg.Content) == "" {
+					msg.Content = "[Action completed]"
+				}
+			}
+		}
+		cleaned = append(cleaned, msg)
+	}
+	return cleaned
 }
 
 // repetitiveLoopHint returns a tool-specific, actionable hint appended to the

@@ -3153,6 +3153,19 @@ async function processNextQueueItem() {
     }
   }
 
+  // Sanitize outboundMessages: ensure no assistant message retains tool_calls unless
+  // immediately followed by a tool role message. Dangling tool_calls in prior turns
+  // cause Ollama status 400: "Cannot continue an assistant message that contains tool calls."
+  for (let i = 0; i < outboundMessages.length; i++) {
+    const m = outboundMessages[i];
+    if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+      const nextIsTool = i + 1 < outboundMessages.length && outboundMessages[i + 1].role === "tool";
+      if (!nextIsTool) {
+        delete m.tool_calls;
+      }
+    }
+  }
+
   // Upload any pending file attachments BEFORE inserting the assistant bubble,
   // so the staging-area pills are still live and show upload progress.
   const pendingFiles = nextItem.attachments?.filter((a) => a.kind === "file" && a._file) || [];
