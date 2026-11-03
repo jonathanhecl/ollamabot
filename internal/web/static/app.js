@@ -205,6 +205,65 @@ function savePersistedQueue(sessionId, queue) {
   }
 }
 
+let notificationAudioCtx = null;
+function getNotificationAudioContext() {
+  if (!notificationAudioCtx) {
+    const AudioCtxClass = window.AudioContext || window.webkitAudioContext;
+    if (AudioCtxClass) {
+      notificationAudioCtx = new AudioCtxClass();
+    }
+  }
+  if (notificationAudioCtx && notificationAudioCtx.state === "suspended") {
+    notificationAudioCtx.resume().catch(() => {});
+  }
+  return notificationAudioCtx;
+}
+
+function playNotificationSound(type = "complete") {
+  if (localStorage.getItem("ollamabot.soundNotifications") !== "true") {
+    return;
+  }
+  try {
+    const ctx = getNotificationAudioContext();
+    if (!ctx) return;
+
+    const now = ctx.currentTime;
+    if (type === "action") {
+      // Two-tone alert (D5 -> A5) for user action required
+      const tones = [587.33, 880];
+      tones.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+        gain.gain.setValueAtTime(0.18, now + idx * 0.12);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.18);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.12);
+        osc.stop(now + idx * 0.12 + 0.2);
+      });
+    } else {
+      // Ascending triad chime (C5 -> E5 -> G5) on completion
+      const notes = [523.25, 659.25, 783.99];
+      notes.forEach((freq, idx) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(freq, now + idx * 0.08);
+        gain.gain.setValueAtTime(0.15, now + idx * 0.08);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.08 + 0.28);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(now + idx * 0.08);
+        osc.stop(now + idx * 0.08 + 0.3);
+      });
+    }
+  } catch (err) {
+    console.warn("Failed to play notification sound:", err);
+  }
+}
+
 let bootstrapPromise = null;
 
 function waitForBootstrap() {
@@ -259,6 +318,7 @@ const els = {
   searchProvidersContainer: document.querySelector("#searchProvidersContainer"),
   searchProvidersList: document.querySelector("#searchProvidersList"),
   webExposeToggle: document.querySelector("#webExposeToggle"),
+  soundNotificationsToggle: document.querySelector("#soundNotificationsToggle"),
   webAutoNameToggle: document.querySelector("#webAutoNameToggle"),
   sessionExpiry: document.querySelector("#sessionExpiry"),
   telegramBotToken: document.querySelector("#telegramBotToken"),
@@ -560,6 +620,9 @@ els.openSettings.addEventListener("click", async () => {
   els.memoryPath.value = state.settings.memory_path || "";
   els.skillsPath.value = state.settings.skills_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
+  if (els.soundNotificationsToggle) {
+    els.soundNotificationsToggle.checked = localStorage.getItem("ollamabot.soundNotifications") === "true";
+  }
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.sessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
   els.planConfirmationSelect.value = state.settings.plan_confirmation || "smart";
@@ -1484,6 +1547,7 @@ function startSessionPolling() {
             updateContextBar();
           } else if (wasBusy && !state.agentBusy && state.messages.length > 0) {
             renderMessages();
+            playNotificationSound("complete");
           }
           state.pendingApproval = normalizeApprovalPayload(activeSess.pending_approval || state.pendingApproval);
           renderApprovalCard();
@@ -1546,11 +1610,13 @@ function startRealtimeEvents() {
     try {
       const payload = JSON.parse(event.data);
       if (payload?.session_id !== state.activeSessionId) return;
+      const wasBusy = state.agentBusy;
       state.agentBusy = !!payload.busy;
       updateComposerUI();
       if (!state.agentBusy) {
         // The turn finished: drop the waiting indicator from the timeline.
         if (state.messages.length > 0) renderMessages();
+        if (wasBusy) playNotificationSound("complete");
         processNextQueueItem();
       }
     } catch (err) {
@@ -1564,6 +1630,7 @@ function startRealtimeEvents() {
       if (payload?.session_id && payload.session_id !== state.activeSessionId) return;
       state.pendingApproval = payload?.approval || null;
       renderApprovalCard();
+      playNotificationSound("action");
     } catch (err) {
       console.warn("[Events Hub] Invalid approval_required event:", err);
     }
@@ -1889,6 +1956,9 @@ async function loadSettings() {
   els.memoryPath.value = state.settings.memory_path || "";
   els.skillsPath.value = state.settings.skills_path || "";
   els.webExposeToggle.checked = !!state.settings.server_expose_network;
+  if (els.soundNotificationsToggle) {
+    els.soundNotificationsToggle.checked = localStorage.getItem("ollamabot.soundNotifications") === "true";
+  }
   els.webAutoNameToggle.checked = state.settings.session_auto_name !== false;
   els.sessionExpiry.value = state.settings.telegram_session_expiry_min || 30;
   els.telegramBotToken.value = state.settings.telegram_bot_token || "";
@@ -2067,9 +2137,21 @@ async function saveSettings(event) {
   localStorage.setItem("ollamabot.imageSteps", state.imageSteps);
   localStorage.setItem("ollamabot.learningModel", state.learningModel);
   localStorage.setItem("ollamabot.subagentModel", state.subagentModel);
+  if (els.soundNotificationsToggle) {
+    localStorage.setItem("ollamabot.soundNotifications", els.soundNotificationsToggle.checked ? "true" : "false");
+  }
 
   els.settingsDialog.close();
   await loadModels();
+}
+
+if (els.soundNotificationsToggle) {
+  els.soundNotificationsToggle.addEventListener("change", () => {
+    localStorage.setItem("ollamabot.soundNotifications", els.soundNotificationsToggle.checked ? "true" : "false");
+    if (els.soundNotificationsToggle.checked) {
+      playNotificationSound("complete");
+    }
+  });
 }
 
 async function saveRoleModels() {
@@ -3678,6 +3760,9 @@ async function processNextQueueItem() {
     renderMessages();
     updateContextBar();
     savePersistedQueue(state.activeSessionId, state.messageQueue);
+    if (!assistant.content?.includes("*(Skipped/Paused by user)*") && (assistant.content || (assistant.steps && assistant.steps.length > 0))) {
+      playNotificationSound("complete");
+    }
 
     try {
       await loadSession(state.activeSessionId);
@@ -5105,6 +5190,7 @@ function showApprovalDialog(id, toolName, args) {
   }
   state.currentApprovalId = id;
   els.approvalToolName.textContent = toolName;
+  playNotificationSound("action");
   if (els.approvalToolArgs) {
     els.approvalToolArgs.innerHTML = renderApprovalPreviewHTML(toolName, args);
   }
@@ -5161,6 +5247,7 @@ function showClarificationDialog(id, question, options) {
   }
   state.currentClarificationId = id;
   els.clarificationQuestion.textContent = question;
+  playNotificationSound("action");
   els.clarificationOptionsContainer.innerHTML = "";
   
   // Reset custom input
@@ -5203,6 +5290,7 @@ function showClarificationDialog(id, question, options) {
     messagesContainer.appendChild(existingCard);
   }
   existingCard.style.display = "block";
+  playNotificationSound("action");
   
   // Scroll to show the card
   existingCard.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -5357,6 +5445,7 @@ function showPlanConfirmationCard(id, summary, steps) {
     messagesContainer.appendChild(existingCard);
   }
   existingCard.style.display = "block";
+  playNotificationSound("action");
   
   existingCard.scrollIntoView({ behavior: "smooth", block: "center" });
   
