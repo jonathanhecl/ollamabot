@@ -367,6 +367,16 @@ func (m *Manager) reconnectServer(ctx context.Context, serverName string) *Clien
 	return m.clients[serverName]
 }
 
+// HasActiveServers reports whether any MCP server is currently connected with exposed tools.
+func (m *Manager) HasActiveServers() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.clients) > 0 && len(m.tools) > 0
+}
+
 func (m *Manager) HasTool(toolName string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/jonathanhecl/ollamabot/internal/mcp"
 )
 
 func TestExecuteCommand_AllowedCommands(t *testing.T) {
@@ -30,5 +32,17 @@ func TestExecuteCommand_AllowedCommands(t *testing.T) {
 	_, err = executeCommand(ctx, tmpDir, "git", []string{"--version"})
 	if err != nil && strings.Contains(err.Error(), "is not in the allowed list") {
 		t.Errorf("expected 'git' to be in the allowed list, got error: %v", err)
+	}
+}
+
+func TestRegistry_SetMCPManager_Inactive(t *testing.T) {
+	reg := NewRegistry(false, t.TempDir(), nil, nil, "", SearchConfig{})
+	m := mcp.NewManager("nonexistent.json")
+	reg.SetMCPManager(m)
+
+	for _, d := range reg.Definitions() {
+		if d.Function.Name == "mcp_list_servers" {
+			t.Fatal("expected mcp_list_servers to NOT be registered when MCP has no active servers")
+		}
 	}
 }

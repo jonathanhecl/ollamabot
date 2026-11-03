@@ -209,7 +209,7 @@ func (r *Registry) MCPManager() *mcp.Manager {
 
 func (r *Registry) SetMCPManager(m *mcp.Manager) {
 	r.mcpManager = m
-	if m == nil {
+	if m == nil || !m.HasActiveServers() {
 		return
 	}
 	if r.mcpToolNames == nil {

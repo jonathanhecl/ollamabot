@@ -1450,7 +1450,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 	}
 
 	// MCP capability instruction (static + dynamic active server status)
-	if a.registry != nil && a.registry.MCPManager() != nil {
+	if a.registry != nil && a.registry.MCPManager() != nil && a.registry.MCPManager().HasActiveServers() {
 		mcpContent := "You have access to tools from configured MCP (Model Context Protocol) servers. These tools are already listed among your available functions. Call the exposed MCP tool functions directly by name with the required arguments.\n\n" +
 			"## CRITICAL: MCP tools vs workspace tools\n" +
 			"Files, notes, records, or entries returned by MCP tools (e.g. vault_list, vault_read) live INSIDE the external service (Obsidian vault, database, remote API), NOT in the local workspace folder. The local workspace and the MCP service are two completely separate storage locations.\n" +
