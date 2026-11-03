@@ -3090,6 +3090,23 @@ function removeQueuedMessage(queueId) {
   const [removed] = state.messages.splice(msgIdx, 1);
   state.messageQueue = state.messageQueue.filter((item) => item !== removed && item.queueId !== queueId);
 
+  // Restore cancelled message text and attachments to composer for editing
+  if (removed) {
+    if (removed.content) {
+      if (els.prompt.value && els.prompt.value.trim()) {
+        els.prompt.value = removed.content + "\n" + els.prompt.value;
+      } else {
+        els.prompt.value = removed.content;
+      }
+      autoResizePrompt();
+    }
+    if (removed.attachments && removed.attachments.length > 0) {
+      state.attachments = [...state.attachments, ...removed.attachments];
+      renderAttachments();
+    }
+    els.prompt.focus();
+  }
+
   renderMessages();
   updateContextBar();
   updateComposerUI();
@@ -3755,8 +3772,15 @@ function renderMessages() {
   delete els.messages.dataset.emptyStateKey;
   els.messages.innerHTML = "";
 
+  // Separate non-queued messages from queued messages so queued messages ALWAYS render
+  // at the bottom of the timeline below the running assistant turn, steps, and cards.
+  const nonQueued = grouped.filter((m) => !(m.role === "user" && m.processed === false));
+  const queued = grouped.filter((m) => m.role === "user" && m.processed === false);
+  const orderedGrouped = [...nonQueued, ...queued];
+  const lastActiveAssistant = [...nonQueued].reverse().find((m) => m.role === "assistant");
+
   let msgIdx = 0;
-  for (const message of grouped) {
+  for (const message of orderedGrouped) {
     if (message.role === "system") {
       if (isInternalSystemMessage(message.content)) continue;
       const div = document.createElement("article");
@@ -3773,10 +3797,8 @@ function renderMessages() {
     );
 
     // For remote (Telegram/background) in-progress messages, synthesize waiting/streaming states
-    const isLastMsg = message === grouped[grouped.length - 1];
-    // A turn from another channel (Telegram, device) shows the waiting dots
-    // only while the server reports it as busy for this session.
-    const isRemoteProcessing = state.ollamaConnected && state.agentBusy && isLastMsg && message.role === "assistant";
+    const isLatestAssistant = message.role === "assistant" && message === lastActiveAssistant;
+    const isRemoteProcessing = state.ollamaConnected && state.agentBusy && isLatestAssistant;
     const effectiveWaiting = message.waiting || isRemoteProcessing;
     const effectiveStreaming = message.streaming || isRemoteProcessing;
 
@@ -3792,13 +3814,13 @@ function renderMessages() {
     // Build steps HTML in the exact chronological order stored in the session.
     const steps = message.steps || [];
     const hasSteps = steps.length > 0;
-    const hideInlinePlanSteps = message.role === "assistant" && isLastMsg && isPlanPinned(state.activePlan);
+    const hideInlinePlanSteps = isLatestAssistant && isPlanPinned(state.activePlan);
     const visibleSteps = steps.filter((s) => {
       if (hideInlinePlanSteps && s.type === "plan") return false;
       if (s.type === "system_event" && !state.showDebugEvents) return false;
       return true;
     });
-    const activePlanHtml = message.role === "assistant" && isLastMsg && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
+    const activePlanHtml = isLatestAssistant && isActivePlanPending(state.activePlan) && !isPlanPinned(state.activePlan)
       ? renderPlanChecklist(state.activePlan, "progress")
       : "";
     let stepsHtml = "";
