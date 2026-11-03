@@ -377,9 +377,23 @@ els.openSkills.addEventListener("click", () => {
   openSkillsExplorer();
 });
 
+const openSkillsMobile = document.querySelector("#openSkillsMobile");
+if (openSkillsMobile) {
+  openSkillsMobile.addEventListener("click", () => {
+    openSkillsExplorer();
+  });
+}
+
 els.openMcp.addEventListener("click", () => {
   openMcpExplorer();
 });
+
+const openMcpMobile = document.querySelector("#openMcpMobile");
+if (openMcpMobile) {
+  openMcpMobile.addEventListener("click", () => {
+    openMcpExplorer();
+  });
+}
 
 // Bind Projects click handler
 els.openProjects.addEventListener("click", () => {

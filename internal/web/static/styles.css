@@ -2258,15 +2258,207 @@ textarea {
   color: var(--muted);
 }
 
-@media (max-width: 720px) {
-  .topbar,
-  .composer {
-    grid-template-columns: 1fr;
+.mobile-only-action {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
   }
 
+  .mobile-only-action {
+    display: block !important;
+  }
+
+  /* Full mobile viewport and drawer */
+  .app-layout {
+    grid-template-columns: 1fr !important;
+    height: 100dvh;
+    height: 100vh;
+  }
+
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 280px;
+    z-index: 1000;
+    box-shadow: 4px 0 24px rgba(0, 0, 0, 0.6);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    transform: translateX(0);
+  }
+
+  .app-layout.sidebar-collapsed .sidebar {
+    margin-left: 0;
+    transform: translateX(-100%);
+  }
+
+  .sidebar-toggle {
+    right: -36px;
+    width: 36px;
+    height: 44px;
+    font-size: 16px;
+  }
+
+  /* Topbar Minimalist: clean single row */
   .topbar {
-    align-items: flex-start;
+    display: flex;
+    flex-direction: row !important;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    min-height: 44px;
+    gap: 8px;
+  }
+
+  .topbar .eyebrow {
+    font-size: 14px;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.01em;
+  }
+
+  .topbar .actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .topbar .actions .ghost-button,
+  .topbar .actions .primary-button {
+    padding: 4px 8px;
+    font-size: 12px;
+    min-height: 30px;
+    border-radius: 6px;
+  }
+
+  /* Compact Status Strip */
+  .status-strip {
+    padding: 3px 10px;
+    font-size: 11px;
+    gap: 6px;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .status-strip span {
+    padding: 1px 5px;
+    font-size: 10px;
+  }
+
+  /* Messages area: clean padding and reading width */
+  .messages {
+    padding: 10px 8px;
+    gap: 12px;
+  }
+
+  .message {
+    padding: 10px 12px;
+    max-width: 96%;
+    font-size: 14px;
+    border-radius: 12px;
+  }
+
+  .message.user {
+    border-radius: 12px 12px 2px 12px;
+  }
+
+  .message.assistant {
+    border-radius: 12px 12px 12px 2px;
+  }
+
+  .message-content {
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* Mobile-Friendly Minimalist Composer */
+  .composer {
+    padding: 6px 8px 10px 8px;
+    gap: 6px;
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+    display: flex;
     flex-direction: column;
+    grid-template-columns: 1fr !important;
+  }
+
+  .composer-tools {
+    display: flex;
+    gap: 6px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .composer-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .composer-tools .tool-button {
+    font-size: 11px;
+    padding: 4px 8px;
+    min-height: 28px;
+    border-radius: 14px;
+    flex-shrink: 0;
+  }
+
+  .composer textarea {
+    font-size: 16px !important; /* Prevents auto-zoom in iOS Safari */
+    min-height: 44px;
+    max-height: 130px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    line-height: 1.4;
+  }
+
+  .composer-submit-group {
+    display: flex !important;
+    flex-direction: row !important;
+    justify-content: flex-end;
+    gap: 6px;
+    width: 100%;
+  }
+
+  .composer-submit-group button {
+    flex: 1;
+    min-height: 38px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  #skipBtn {
+    flex: 0 0 auto !important;
+    min-width: 75px;
+    padding: 0 10px !important;
+  }
+
+  /* Responsive dialogs */
+  dialog.modal {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    max-height: 88vh !important;
+    padding: 14px !important;
+    border-radius: 12px !important;
+  }
+
+  /* Pre block inside messages */
+  .code-block-wrapper {
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .code-block-wrapper pre {
+    font-size: 12px;
+    padding: 8px;
   }
 }
 
