@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>OllamaBot Console</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -27,28 +27,28 @@
       </aside>
       <main class="app" id="mainApp">
         <header class="topbar">
-        <div>
-          <p class="eyebrow">OllamaBot</p>
-        </div>
-        <div class="actions">
-          <button id="openMcp" class="ghost-button desktop-only" type="button">MCP</button>
-          <button id="openSkills" class="ghost-button desktop-only" type="button">Skills</button>
-          <button id="openSettings" class="ghost-button" type="button">Settings</button>
-          <button id="openModels" class="primary-button" type="button">Models</button>
-          <div class="dropdown">
-            <button class="ghost-button dropdown-toggle" type="button">More ▾</button>
-            <div class="dropdown-menu">
-              <button id="openMcpMobile" class="mobile-only-action" type="button">MCP</button>
-              <button id="openSkillsMobile" class="mobile-only-action" type="button">Skills</button>
-              <button id="openMemory" type="button">Memory</button>
-              <button id="openProjects" type="button">Projects</button>
-              <button id="openFeedback" type="button">Feedback</button>
-              <button id="debugEventsToggle" type="button">🔍 Debug events: Off</button>
-              <button id="logoutBtn" type="button" style="display: none;">Log Out</button>
+          <button id="openSidebarMobile" class="topbar-btn mobile-only-flex" type="button" title="Open Sessions">💬</button>
+          <div class="topbar-brand">
+            <p class="eyebrow">OllamaBot</p>
+          </div>
+          <div class="actions desktop-only">
+            <button id="openMcp" class="ghost-button" type="button">MCP</button>
+            <button id="openSkills" class="ghost-button" type="button">Skills</button>
+            <button id="openSettings" class="ghost-button" type="button">Settings</button>
+            <button id="openModels" class="primary-button" type="button">Models</button>
+            <div class="dropdown">
+              <button class="ghost-button dropdown-toggle" type="button">More ▾</button>
+              <div class="dropdown-menu">
+                <button id="openMemory" type="button">Memory</button>
+                <button id="openProjects" type="button">Projects</button>
+                <button id="openFeedback" type="button">Feedback</button>
+                <button id="debugEventsToggle" type="button">🔍 Debug events: Off</button>
+                <button id="logoutBtn" type="button" style="display: none;">Log Out</button>
+              </div>
             </div>
           </div>
-        </div>
-      </header>
+          <button id="openMenuBtn" class="topbar-btn mobile-only-flex" type="button" title="Menu & Options">⚙️</button>
+        </header>
 
       <section class="status-strip">
         <span id="baseUrl">Ollama</span>
@@ -74,31 +74,93 @@
       <section id="pinnedPlan" class="pinned-plan" style="display: none;"></section>
 
       <form id="chatForm" class="composer">
-        <div class="composer-tools">
-          <label id="imageControl" class="tool-button">
-            Image
-            <input id="imageInput" type="file" accept="image/*" multiple />
-          </label>
-          <label id="audioControl" class="tool-button">
-            Audio
-            <input id="audioInput" type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a,.flac" multiple />
-          </label>
-          <label id="fileControl" class="tool-button">
-            File
-            <input id="fileInput" type="file" multiple />
-          </label>
-          <button id="recordControl" class="tool-button recording-btn" type="button" hidden>
-            <span class="record-icon">🎤</span> <span class="record-label">Record</span>
-          </button>
+        <div class="composer-tools" id="composerTools">
+          <button id="attachmentToggleBtn" class="tool-button attachment-toggle-btn mobile-only-flex" type="button" title="Attach media or files">＋</button>
+          <div class="composer-tools-list" id="composerToolsList">
+            <label id="imageControl" class="tool-button" title="Upload Image">
+              <span class="tool-icon">📷</span> <span class="tool-label">Image</span>
+              <input id="imageInput" type="file" accept="image/*" multiple />
+            </label>
+            <label id="audioControl" class="tool-button" title="Upload Audio">
+              <span class="tool-icon">🎵</span> <span class="tool-label">Audio</span>
+              <input id="audioInput" type="file" accept="audio/*,.wav,.mp3,.ogg,.m4a,.flac" multiple />
+            </label>
+            <label id="fileControl" class="tool-button" title="Upload File">
+              <span class="tool-icon">📎</span> <span class="tool-label">File</span>
+              <input id="fileInput" type="file" multiple />
+            </label>
+            <button id="recordControl" class="tool-button recording-btn" type="button" hidden title="Record Audio">
+              <span class="record-icon">🎤</span> <span class="record-label tool-label">Record</span>
+            </button>
+          </div>
         </div>
         <div id="slashMenu" class="slash-menu" style="display: none;"></div>
-        <textarea id="prompt" rows="3" placeholder="Message the selected model. Type / for commands. Paste images/audio or attach files."></textarea>
-        <div class="composer-submit-group" style="display: flex; gap: 8px; flex-direction: column-reverse; align-items: stretch;">
-          <button id="skipBtn" type="button" class="ghost-button" title="Skip current message & process next in queue" style="display: none; height: 32px; font-size: 11px; padding: 0; text-transform: uppercase; font-weight: 800; border-radius: 5px; border: 1px solid #ff4a4a; background: rgba(255,74,74,0.06); color: #ff6e6e; cursor: pointer; align-items: center; justify-content: center; gap: 4px;">⏭️ Skip</button>
-          <button id="sendBtn" type="submit" style="min-height: 38px;">Send</button>
+        <textarea id="prompt" rows="1" placeholder="Message the selected model. Type / for commands..."></textarea>
+        <div class="composer-submit-group">
+          <button id="skipBtn" type="button" class="ghost-button" title="Skip current message & process next in queue" style="display: none; height: 38px; font-size: 11px; padding: 0 8px; text-transform: uppercase; font-weight: 800; border-radius: 8px; border: 1px solid #ff4a4a; background: rgba(255,74,74,0.06); color: #ff6e6e; cursor: pointer; align-items: center; justify-content: center; gap: 4px;">⏭️</button>
+          <button id="sendBtn" type="submit">Send</button>
         </div>
       </form>
     </main>
+    <aside class="right-drawer" id="rightDrawer">
+      <div class="right-drawer-head">
+        <span class="eyebrow">Menu & Options</span>
+        <button id="closeRightDrawer" class="ghost-button icon-btn" type="button" title="Close menu">✕</button>
+      </div>
+      <div class="right-drawer-content">
+        <div class="drawer-section">
+          <span class="drawer-section-title">Models</span>
+          <button id="drawerOpenModels" class="drawer-menu-item primary-accent" type="button">
+            <span class="drawer-item-icon">🤖</span>
+            <span class="drawer-item-label">Manage Models</span>
+          </button>
+        </div>
+        <div class="drawer-section">
+          <span class="drawer-section-title">Tools & Features</span>
+          <button id="drawerOpenSkills" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">⚡</span>
+            <span class="drawer-item-label">Skills Catalog</span>
+          </button>
+          <button id="drawerOpenMcp" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">🔌</span>
+            <span class="drawer-item-label">MCP Servers</span>
+          </button>
+          <button id="drawerOpenMemory" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">🧠</span>
+            <span class="drawer-item-label">Semantic Memory</span>
+          </button>
+          <button id="drawerOpenProjects" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">📁</span>
+            <span class="drawer-item-label">Autonomous Projects</span>
+          </button>
+          <button id="drawerOpenFeedback" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">📝</span>
+            <span class="drawer-item-label">Send Feedback</span>
+          </button>
+        </div>
+        <div class="drawer-section">
+          <span class="drawer-section-title">Configuration</span>
+          <button id="drawerOpenSettings" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">⚙️</span>
+            <span class="drawer-item-label">Settings</span>
+          </button>
+          <button id="drawerDebugEventsToggle" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">🔍</span>
+            <span class="drawer-item-label" id="drawerDebugEventsLabel">Debug Events: Off</span>
+          </button>
+          <button id="drawerLogoutBtn" class="drawer-menu-item danger" type="button" style="display: none;">
+            <span class="drawer-item-icon">🚪</span>
+            <span class="drawer-item-label">Log Out</span>
+          </button>
+        </div>
+        <div class="drawer-section status-info">
+          <span class="drawer-section-title">System Status</span>
+          <div class="drawer-status-line"><span>Ollama:</span> <code id="drawerOllamaStatus">Checking...</code></div>
+          <div class="drawer-status-line"><span>Context:</span> <span id="drawerContextUsage">0%</span></div>
+        </div>
+      </div>
+    </aside>
+    <div id="drawerBackdrop" class="drawer-backdrop" style="display: none;"></div>
     </div>
 
     <dialog id="memoryDialog" class="modal memory-modal">

@@ -477,7 +477,145 @@ const els = {
   feedbackCategory: document.querySelector("#feedbackCategory"),
   feedbackText: document.querySelector("#feedbackText"),
   feedbackSubmitBtn: document.querySelector("#feedbackSubmitBtn"),
+  openSidebarMobile: document.querySelector("#openSidebarMobile"),
+  openMenuBtn: document.querySelector("#openMenuBtn"),
+  rightDrawer: document.querySelector("#rightDrawer"),
+  closeRightDrawer: document.querySelector("#closeRightDrawer"),
+  drawerBackdrop: document.querySelector("#drawerBackdrop"),
+  drawerOpenModels: document.querySelector("#drawerOpenModels"),
+  drawerOpenSkills: document.querySelector("#drawerOpenSkills"),
+  drawerOpenMcp: document.querySelector("#drawerOpenMcp"),
+  drawerOpenMemory: document.querySelector("#drawerOpenMemory"),
+  drawerOpenProjects: document.querySelector("#drawerOpenProjects"),
+  drawerOpenFeedback: document.querySelector("#drawerOpenFeedback"),
+  drawerOpenSettings: document.querySelector("#drawerOpenSettings"),
+  drawerDebugEventsToggle: document.querySelector("#drawerDebugEventsToggle"),
+  drawerDebugEventsLabel: document.querySelector("#drawerDebugEventsLabel"),
+  drawerLogoutBtn: document.querySelector("#drawerLogoutBtn"),
+  drawerOllamaStatus: document.querySelector("#drawerOllamaStatus"),
+  drawerContextUsage: document.querySelector("#drawerContextUsage"),
+  attachmentToggleBtn: document.querySelector("#attachmentToggleBtn"),
+  composerTools: document.querySelector("#composerTools"),
+  composerToolsList: document.querySelector("#composerToolsList"),
 };
+
+function focusPromptSafe() {
+  if (window.innerWidth > 768 && els.prompt) {
+    els.prompt.focus();
+  }
+}
+
+function openRightDrawer() {
+  if (els.rightDrawer) els.rightDrawer.classList.add("open");
+  if (els.drawerBackdrop) els.drawerBackdrop.style.display = "block";
+  if (els.drawerOllamaStatus && els.baseUrl) els.drawerOllamaStatus.textContent = els.baseUrl.textContent;
+  if (els.drawerContextUsage && els.contextLabel) els.drawerContextUsage.textContent = els.contextLabel.textContent;
+  if (els.drawerLogoutBtn) {
+    els.drawerLogoutBtn.style.display = els.logoutBtn && els.logoutBtn.style.display !== "none" ? "flex" : "none";
+  }
+}
+
+function closeRightDrawer() {
+  if (els.rightDrawer) els.rightDrawer.classList.remove("open");
+  if (els.drawerBackdrop) els.drawerBackdrop.style.display = "none";
+}
+
+if (els.openMenuBtn) {
+  els.openMenuBtn.addEventListener("click", openRightDrawer);
+}
+if (els.closeRightDrawer) {
+  els.closeRightDrawer.addEventListener("click", closeRightDrawer);
+}
+if (els.drawerBackdrop) {
+  els.drawerBackdrop.addEventListener("click", () => {
+    closeRightDrawer();
+    if (window.innerWidth <= 768 && !state.sidebarCollapsed) {
+      state.sidebarCollapsed = true;
+      applySidebarState();
+    }
+  });
+}
+if (els.openSidebarMobile) {
+  els.openSidebarMobile.addEventListener("click", () => {
+    state.sidebarCollapsed = !state.sidebarCollapsed;
+    applySidebarState();
+    if (els.drawerBackdrop) {
+      els.drawerBackdrop.style.display = state.sidebarCollapsed ? "none" : "block";
+    }
+  });
+}
+
+// Drawer menu actions
+if (els.drawerOpenModels) {
+  els.drawerOpenModels.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openModels) els.openModels.click();
+  });
+}
+if (els.drawerOpenSkills) {
+  els.drawerOpenSkills.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openSkills) els.openSkills.click();
+  });
+}
+if (els.drawerOpenMcp) {
+  els.drawerOpenMcp.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openMcp) els.openMcp.click();
+  });
+}
+if (els.drawerOpenMemory) {
+  els.drawerOpenMemory.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openMemory) els.openMemory.click();
+  });
+}
+if (els.drawerOpenProjects) {
+  els.drawerOpenProjects.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openProjects) els.openProjects.click();
+  });
+}
+if (els.drawerOpenFeedback) {
+  els.drawerOpenFeedback.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openFeedback) els.openFeedback.click();
+  });
+}
+if (els.drawerOpenSettings) {
+  els.drawerOpenSettings.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openSettings) els.openSettings.click();
+  });
+}
+if (els.drawerDebugEventsToggle) {
+  els.drawerDebugEventsToggle.addEventListener("click", () => {
+    if (els.debugEventsToggle) els.debugEventsToggle.click();
+  });
+}
+if (els.drawerLogoutBtn) {
+  els.drawerLogoutBtn.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.logoutBtn) els.logoutBtn.click();
+  });
+}
+
+// Composer attachment toggle button (left side on mobile)
+if (els.attachmentToggleBtn) {
+  els.attachmentToggleBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (els.composerTools) {
+      els.composerTools.classList.toggle("open");
+    }
+  });
+}
+document.addEventListener("click", (e) => {
+  if (els.composerTools && els.composerTools.classList.contains("open")) {
+    if (!els.composerTools.contains(e.target)) {
+      els.composerTools.classList.remove("open");
+    }
+  }
+});
 
 // Bind Memory click handler
 els.openMemory.addEventListener("click", () => {
@@ -520,6 +658,9 @@ els.openFeedback.addEventListener("click", () => {
 if (els.debugEventsToggle) {
   const syncDebugLabel = () => {
     els.debugEventsToggle.textContent = `🔍 Debug events: ${state.showDebugEvents ? "On" : "Off"}`;
+    if (els.drawerDebugEventsLabel) {
+      els.drawerDebugEventsLabel.textContent = `Debug Events: ${state.showDebugEvents ? "On" : "Off"}`;
+    }
   };
   syncDebugLabel();
   els.debugEventsToggle.addEventListener("click", () => {
@@ -3244,7 +3385,7 @@ async function sendMessage(event) {
   
   state.attachments = [];
   els.prompt.value = "";
-  els.prompt.focus();
+  focusPromptSafe();
   renderAttachments();
   renderMessages();
   updateContextBar();
@@ -3287,7 +3428,7 @@ function removeQueuedMessage(queueId) {
       state.attachments = [...state.attachments, ...removed.attachments];
       renderAttachments();
     }
-    els.prompt.focus();
+    focusPromptSafe();
   }
 
   renderMessages();
@@ -4054,11 +4195,16 @@ function renderMessages() {
       const tokensPerSec = m.eval_duration > 0 ? (m.eval_count / (m.eval_duration / 1e9)).toFixed(1) : "0.0";
       metricsHtml = `
         <div class="message-metrics">
-          <span title="Total time taken">🕒 ${totalSec}s</span>
-          <span title="Generation speed">⚡ ${tokensPerSec} t/s</span>
-          <span title="Generated tokens / Eval duration">📤 ${m.eval_count} tokens (${evalSec}s)</span>
-          <span title="Prompt tokens / Eval duration">📥 ${m.prompt_eval_count} prompt (${promptSec}s)</span>
-          ${m.load_duration > 0 ? `<span title="Model load time">💾 load ${loadSec}s</span>` : ""}
+          <span class="metric-pill" title="Total time taken">🕒 ${totalSec}s</span>
+          <span class="metric-pill" title="Generation speed">⚡ ${tokensPerSec} t/s</span>
+          <details class="metrics-details">
+            <summary class="metrics-toggle" title="More metrics">▾</summary>
+            <div class="metrics-dropdown">
+              <span title="Generated tokens / Eval duration">📤 ${m.eval_count} tokens (${evalSec}s)</span>
+              <span title="Prompt tokens / Eval duration">📥 ${m.prompt_eval_count} prompt (${promptSec}s)</span>
+              ${m.load_duration > 0 ? `<span title="Model load time">💾 load ${loadSec}s</span>` : ""}
+            </div>
+          </details>
         </div>
       `;
     }
@@ -5899,7 +6045,7 @@ async function createSession(title = "New session") {
     renderAttachments();
     updateContextBar();
     await loadSessions();
-    els.prompt.focus();
+    focusPromptSafe();
     return true;
   } catch (e) {
     console.warn("createSession failed:", e);
@@ -5978,7 +6124,12 @@ async function loadSession(id) {
     renderAttachments();
     updateContextBar();
     renderSessions();
-    els.prompt.focus();
+    if (window.innerWidth <= 768 && !state.sidebarCollapsed) {
+      state.sidebarCollapsed = true;
+      applySidebarState();
+      if (els.drawerBackdrop) els.drawerBackdrop.style.display = "none";
+    }
+    focusPromptSafe();
     updateComposerUI();
     if (!state.agentBusy && !state.isProcessing && state.messageQueue.length > 0) {
       processNextQueueItem();
