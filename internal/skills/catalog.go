@@ -1,13 +1,28 @@
 package skills
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
+)
+
+type EmbeddingClient interface {
+	Embed(ctx context.Context, req ollama.EmbedRequest) (ollama.EmbedResponse, error)
+}
+
+var (
+	globalEmbedMu    sync.RWMutex
+	globalEmbedCache = make(map[string][]float64)
 )
 
 type Metadata struct {
@@ -174,4 +189,135 @@ func RenderBlock(skills []Skill) string {
 		sb.WriteString("\n")
 	}
 	return sb.String()
+}
+
+// IndexEmbeddings pre-computes and caches embeddings for all skills in the catalog
+// using their name and description.
+func (c *Catalog) IndexEmbeddings(ctx context.Context, client EmbeddingClient, embedModel string) error {
+	if client == nil || strings.TrimSpace(embedModel) == "" {
+		return nil
+	}
+	metaList, err := c.List()
+	if err != nil {
+		return err
+	}
+	for _, meta := range metaList {
+		cacheKey := meta.SkillFile + ":" + strconv.FormatInt(meta.UpdatedAt.Unix(), 10)
+		globalEmbedMu.RLock()
+		_, exists := globalEmbedCache[cacheKey]
+		globalEmbedMu.RUnlock()
+		if exists {
+			continue
+		}
+
+		text := fmt.Sprintf("%s: %s", meta.Name, meta.Description)
+		resp, err := client.Embed(ctx, ollama.EmbedRequest{
+			Model: embedModel,
+			Input: text,
+		})
+		if err != nil || len(resp.Embeddings) == 0 || len(resp.Embeddings[0]) == 0 {
+			continue
+		}
+		globalEmbedMu.Lock()
+		globalEmbedCache[cacheKey] = resp.Embeddings[0]
+		globalEmbedMu.Unlock()
+	}
+	return nil
+}
+
+// FilterRelevant loads skills from the catalog and returns only those that are semantically
+// or textually similar to the user prompt, avoiding injecting unnecessary skill headers.
+func (c *Catalog) FilterRelevant(ctx context.Context, client EmbeddingClient, embedModel string, userPrompt string, threshold float64) ([]Skill, error) {
+	allSkills, err := c.LoadAll()
+	if err != nil || len(allSkills) == 0 {
+		return nil, err
+	}
+	trimmedPrompt := strings.TrimSpace(userPrompt)
+	if trimmedPrompt == "" {
+		return nil, nil
+	}
+
+	metaList, err := c.List()
+	if err != nil {
+		return nil, err
+	}
+	metaByName := make(map[string]Metadata, len(metaList))
+	for _, m := range metaList {
+		metaByName[m.Name] = m
+	}
+
+	// 1. Try semantic embedding search if client and model are available
+	if client != nil && strings.TrimSpace(embedModel) != "" {
+		_ = c.IndexEmbeddings(ctx, client, embedModel)
+		resp, err := client.Embed(ctx, ollama.EmbedRequest{
+			Model: embedModel,
+			Input: trimmedPrompt,
+		})
+		if err == nil && len(resp.Embeddings) > 0 && len(resp.Embeddings[0]) > 0 {
+			queryVec := resp.Embeddings[0]
+			var relevant []Skill
+			for _, skill := range allSkills {
+				meta, ok := metaByName[skill.Name]
+				if !ok {
+					continue
+				}
+				cacheKey := meta.SkillFile + ":" + strconv.FormatInt(meta.UpdatedAt.Unix(), 10)
+				globalEmbedMu.RLock()
+				skillVec, hasVec := globalEmbedCache[cacheKey]
+				globalEmbedMu.RUnlock()
+				if !hasVec {
+					continue
+				}
+				sim := cosineSimilarity(queryVec, skillVec)
+				if sim >= threshold {
+					relevant = append(relevant, skill)
+				}
+			}
+			if len(relevant) > 0 {
+				return relevant, nil
+			}
+		}
+	}
+
+	// 2. Fallback: keyword matching against skill name and description words
+	promptLower := strings.ToLower(trimmedPrompt)
+	var relevant []Skill
+	for _, skill := range allSkills {
+		nameLower := strings.ToLower(skill.Name)
+		if strings.Contains(promptLower, nameLower) {
+			relevant = append(relevant, skill)
+			continue
+		}
+		// Check description keywords
+		descWords := strings.Fields(strings.ToLower(skill.Description))
+		matchCount := 0
+		for _, w := range descWords {
+			if len(w) > 3 && strings.Contains(promptLower, w) {
+				matchCount++
+			}
+		}
+		if matchCount >= 2 {
+			relevant = append(relevant, skill)
+		}
+	}
+	return relevant, nil
+}
+
+func cosineSimilarity(a, b []float64) float64 {
+	var dot, normA, normB float64
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		av := a[i]
+		bv := b[i]
+		dot += av * bv
+		normA += av * av
+		normB += bv * bv
+	}
+	if normA == 0 || normB == 0 {
+		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }

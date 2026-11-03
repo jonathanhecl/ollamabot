@@ -1,9 +1,13 @@
 package skills
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 func TestCatalogListAndLoad(t *testing.T) {
@@ -123,5 +127,106 @@ func writeSkill(t *testing.T, root string, dir string, content string) {
 	}
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(content), 0o644); err != nil {
 		t.Fatalf("write skill failed: %v", err)
+	}
+}
+
+type mockEmbedClient struct {
+	vectors map[string][]float64
+}
+
+func (m *mockEmbedClient) Embed(ctx context.Context, req ollama.EmbedRequest) (ollama.EmbedResponse, error) {
+	inputStr, _ := req.Input.(string)
+	for key, vec := range m.vectors {
+		if strings.Contains(strings.ToLower(inputStr), strings.ToLower(key)) {
+			return ollama.EmbedResponse{Embeddings: [][]float64{vec}}, nil
+		}
+	}
+	// Default vector orthogonal to target
+	return ollama.EmbedResponse{Embeddings: [][]float64{{0.0, 0.0, 1.0}}}, nil
+}
+
+func TestCatalogFilterRelevant_Embeddings(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "weather", `---
+name: weather
+description: Get current temperature and weather forecast
+---
+## Steps
+- 1. Search weather
+`)
+	writeSkill(t, root, "git", `---
+name: git
+description: Git version control helper
+---
+## Steps
+- 1. Run git status
+`)
+
+	catalog, err := NewCatalog(root)
+	if err != nil {
+		t.Fatalf("NewCatalog failed: %v", err)
+	}
+
+	mock := &mockEmbedClient{
+		vectors: map[string][]float64{
+			"weather":     {1.0, 0.0, 0.0},
+			"temperature": {0.95, 0.05, 0.0},
+			"git":         {0.0, 1.0, 0.0},
+		},
+	}
+
+	// Query about temperature -> should match weather (cos sim ~ 0.95) and not git
+	relevant, err := catalog.FilterRelevant(context.Background(), mock, "test-embed", "What is the temperature today?", 0.40)
+	if err != nil {
+		t.Fatalf("FilterRelevant failed: %v", err)
+	}
+	if len(relevant) != 1 {
+		t.Fatalf("expected 1 relevant skill, got %d", len(relevant))
+	}
+	if relevant[0].Name != "weather" {
+		t.Fatalf("expected 'weather' skill, got %q", relevant[0].Name)
+	}
+
+	// Query about completely unrelated topic -> no skills included
+	unrelated, err := catalog.FilterRelevant(context.Background(), mock, "test-embed", "tell me a random joke", 0.80)
+	if err != nil {
+		t.Fatalf("FilterRelevant unrelated failed: %v", err)
+	}
+	if len(unrelated) != 0 {
+		t.Fatalf("expected 0 relevant skills for unrelated query, got %d", len(unrelated))
+	}
+}
+
+func TestCatalogFilterRelevant_KeywordFallback(t *testing.T) {
+	root := t.TempDir()
+	writeSkill(t, root, "database", `---
+name: database
+description: Manage SQL queries and database migrations
+---
+## Steps
+- 1. Execute query
+`)
+
+	catalog, err := NewCatalog(root)
+	if err != nil {
+		t.Fatalf("NewCatalog failed: %v", err)
+	}
+
+	// Without embedding client, matches keyword "database"
+	relevant, err := catalog.FilterRelevant(context.Background(), nil, "", "I need to fix the database tables", 0.40)
+	if err != nil {
+		t.Fatalf("FilterRelevant fallback failed: %v", err)
+	}
+	if len(relevant) != 1 || relevant[0].Name != "database" {
+		t.Fatalf("expected 'database' skill via keyword fallback, got %v", relevant)
+	}
+
+	// Unrelated query matches nothing
+	unrelated, err := catalog.FilterRelevant(context.Background(), nil, "", "hello world", 0.40)
+	if err != nil {
+		t.Fatalf("FilterRelevant fallback failed: %v", err)
+	}
+	if len(unrelated) != 0 {
+		t.Fatalf("expected 0 skills for unrelated fallback query, got %d", len(unrelated))
 	}
 }

@@ -185,12 +185,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 	}
 
-	// Load and inject custom skills from configurable skills path
+	// Load and inject only relevant custom skills from configurable skills path
 	skillsDir := a.config().SkillsPath
+	embedModel := config.ResolveModel(a.config(), config.ModelRoleEmbed)
 	var skillsBlock string
 	if cat, err := skills.NewCatalog(skillsDir); err == nil {
-		if loaded, err := cat.LoadAll(); err == nil && len(loaded) > 0 {
-			skillsBlock = skills.RenderBlock(loaded)
+		if relevant, err := cat.FilterRelevant(ctx, a.client, embedModel, goal, 0.40); err == nil && len(relevant) > 0 {
+			skillsBlock = skills.RenderBlock(relevant)
 		}
 	}
 

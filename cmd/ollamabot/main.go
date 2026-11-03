@@ -23,6 +23,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/probe"
 	"github.com/jonathanhecl/ollamabot/internal/scheduler"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
+	"github.com/jonathanhecl/ollamabot/internal/skills"
 	"github.com/jonathanhecl/ollamabot/internal/telegram"
 	"github.com/jonathanhecl/ollamabot/internal/web"
 )
@@ -168,6 +169,17 @@ func run(args []string) error {
 		schedulerMgr := scheduler.NewManager(cfgMgr, client, ms, mcpMgr)
 		schedulerMgr.Start(ctx)
 		defer schedulerMgr.Stop()
+
+		// Warm up skills embeddings in the background on startup
+		if skillsPath := cfgMgr.Get().SkillsPath; skillsPath != "" {
+			if embedModel := config.ResolveModel(cfgMgr.Get(), config.ModelRoleEmbed); embedModel != "" {
+				go func() {
+					if cat, err := skills.NewCatalog(skillsPath); err == nil {
+						_ = cat.IndexEmbeddings(ctx, client, embedModel)
+					}
+				}()
+			}
+		}
 
 		hasServer := cfgMgr.Get().ServerEnabled
 		hasTelegram := cfgMgr.Get().TelegramBotToken != ""
@@ -414,6 +426,17 @@ func runServe(args []string, cfg *config.Manager, client *ollama.Client, runner 
 	schedulerMgr := scheduler.NewManager(cfg, client, ms, mcpMgr)
 	schedulerMgr.Start(context.Background())
 	defer schedulerMgr.Stop()
+
+	// Warm up skills embeddings in the background on startup
+	if skillsPath := cfg.Get().SkillsPath; skillsPath != "" {
+		if embedModel := config.ResolveModel(cfg.Get(), config.ModelRoleEmbed); embedModel != "" {
+			go func() {
+				if cat, err := skills.NewCatalog(skillsPath); err == nil {
+					_ = cat.IndexEmbeddings(context.Background(), client, embedModel)
+				}
+			}()
+		}
+	}
 
 	startTelegramBot(cfg, client, sleepMgr, envPath, goalMgr, planMonitor, approvalService, autoMgr, mcpMgr, schedulerMgr)
 	srv := web.NewServerWithEnv(cfg, client, runner, *cachePath, envPath)
