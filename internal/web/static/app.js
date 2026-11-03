@@ -857,6 +857,16 @@ const SLASH_COMMANDS = [
     }
   },
   {
+    cmd: "/telegram",
+    args: "<message>",
+    icon: "✈️",
+    desc: "Send message and attached files to Telegram",
+    action: () => {
+      els.prompt.value = "/telegram ";
+      els.prompt.focus();
+    }
+  },
+  {
     cmd: "/export",
     args: "",
     icon: "📥",
@@ -3193,6 +3203,17 @@ async function sendMessage(event) {
   }
   if (!content && state.attachments.length === 0) return;
 
+  let effectiveContent = content;
+  if (content.startsWith("/telegram")) {
+    const customMsg = content.slice(9).trim();
+    if (!customMsg && state.attachments.length === 0) {
+      addSystemMessage("ℹ️ Usage: `/telegram <message>` (optionally with file/image attachments)");
+      renderMessages();
+      return;
+    }
+    effectiveContent = `Please send the following message and any attached files to Telegram using the send_telegram tool:\n\n${customMsg || "Please find the attached files."}`;
+  }
+
   // Ensure we have an active session before sending
   if (!state.activeSessionId || !state.sessions.some((s) => s.id === state.activeSessionId)) {
     await ensureActiveSession();
@@ -3212,7 +3233,7 @@ async function sendMessage(event) {
   const userMessage = {
     role: "user",
     sessionId: state.activeSessionId,
-    content,
+    content: effectiveContent,
     images,
     attachments: visibleAttachments,
     processed: false,

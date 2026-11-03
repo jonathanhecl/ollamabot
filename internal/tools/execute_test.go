@@ -2,10 +2,12 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/mcp"
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
 )
 
 func TestExecuteCommand_AllowedCommands(t *testing.T) {
@@ -44,5 +46,31 @@ func TestRegistry_SetMCPManager_Inactive(t *testing.T) {
 		if d.Function.Name == "mcp_list_servers" {
 			t.Fatal("expected mcp_list_servers to NOT be registered when MCP has no active servers")
 		}
+	}
+}
+
+func TestRegistry_SendTelegram(t *testing.T) {
+	tmpDir := t.TempDir()
+	reg := NewRegistry(false, tmpDir, nil, nil, "", SearchConfig{})
+	mock := &mockTelegramSender{}
+	reg.SetTelegramConfig("test-token", []string{"112233"})
+	reg.SetCustomTelegramSender(mock)
+
+	call := ollama.ToolCall{
+		Function: ollama.ToolFunction{
+			Name:      "send_telegram",
+			Arguments: json.RawMessage(`{"message": "Hello from registry tool"}`),
+		},
+	}
+
+	res, err := reg.Execute(context.Background(), call)
+	if err != nil {
+		t.Fatalf("unexpected error executing send_telegram: %v", err)
+	}
+	if !strings.Contains(res, "112233") {
+		t.Errorf("expected output to mention chat ID 112233, got: %s", res)
+	}
+	if len(mock.sentMessages) != 1 || mock.sentMessages[0] != "Hello from registry tool" {
+		t.Errorf("expected sent message, got: %v", mock.sentMessages)
 	}
 }

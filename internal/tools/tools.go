@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -79,6 +80,18 @@ type Registry struct {
 	schedulerService        SchedulerService
 	channel                 string
 	targetChatID            int64
+	telegramBotToken        string
+	telegramAuthorizedIDs   []string
+	customTelegramSender    TelegramSenderClient
+}
+
+func (r *Registry) SetTelegramConfig(botToken string, authorizedIDs []string) {
+	r.telegramBotToken = botToken
+	r.telegramAuthorizedIDs = authorizedIDs
+}
+
+func (r *Registry) SetCustomTelegramSender(sender TelegramSenderClient) {
+	r.customTelegramSender = sender
 }
 
 // SafetyPolicy defines the enforcement level for tool operations.
@@ -1297,6 +1310,37 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 					},
 				},
 				"required": []string{"file_path", "diff"},
+			},
+		},
+	})
+
+	// Register Send Telegram Tool
+	r.enabled["send_telegram"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "send_telegram",
+			Description: "Send a message and optional files/attachments to Telegram via the bot. Use this whenever the user asks to send updates, reports, files, or notifications to Telegram.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"message": map[string]any{
+						"type":        "string",
+						"description": "The message text to send to Telegram.",
+					},
+					"paths": map[string]any{
+						"type": "array",
+						"items": map[string]any{
+							"type": "string",
+						},
+						"description": "Optional list of file paths in workspace or session to send to Telegram as documents or photos.",
+					},
+					"chat_id": map[string]any{
+						"type":        "string",
+						"description": "Optional Telegram chat ID. If omitted, uses the configured authorized Telegram account.",
+					},
+				},
+				"required": []string{"message"},
 			},
 		},
 	})
@@ -2813,6 +2857,41 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		return r.executeScheduleList(args)
 	case "schedule_cancel":
 		return r.executeScheduleCancel(args)
+	case "send_telegram":
+		msg, _ := args["message"].(string)
+		if strings.TrimSpace(msg) == "" && args["paths"] == nil {
+			return "", fmt.Errorf("missing message")
+		}
+		var paths []string
+		if pathsVal := args["paths"]; pathsVal != nil {
+			if slice, ok := pathsVal.([]any); ok {
+				for _, item := range slice {
+					if str, ok := item.(string); ok {
+						paths = append(paths, str)
+					}
+				}
+			} else if slice, ok := pathsVal.([]string); ok {
+				paths = slice
+			} else if str, ok := pathsVal.(string); ok {
+				paths = []string{str}
+			}
+		}
+		var targetChatID int64 = r.targetChatID
+		if chatIDVal := args["chat_id"]; chatIDVal != nil {
+			switch v := chatIDVal.(type) {
+			case float64:
+				targetChatID = int64(v)
+			case int64:
+				targetChatID = v
+			case int:
+				targetChatID = int64(v)
+			case string:
+				if id, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+					targetChatID = id
+				}
+			}
+		}
+		return SendTelegram(ctx, r.telegramBotToken, targetChatID, r.telegramAuthorizedIDs, msg, paths, r.workspace, r.sessionsPath, r.sessionID, r.customTelegramSender)
 	default:
 		return "", fmt.Errorf("unknown tool %q", name)
 	}
