@@ -250,6 +250,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	a.mu.RUnlock()
 
 	for i := 0; i < maxIter; i++ {
+		if err := ctx.Err(); err != nil {
+			return messages, err
+		}
+
 		// --- DYNAMIC SYSTEM PREFIX (rebuilt each iteration) ---
 		// Only the date/time, todo progress, and plan reinforcement actually
 		// change between iterations.
@@ -992,6 +996,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				return false, nil
 			}
 
+			if err := ctx.Err(); err != nil {
+				return messages, err
+			}
+
 			if allParallelSafe {
 				// Parallel execution: run all tools concurrently, then
 				// post-process results in order.
@@ -1021,6 +1029,9 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// one at a time so state changes are visible to subsequent
 				// calls in the same batch.
 				for _, pc := range prepared {
+					if err := ctx.Err(); err != nil {
+						return messages, err
+					}
 					if handler != nil {
 						handler.OnToolStart(pc.toolName, pc.params, pc.toolSource)
 					}

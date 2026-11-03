@@ -1438,6 +1438,9 @@ func (s *Server) handleAbortSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Unconditionally clear active processing state so UI and polling reflect idle immediately
+	sessions.ClearProcessing(id)
+
 	writeJSON(w, http.StatusOK, map[string]any{"aborted": aborted})
 }
 

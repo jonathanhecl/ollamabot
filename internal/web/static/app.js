@@ -590,7 +590,24 @@ if (els.logoutBtn) {
 async function stopActiveSession() {
   if (state.currentAbortController) {
     state.currentAbortController.abort();
+    state.currentAbortController = null;
   }
+  state.isProcessing = false;
+  state.agentBusy = false;
+  // Immediately halt streaming/waiting animation on assistant message
+  for (const m of state.messages) {
+    if (m.role === "assistant" && (m.streaming || m.waiting)) {
+      m.streaming = false;
+      m.waiting = false;
+      if (!m.content || !m.content.includes("*(Skipped/Paused by user)*")) {
+        m.content = (m.content ? m.content + "\n\n" : "") + "*(Skipped/Paused by user)*";
+        appendContentStep(m, "\n\n*(Skipped/Paused by user)*");
+      }
+    }
+  }
+  renderMessages();
+  updateComposerUI();
+
   if (!state.activeSessionId) {
     addSystemMessage("No active session to stop.");
     renderMessages();
@@ -599,8 +616,13 @@ async function stopActiveSession() {
   try {
     const response = await fetch(`/api/sessions/${encodeURIComponent(state.activeSessionId)}/abort`, { method: "POST" });
     const result = await response.json();
+    state.agentBusy = false;
     addSystemMessage(result.aborted ? "Agent stopped." : "No active agent to stop.");
     renderMessages();
+    updateComposerUI();
+    if (state.messageQueue.length > 0) {
+      setTimeout(() => processNextQueueItem(), 300);
+    }
     return Boolean(result.aborted);
   } catch (err) {
     console.error("Failed to abort session on backend:", err);
@@ -1387,7 +1409,8 @@ function startSessionPolling() {
           const wasBusy = state.agentBusy;
           state.agentBusy = !!activeSess.agent_busy;
           if (msgsChanged) {
-            state.messages = normalized;
+            const pendingQueued = (state.messages || []).filter(m => m.role === "user" && m.processed === false);
+            state.messages = [...normalized, ...pendingQueued];
             renderMessages();
             renderAttachments();
             updateContextBar();
@@ -5721,7 +5744,9 @@ async function loadSession(id) {
     state.agentBusy = !!sess.agent_busy;
     renderPinnedPlan();
     renderApprovalCard();
-    state.messages = normalizeRawMessages(sess.messages || []);
+    const serverMessages = normalizeRawMessages(sess.messages || []);
+    const pendingQueued = (state.messages || []).filter((m) => m.role === "user" && m.processed === false);
+    state.messages = [...serverMessages, ...pendingQueued];
     syncActiveModel();
     renderMessages();
     renderAttachments();

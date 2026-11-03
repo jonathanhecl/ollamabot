@@ -96,6 +96,16 @@ func MarkIdle(sessionID string) {
 	NotifyUpdate(sessionID)
 }
 
+// ClearProcessing resets the active processing state for a session immediately on abort.
+func ClearProcessing(sessionID string) {
+	sessionID = normalizeSessionID(sessionID)
+	if sessionID == "" {
+		return
+	}
+	processingTracker.clear(sessionID)
+	NotifyUpdate(sessionID)
+}
+
 // IsProcessing reports whether any agent turn is currently running for the session.
 func IsProcessing(sessionID string) bool {
 	sessionID = normalizeSessionID(sessionID)
@@ -204,6 +214,12 @@ func (t *sessionActivityTracker) unmark(sessionID string) {
 		return
 	}
 	t.counts[sessionID]--
+}
+
+func (t *sessionActivityTracker) clear(sessionID string) {
+	processingTrackerMu.Lock()
+	defer processingTrackerMu.Unlock()
+	delete(t.counts, sessionID)
 }
 
 func (t *sessionActivityTracker) isActive(sessionID string) bool {
