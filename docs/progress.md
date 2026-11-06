@@ -1590,3 +1590,12 @@ Added an audio-to-audio channel for small devices with a microphone, speaker and
 - `internal/web`: mounts the device routes before the password middleware and validates the device configuration at startup.
 - `internal/config` / `.env.example`: `DEVICE_ENABLED`, `DEVICE_TOKEN`, `DEVICE_MAX_AUDIO_MB`, `DEVICE_TURN_TIMEOUT_MINUTES`, `DEVICE_REPLY_MAX_CHARS`, persisted by `SaveBasic`.
 - `docs/device-api.md`: full HTTP contract, requirements, device notes and firmware flow.
+
+## 2026-11-06 — Fix device audio leaking into the main model
+
+A device turn transcribed the clip with the audio model correctly, but the turn failed at the main model with `audio input is not supported`, and every later turn in that session (even plain text) failed the same way.
+
+- Root cause: the spoken reply is stored as a plain `.wav` referenced from the assistant message. On reload, `loadMessagesWithAttachments` restored every non-JSON reference as an **image** payload, and `ResolveMessages` only sanitized user-role messages, so the WAV travelled to the main model as an image on every following turn.
+- `internal/sessions/sessions.go`: `loadMessagesWithAttachments` now resolves the attachment kind from the message metadata, MIME type and file extension, and only inlines images into `Images`. Audio references keep their name/path (served by the existing attachment route) instead of being re-offered as image payloads. Legacy plain binaries without any hint still default to image.
+- `internal/router/media.go`: history sanitizing applies to **every** role, not just `user`; audio payloads are detected by content magic bytes as a last line of defense, so a payload that is really audio is never treated as an image even when its metadata says so.
+- `internal/router/media_test.go`, `internal/device/audio_history_test.go`: regression tests covering media on assistant history and the full reload → router path.

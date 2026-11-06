@@ -1,7 +1,9 @@
 package router
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
 	"strings"
@@ -87,7 +89,7 @@ func (r *Router) ResolveMessages(ctx context.Context, messages []MediaMessage) (
 			out = append(out, resolved...)
 			continue
 		}
-		if msg.Role == "user" && len(msg.Images) > 0 {
+		if len(msg.Images) > 0 {
 			out = append(out, r.sanitizeHistoryMessage(msg))
 			continue
 		}
@@ -100,7 +102,9 @@ func (r *Router) ResolveMessages(ctx context.Context, messages []MediaMessage) (
 // sanitizeHistoryMessage strips media that must not be re-sent to the main
 // model on follow-up turns: audio base64 is always dropped (huge and already
 // transcribed) and images are dropped when image routing is active (their
-// description already lives in the history as an assistant message).
+// description already lives in the history as an assistant message). It runs
+// for every role, because assistants can carry media too (a synthesized voice
+// reply, a generated image) and that payload must never reach the chat model.
 func (r *Router) sanitizeHistoryMessage(msg MediaMessage) ollama.Message {
 	dropImages := r.Decide("image") != DecisionPassthrough
 	var kept []string
@@ -110,7 +114,7 @@ func (r *Router) sanitizeHistoryMessage(msg MediaMessage) ollama.Message {
 		if i < len(msg.ImageKinds) {
 			kind = msg.ImageKinds[i]
 		}
-		if kind == "audio" {
+		if kind == "audio" || isAudioPayload(b64) {
 			audioCount++
 			continue
 		}
@@ -122,7 +126,7 @@ func (r *Router) sanitizeHistoryMessage(msg MediaMessage) ollama.Message {
 
 	sanitized := msg.Message
 	sanitized.Images = kept
-	if audioCount > 0 && strings.TrimSpace(sanitized.Content) == "" {
+	if msg.Role == "user" && audioCount > 0 && strings.TrimSpace(sanitized.Content) == "" {
 		var parts []string
 		for _, t := range msg.Transcriptions {
 			if strings.TrimSpace(t) != "" {
@@ -155,6 +159,12 @@ func (r *Router) resolveActiveUserMessage(ctx context.Context, msg MediaMessage,
 		kind := "image"
 		if i < len(msg.ImageKinds) {
 			kind = msg.ImageKinds[i]
+		}
+		// A payload that is really audio must never be handled as an image, no
+		// matter what the metadata claims: the main model would reject it and a
+		// vision model would fail to read it.
+		if kind != "audio" && isAudioPayload(b64) {
+			kind = "audio"
 		}
 		attachments = append(attachments, attachment{index: i, kind: kind, base64: b64})
 	}
@@ -317,6 +327,40 @@ func transcriptionBlock(label string, t AudioTranscription) string {
 		block += fmt.Sprintf(" (non-speech sounds: %s)", t.Sounds)
 	}
 	return block
+}
+
+// isAudioPayload reports whether a base64 payload is an audio container. It is
+// a last line of defense: Ollama rejects audio sent inside the images array of
+// a model without audio support, so a payload that is really audio must never
+// be treated as an image even when the stored metadata says so.
+func isAudioPayload(b64 string) bool {
+	b64 = strings.TrimSpace(b64)
+	if len(b64) < 16 {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(b64[:16])
+	if err != nil {
+		raw, err = base64.RawStdEncoding.DecodeString(b64[:16])
+		if err != nil || len(raw) < 12 {
+			return false
+		}
+	}
+	if len(raw) < 12 {
+		return false
+	}
+	switch {
+	case bytes.HasPrefix(raw, []byte("OggS")):
+		return true
+	case bytes.HasPrefix(raw, []byte("fLaC")):
+		return true
+	case bytes.HasPrefix(raw, []byte("ID3")):
+		return true
+	case string(raw[:4]) == "RIFF" && string(raw[8:12]) == "WAVE":
+		return true
+	case string(raw[4:8]) == "ftyp":
+		return true
+	}
+	return false
 }
 
 func capitalize(s string) string {
