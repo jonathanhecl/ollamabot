@@ -756,6 +756,56 @@ func (s *Store) extractAttachments(id string, messages []json.RawMessage) ([]jso
 	return out, nil
 }
 
+// resolveAttachmentKind decides what a referenced attachment is. Metadata
+// saved with the message wins; otherwise the MIME type and the file extension
+// are used. legacy marks a reference whose payload is a plain binary file
+// (generated images, synthesized voice replies): before metadata existed those
+// were always images, so that stays the last resort.
+func resolveAttachmentKind(kind, mime, name string, legacy bool) string {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	mime = strings.ToLower(strings.TrimSpace(mime))
+
+	infer := func() string {
+		switch {
+		case strings.HasPrefix(mime, "image/"):
+			return "image"
+		case strings.HasPrefix(mime, "audio/"):
+			return "audio"
+		case hasFileExt(name, ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"):
+			return "image"
+		case hasFileExt(name, ".wav", ".mp3", ".ogg", ".m4a", ".opus", ".pcm", ".flac"):
+			return "audio"
+		}
+		return ""
+	}
+
+	if kind == "" {
+		if inferred := infer(); inferred != "" {
+			return inferred
+		}
+		if legacy {
+			return "image"
+		}
+		return ""
+	}
+	if kind == "file" {
+		if inferred := infer(); inferred != "" {
+			return inferred
+		}
+	}
+	return kind
+}
+
+func hasFileExt(name string, exts ...string) bool {
+	lower := strings.ToLower(name)
+	for _, ext := range exts {
+		if strings.HasSuffix(lower, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // loadMessagesWithAttachments reads referenced attachment files and restores
 // base64 Images and Attachments in the returned messages.
 func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessage) ([]json.RawMessage, error) {
@@ -776,44 +826,62 @@ func (s *Store) loadMessagesWithAttachments(id string, messages []json.RawMessag
 		var images []string
 		var attachments []AttachmentMeta
 		var imageKinds []string
-		for _, ref := range msg.AttachmentRefs {
+		for idx, ref := range msg.AttachmentRefs {
 			path := filepath.Join(attDir, ref)
 			data, err := os.ReadFile(path)
 			if err != nil {
 				continue
 			}
+
+			// Metadata saved alongside the message is the best source of truth
+			// for the kind of the referenced file (the file itself may be a
+			// plain binary, such as a synthesized voice reply).
+			meta := AttachmentMeta{Name: ref, Path: path}
+			if idx < len(msg.Attachments) {
+				meta = msg.Attachments[idx]
+				if meta.Name == "" {
+					meta.Name = ref
+				}
+				meta.Path = path
+			}
+
+			legacy := true
 			// Try to parse as JSON (new format with metadata)
 			var storage attachmentStorage
-			if err := json.Unmarshal(data, &storage); err == nil {
-				// New JSON format with metadata
-				images = append(images, storage.Data)
-				imageKinds = append(imageKinds, storage.Kind)
-				attachments = append(attachments, AttachmentMeta{
-					Name:          storage.Name,
-					Mime:          storage.Mime,
-					Kind:          storage.Kind,
-					Data:          storage.Data,
-					URL:           "",
-					Transcription: storage.Transcription,
-					TranscribeMs:  storage.TranscribeMs,
-					Description:   storage.Description,
-					ProcessedBy:   storage.ProcessedBy,
-					ProcessedAt:   storage.ProcessedAt,
-					Unreadable:    storage.Unreadable,
-				})
-			} else {
-				// Legacy binary format - assume image
-				b64 := base64.StdEncoding.EncodeToString(data)
-				images = append(images, b64)
-				imageKinds = append(imageKinds, "image")
-				attachments = append(attachments, AttachmentMeta{
-					Name: "attachment.bin",
-					Mime: "application/octet-stream",
-					Kind: "image",
-					Data: b64,
-					URL:  "",
-				})
+			if err := json.Unmarshal(data, &storage); err == nil && storage.Data != "" {
+				legacy = false
+				if meta.Name == "" {
+					meta.Name = storage.Name
+				}
+				if meta.Mime == "" {
+					meta.Mime = storage.Mime
+				}
+				if meta.Kind == "" {
+					meta.Kind = storage.Kind
+				}
+				meta.Data = storage.Data
+				meta.Transcription = storage.Transcription
+				meta.TranscribeMs = storage.TranscribeMs
+				meta.Description = storage.Description
+				meta.ProcessedBy = storage.ProcessedBy
+				meta.ProcessedAt = storage.ProcessedAt
+				meta.Unreadable = storage.Unreadable
 			}
+			meta.Kind = resolveAttachmentKind(meta.Kind, meta.Mime, meta.Name, legacy)
+			if meta.Size == 0 {
+				meta.Size = int64(len(data))
+			}
+
+			// Only images are inlined into Images: raw audio must never be
+			// offered back to a chat model as an image payload.
+			if meta.Kind == "image" {
+				if meta.Data == "" {
+					meta.Data = base64.StdEncoding.EncodeToString(data)
+				}
+				images = append(images, meta.Data)
+				imageKinds = append(imageKinds, "image")
+			}
+			attachments = append(attachments, meta)
 		}
 		msg.Images = images
 		msg.ImageKinds = imageKinds
