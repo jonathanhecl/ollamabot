@@ -343,6 +343,20 @@ func (s *Store) sessionDir(id string) string {
 	return filepath.Join(s.dir, id)
 }
 
+// Folder returns the absolute directory that holds the session: messages,
+// attachments and uploads. The directory name is the session ID, so exposing it
+// lets clients point the user at a chat on disk.
+func (s *Store) Folder(id string) string {
+	if strings.TrimSpace(id) == "" {
+		return ""
+	}
+	dir := s.sessionDir(id)
+	if abs, err := filepath.Abs(dir); err == nil {
+		return abs
+	}
+	return dir
+}
+
 func (s *Store) sessionMetaPath(id string) string {
 	return filepath.Join(s.sessionDir(id), "session.json")
 }

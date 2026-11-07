@@ -14,6 +14,7 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
 	"github.com/jonathanhecl/ollamabot/internal/router"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func TestResolveMedia_SplitsIntoAssistantAndUser(t *testing.T) {
@@ -802,3 +803,62 @@ func TestDeviceSettingsAPI(t *testing.T) {
 	}
 }
 
+// TestListSessionsIncludesFolder covers the sidebar hint that tells the user
+// which directory holds a chat on disk.
+func TestListSessionsIncludesFolder(t *testing.T) {
+	tmpDir := t.TempDir()
+	ss := sessions.NewStore(tmpDir)
+	sess := sessions.Session{ID: "1793653719498901000_1", Title: "Kitchen device"}
+	if err := ss.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{sessionStore: ss}
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	w := httptest.NewRecorder()
+	s.handleListSessions(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var list []sessionListItem
+	if err := json.Unmarshal(w.Body.Bytes(), &list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(list))
+	}
+	want := filepath.Join(tmpDir, sess.ID)
+	if list[0].Folder != want {
+		t.Fatalf("folder = %q, want %q", list[0].Folder, want)
+	}
+	if _, err := os.Stat(list[0].Folder); err != nil {
+		t.Fatalf("folder does not exist: %v", err)
+	}
+}
+
+func TestGetSessionIncludesFolder(t *testing.T) {
+	tmpDir := t.TempDir()
+	ss := sessions.NewStore(tmpDir)
+	sess := sessions.Session{ID: "1793653719498901000_2", Title: "Web chat"}
+	if err := ss.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Server{sessionStore: ss}
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sess.ID, nil)
+	req.SetPathValue("id", sess.ID)
+	w := httptest.NewRecorder()
+	s.handleGetSession(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Result().StatusCode, w.Body.String())
+	}
+
+	var view sessions.SessionAPIView
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if view.Folder != filepath.Join(tmpDir, sess.ID) {
+		t.Fatalf("folder = %q", view.Folder)
+	}
+}

@@ -1322,13 +1322,23 @@ type updateSessionRequest struct {
 	Messages []json.RawMessage `json:"messages,omitempty"`
 }
 
+// sessionListItem is a session row plus the directory that holds it on disk.
+type sessionListItem struct {
+	sessions.Session
+	Folder string `json:"folder,omitempty"`
+}
+
 func (s *Server) handleListSessions(w http.ResponseWriter, r *http.Request) {
 	list, err := s.sessionStore.List()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, list)
+	out := make([]sessionListItem, 0, len(list))
+	for _, sess := range list {
+		out = append(out, sessionListItem{Session: sess, Folder: s.sessionStore.Folder(sess.ID)})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -1351,7 +1361,9 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sessions.NotifyUpdate(sess.ID)
-	writeJSON(w, http.StatusOK, sessions.SessionAPIViewFrom(sess))
+	view := sessions.SessionAPIViewFrom(sess)
+	view.Folder = s.sessionStore.Folder(sess.ID)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
@@ -1370,7 +1382,9 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 	} else {
 		sess.Messages = resolved
 	}
-	writeJSON(w, http.StatusOK, sessions.SessionAPIViewFrom(sess))
+	view := sessions.SessionAPIViewFrom(sess)
+	view.Folder = s.sessionStore.Folder(sess.ID)
+	writeJSON(w, http.StatusOK, view)
 }
 
 func (s *Server) handleGetSessionEntry(w http.ResponseWriter, r *http.Request) {
@@ -1380,7 +1394,7 @@ func (s *Server) handleGetSessionEntry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, entry)
+	writeJSON(w, http.StatusOK, sessionListItem{Session: entry, Folder: s.sessionStore.Folder(entry.ID)})
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {

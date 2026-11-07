@@ -4,6 +4,9 @@ package sessions
 type SessionAPIView struct {
 	Session
 	AgentBusy bool `json:"agent_busy"`
+	// Folder is the absolute directory holding the session on disk (its name
+	// is the session ID), so the UI can show the user where the chat lives.
+	Folder string `json:"folder,omitempty"`
 }
 
 // SessionAPIViewFrom builds the API representation for a session.

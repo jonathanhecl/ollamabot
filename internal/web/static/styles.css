@@ -243,6 +243,31 @@ input {
   font-size: 11px;
 }
 
+.session-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-folder {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  letter-spacing: -0.2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  cursor: copy;
+  opacity: 0.75;
+}
+
+.session-folder:hover {
+  color: var(--accent);
+  opacity: 1;
+}
+
 .app {
   display: flex;
   flex-direction: column;

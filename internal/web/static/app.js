@@ -1577,6 +1577,14 @@ els.sessionList.addEventListener("click", (e) => {
     return;
   }
 
+  const folderEl = e.target.closest(".session-folder");
+  if (folderEl) {
+    e.preventDefault();
+    e.stopPropagation();
+    copySessionFolder(folderEl);
+    return;
+  }
+
   const item = e.target.closest(".session-item");
   if (!item) return;
   if (e.target.closest(".session-title-input")) return;
@@ -6281,8 +6289,28 @@ function renderSessions() {
     const activityAt = sess.last_message_at || sess.updated_at;
     const fullDate = activityAt ? new Date(activityAt).toLocaleString() : "";
     const relativeDate = activityAt ? formatRelativeTime(activityAt) : "";
-    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span></div><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span></div><div class="session-actions"><button class="session-rename-btn" type="button" title="Rename session">✏️</button><button class="session-delete" type="button" title="Delete session">×</button></div>`;
+    const folder = sess.folder || sess.id;
+    btn.dataset.folder = folder;
+    btn.innerHTML = `<div class="session-info"><div class="session-title-row"><span class="session-title">${escapeHtml(sess.title || "Untitled")}</span></div><span class="session-meta-row"><span class="session-meta" title="${escapeAttr(fullDate)}">${escapeHtml(relativeDate)}</span><span class="session-folder" title="Click to copy the chat folder: ${escapeAttr(folder)}">${escapeHtml(sess.id)}</span></span></div><div class="session-actions"><button class="session-rename-btn" type="button" title="Rename session">✏️</button><button class="session-delete" type="button" title="Delete session">×</button></div>`;
     els.sessionList.appendChild(btn);
+  }
+}
+
+// copySessionFolder puts the absolute folder of a chat on the clipboard so the
+// user can find the session directory (and its files) on disk. The clipboard API
+// needs a secure context, so a toast with the path is the fallback.
+async function copySessionFolder(target) {
+  const item = target.closest(".session-item");
+  const folder = item?.dataset.folder;
+  if (!folder) return;
+  try {
+    await navigator.clipboard.writeText(folder);
+    const previous = target.textContent;
+    target.textContent = "Copied";
+    setTimeout(() => { target.textContent = previous; }, 1200);
+    showToast(`Chat folder copied: ${folder}`, "success", 5000);
+  } catch {
+    showToast(`Chat folder: ${folder}`, "info", 12000);
   }
 }
 
