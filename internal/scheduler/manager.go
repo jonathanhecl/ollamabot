@@ -27,19 +27,23 @@ type NotificationFunc func(task Task, message string) error
 
 // Manager coordinates scheduled reminders and recurring background tasks.
 type Manager struct {
-	mu           sync.RWMutex
-	cfgMgr       *config.Manager
-	client       *ollama.Client
-	memoryStore  *memory.Store
-	mcpMgr       *mcp.Manager
-	sessionStore *sessions.Store
-	storagePath  string
-	tasks        map[string]Task
-	notifiers    map[string]NotificationFunc
-	cancelFunc   context.CancelFunc
-	tickerDone   chan struct{}
-	interval     time.Duration
-	isExecuting  map[string]bool
+	mu             sync.RWMutex
+	cfgMgr         *config.Manager
+	client         *ollama.Client
+	memoryStore    *memory.Store
+	mcpMgr         *mcp.Manager
+	sessionStore   *sessions.Store
+	storagePath    string
+	embeddingsPath string
+	tasks          map[string]Task
+	embeddings     map[string]taskEmbedding
+	refreshMu      sync.Mutex
+	refreshing     bool
+	notifiers      map[string]NotificationFunc
+	cancelFunc     context.CancelFunc
+	tickerDone     chan struct{}
+	interval       time.Duration
+	isExecuting    map[string]bool
 }
 
 const scheduledTaskSystemPromptBase = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
@@ -102,20 +106,24 @@ func NewManager(cfgMgr *config.Manager, client *ollama.Client, memoryStore *memo
 	}
 	sStore := sessions.NewStore(sessionsPath)
 	storagePath := filepath.Join(sessionsPath, "scheduler_tasks.json")
+	embeddingsPath := filepath.Join(sessionsPath, "scheduler_task_embeddings.json")
 
 	m := &Manager{
-		cfgMgr:       cfgMgr,
-		client:       client,
-		memoryStore:  memoryStore,
-		mcpMgr:       mcpMgr,
-		sessionStore: sStore,
-		storagePath:  storagePath,
-		tasks:        make(map[string]Task),
-		notifiers:    make(map[string]NotificationFunc),
-		interval:     10 * time.Second,
-		isExecuting:  make(map[string]bool),
+		cfgMgr:         cfgMgr,
+		client:         client,
+		memoryStore:    memoryStore,
+		mcpMgr:         mcpMgr,
+		sessionStore:   sStore,
+		storagePath:    storagePath,
+		embeddingsPath: embeddingsPath,
+		tasks:          make(map[string]Task),
+		embeddings:     make(map[string]taskEmbedding),
+		notifiers:      make(map[string]NotificationFunc),
+		interval:       10 * time.Second,
+		isExecuting:    make(map[string]bool),
 	}
 	_ = m.Load()
+	go m.refreshTaskEmbeddings(false)
 	return m
 }
 
@@ -233,6 +241,7 @@ func (m *Manager) Load() error {
 		m.migrateTask(&t)
 		m.tasks[t.ID] = t
 	}
+	m.loadEmbeddingsLocked()
 	return nil
 }
 
@@ -399,6 +408,9 @@ func (m *Manager) CreateScheduledTask(spec tools.ScheduledTaskSpec) (tools.Sched
 	if err != nil {
 		return tools.ScheduledTaskInfo{}, err
 	}
+	if added.Type == TaskTypeAgentTask {
+		go m.embedTask(added.ID)
+	}
 	return added.ToInfo(), nil
 }
 
@@ -413,6 +425,7 @@ func (m *Manager) UpdateScheduledTask(id string, patch tools.ScheduledTaskPatch)
 		return tools.ScheduledTaskInfo{}, fmt.Errorf("task %q not found", id)
 	}
 
+	contentChanged := strings.TrimSpace(patch.Title) != "" || strings.TrimSpace(patch.Prompt) != ""
 	if strings.TrimSpace(patch.Title) != "" {
 		task.Title = deriveTaskTitle(patch.Title, task.Prompt)
 	}
@@ -460,6 +473,15 @@ func (m *Manager) UpdateScheduledTask(id string, patch tools.ScheduledTaskPatch)
 
 	if err := m.Save(); err != nil {
 		return tools.ScheduledTaskInfo{}, err
+	}
+	if contentChanged && task.Type == TaskTypeAgentTask {
+		// Drop the stale vector immediately so matching uses the keyword
+		// fallback until the new embedding is ready.
+		m.mu.Lock()
+		delete(m.embeddings, id)
+		_ = m.saveEmbeddingsLocked()
+		m.mu.Unlock()
+		go m.embedTask(id)
 	}
 	return task.ToInfo(), nil
 }
@@ -551,8 +573,16 @@ func (m *Manager) DeleteScheduledTask(id string) error {
 		return fmt.Errorf("task %q not found", id)
 	}
 	delete(m.tasks, id)
+	delete(m.embeddings, id)
 	m.mu.Unlock()
-	return m.Save()
+
+	if err := m.Save(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	err := m.saveEmbeddingsLocked()
+	m.mu.Unlock()
+	return err
 }
 
 // CreateReminder is a helper to schedule a simple text alert.
