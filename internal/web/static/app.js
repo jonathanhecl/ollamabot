@@ -446,6 +446,8 @@ const els = {
   schedulerEditWhen: document.querySelector("#schedulerEditWhen"),
   schedulerChannelWeb: document.querySelector("#schedulerChannelWeb"),
   schedulerChannelTelegram: document.querySelector("#schedulerChannelTelegram"),
+  schedulerSilentRow: document.querySelector("#schedulerSilentRow"),
+  schedulerEditSilent: document.querySelector("#schedulerEditSilent"),
   schedulerEditSaveBtn: document.querySelector("#schedulerEditSaveBtn"),
   drawerOpenScheduler: document.querySelector("#drawerOpenScheduler"),
 
@@ -5424,11 +5426,13 @@ function renderApprovalPreviewHTML(toolName, args) {
     const text = args.instruction || args.text || "";
     const title = args.title || "";
     const kind = tool === "schedule_task" ? "Autonomous task" : "Reminder";
+    const notifyMode = args.notify_mode === "on_alert" ? "Only when there is something new" : "Every run";
     return `
       <div class="approval-schedule-box">
         <div class="approval-schedule-row"><span>Type</span><strong>${escapeHtml(kind)}</strong></div>
         ${title ? `<div class="approval-schedule-row"><span>Title</span><strong>${escapeHtml(title)}</strong></div>` : ""}
         <div class="approval-schedule-row"><span>Schedule</span><code>${escapeHtml(when)}</code></div>
+        ${tool === "schedule_task" ? `<div class="approval-schedule-row"><span>Notify</span><strong>${escapeHtml(notifyMode)}</strong></div>` : ""}
         <div class="approval-schedule-instruction"><span>Will run</span><p>${escapeHtml(text)}</p></div>
       </div>
     `;
@@ -7321,6 +7325,9 @@ function renderSchedulerTasks(tasks) {
       : task.status === "failed"
         ? `<span class="scheduler-badge failed">failed</span>`
         : "";
+    const silentBadge = task.notify_mode === "on_alert"
+      ? `<span class="scheduler-badge silent">silent</span>`
+      : "";
 
     const tr = document.createElement("tr");
     tr.innerHTML = `
@@ -7329,6 +7336,7 @@ function renderSchedulerTasks(tasks) {
         <div class="scheduler-task-preview">${escapeHtml(preview)}</div>
         <div class="scheduler-task-meta">
           <span class="scheduler-badge ${typeClass}">${typeLabel}</span>
+          ${silentBadge}
           <code>${escapeHtml(task.id)}</code>
         </div>
         ${task.last_error ? `<div class="scheduler-task-error">${escapeHtml(task.last_error)}</div>` : ""}
@@ -7397,7 +7405,18 @@ function openSchedulerEdit(task) {
     : ["web", "telegram"];
   els.schedulerChannelWeb.checked = channels.includes("web");
   els.schedulerChannelTelegram.checked = channels.includes("telegram");
+  els.schedulerEditSilent.checked = !!task && task.notify_mode === "on_alert";
+  updateSchedulerSilentVisibility();
   els.schedulerEditDialog.showModal();
+}
+
+function updateSchedulerSilentVisibility() {
+  if (!els.schedulerEditType || !els.schedulerSilentRow) return;
+  const isAgent = els.schedulerEditType.value === "agent_task";
+  els.schedulerSilentRow.style.display = isAgent ? "flex" : "none";
+  if (!isAgent && els.schedulerEditSilent) {
+    els.schedulerEditSilent.checked = false;
+  }
 }
 
 if (els.schedulerListBody) {
@@ -7426,6 +7445,9 @@ if (els.schedulerListBody) {
 
 if (els.schedulerShowFinished) {
   els.schedulerShowFinished.addEventListener("change", loadAndRenderSchedulerTasks);
+}
+if (els.schedulerEditType) {
+  els.schedulerEditType.addEventListener("change", updateSchedulerSilentVisibility);
 }
 if (els.addScheduledTaskBtn) {
   els.addScheduledTaskBtn.addEventListener("click", () => openSchedulerEdit(null));
@@ -7456,6 +7478,9 @@ if (els.schedulerEditForm) {
     }
 
     const payload = { title, text, when, notify_channels: notify };
+    if (type === "agent_task") {
+      payload.notify_mode = (els.schedulerEditSilent && els.schedulerEditSilent.checked) ? "on_alert" : "always";
+    }
     let url = "/api/scheduler/tasks";
     let method = "POST";
     if (wasEdit) {

@@ -31,10 +31,11 @@ func TestSchedulerTasksAPI(t *testing.T) {
 		Title          string   `json:"title"`
 		SessionID      string   `json:"session_id"`
 		NotifyChannels []string `json:"notify_channels"`
+		NotifyMode     string   `json:"notify_mode"`
 	}
 
 	t.Run("create", func(t *testing.T) {
-		body := `{"text":"Tell me how bitcoin is doing","title":"Bitcoin check","when":"0 9 * * *","is_agent_task":true,"notify_channels":["web","telegram"]}`
+		body := `{"text":"Tell me how bitcoin is doing","title":"Bitcoin check","when":"0 9 * * *","is_agent_task":true,"notify_channels":["web","telegram"],"notify_mode":"on_alert"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/scheduler/tasks", strings.NewReader(body))
 		w := httptest.NewRecorder()
 		s.handleCreateSchedulerTask(w, req)
@@ -53,10 +54,13 @@ func TestSchedulerTasksAPI(t *testing.T) {
 		if created.SessionID == "" {
 			t.Fatal("expected a dedicated session for a web-delivered task")
 		}
+		if created.NotifyMode != "on_alert" {
+			t.Fatalf("notify mode = %q, want on_alert", created.NotifyMode)
+		}
 	})
 
 	t.Run("update", func(t *testing.T) {
-		body := `{"title":"BTC morning","status":"paused"}`
+		body := `{"title":"BTC morning","status":"paused","notify_mode":"always"}`
 		req := httptest.NewRequest(http.MethodPatch, "/api/scheduler/tasks/"+created.ID, strings.NewReader(body))
 		req.SetPathValue("id", created.ID)
 		w := httptest.NewRecorder()
@@ -65,14 +69,18 @@ func TestSchedulerTasksAPI(t *testing.T) {
 			t.Fatalf("update status = %d body=%s", w.Result().StatusCode, w.Body.String())
 		}
 		var updated struct {
-			Title  string `json:"title"`
-			Status string `json:"status"`
+			Title      string `json:"title"`
+			Status     string `json:"status"`
+			NotifyMode string `json:"notify_mode"`
 		}
 		if err := json.Unmarshal(w.Body.Bytes(), &updated); err != nil {
 			t.Fatal(err)
 		}
 		if updated.Title != "BTC morning" || updated.Status != "paused" {
 			t.Fatalf("unexpected update: %+v", updated)
+		}
+		if updated.NotifyMode != "always" {
+			t.Fatalf("notify mode = %q, want always", updated.NotifyMode)
 		}
 	})
 

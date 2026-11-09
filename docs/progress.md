@@ -1622,3 +1622,14 @@ The scheduler now behaves as a real proactive assistant instead of dropping a me
 - New tools `schedule_update` / `schedule_delete`; `schedule_list` now shows every channel. Web API gained `PATCH /api/scheduler/tasks/{id}`, `DELETE` now deletes permanently, and `GET` returns `[]` instead of `null`.
 - Web UI: "Scheduled Tasks" dialog (More menu, mobile drawer, `/tasks`) with status, schedule, next run, channels, last error, and Open/Pause/Resume/Edit/Delete actions; creation/edit form for title, type, instruction, schedule and delivery channels; schedule-aware approval preview.
 - Tests: scheduler CRUD/migration/fan-out/session creation, tool update/delete and approval denial, web API create/update/delete.
+
+## 2026-11-09 — Silent monitoring tasks (notify only when something happens)
+
+Scheduled agent tasks can now run silently and only message the user when there is news:
+
+- `internal/scheduler`: tasks gained `notify_mode` (`always` by default, `on_alert` for silent monitoring), `last_observation`, `last_alert` and `last_alert_at`. `on_alert` is only valid for agent tasks; reminders stay `always`. Legacy tasks migrate to `always`.
+- Silent runs still execute on schedule, record the full turn in the task session and update `last_observation`, but the scheduler only pushes a message when the agent called `send_scheduled_alert`. The next run receives the previous observation and the last alert so the model can judge what is actually new. Failures always notify.
+- `internal/tools`: `schedule_task` / `schedule_update` accept `notify_mode`; `send_scheduled_alert` is registered only while a silent run is active and feeds the scheduler's alert collector.
+- `internal/engine`: `Deps.ScheduledAlertHandler` wires the collector into the tool registry.
+- Web: the task form has a "Only notify me when there is something new" option for autonomous tasks, the list shows a `silent` badge, and the create/edit API accepts `notify_mode`.
+- Tests: notify-mode normalization and migration, silent-run notification decisions, `send_scheduled_alert` collection, and API create/update with `notify_mode`.

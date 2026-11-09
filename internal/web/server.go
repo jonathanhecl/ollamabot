@@ -3123,6 +3123,7 @@ func (s *Server) handleCreateSchedulerTask(w http.ResponseWriter, r *http.Reques
 		SessionID      string   `json:"session_id"`
 		IsAgentTask    bool     `json:"is_agent_task"`
 		NotifyChannels []string `json:"notify_channels"`
+		NotifyMode     string   `json:"notify_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -3143,6 +3144,7 @@ func (s *Server) handleCreateSchedulerTask(w http.ResponseWriter, r *http.Reques
 		Prompt:          req.Text,
 		When:            req.When,
 		NotifyChannels:  req.NotifyChannels,
+		NotifyMode:      req.NotifyMode,
 	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -3171,6 +3173,7 @@ func (s *Server) handleUpdateSchedulerTask(w http.ResponseWriter, r *http.Reques
 		Text           *string  `json:"text"`
 		When           *string  `json:"when"`
 		NotifyChannels []string `json:"notify_channels"`
+		NotifyMode     *string  `json:"notify_mode"`
 		Status         *string  `json:"status"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -3187,6 +3190,9 @@ func (s *Server) handleUpdateSchedulerTask(w http.ResponseWriter, r *http.Reques
 	}
 	if req.When != nil {
 		patch.When = strings.TrimSpace(*req.When)
+	}
+	if req.NotifyMode != nil {
+		patch.NotifyMode = strings.TrimSpace(*req.NotifyMode)
 	}
 	if req.Status != nil {
 		patch.Status = strings.TrimSpace(*req.Status)

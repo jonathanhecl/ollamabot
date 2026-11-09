@@ -4626,6 +4626,20 @@ textarea {
   color: #ff6b6b;
 }
 
+.scheduler-badge.silent {
+  background: rgba(155, 89, 182, 0.16);
+  color: #c39bd3;
+}
+
+.scheduler-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+
 .scheduler-field-hint {
   font-size: 11px;
   color: var(--muted);

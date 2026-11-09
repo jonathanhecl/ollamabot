@@ -361,6 +361,13 @@
           <label><input id="schedulerChannelWeb" type="checkbox" checked /> Web session</label>
           <label><input id="schedulerChannelTelegram" type="checkbox" /> Telegram</label>
         </fieldset>
+        <label id="schedulerSilentRow" class="scheduler-toggle-row">
+          <input id="schedulerEditSilent" type="checkbox" />
+          <span>Only notify me when there is something new (silent monitoring)</span>
+        </label>
+        <span class="scheduler-field-hint">
+          Silent tasks still run on schedule and keep their full history in the session; they only send a message when the agent finds news or the condition is met.
+        </span>
         <div class="skill-edit-actions">
           <button id="schedulerEditSaveBtn" class="primary-button" type="submit">Save Task</button>
         </div>
