@@ -21,6 +21,10 @@ type ScheduledTaskInfo struct {
 	OriginSessionID string
 	SessionID       string // dedicated run session for agent tasks
 	NotifyChannels  []string
+	NotifyMode      string // "always" or "on_alert"
+	LastObservation string
+	LastAlert       string
+	LastAlertAt     *time.Time
 	NextRunAt       time.Time
 	LastRunAt       *time.Time
 	Status          string
@@ -38,6 +42,7 @@ type ScheduledTaskSpec struct {
 	Prompt          string
 	When            string
 	NotifyChannels  []string
+	NotifyMode      string // "always" or "on_alert" (silent monitoring)
 }
 
 // ScheduledTaskPatch edits an existing task. Empty strings and a nil channel
@@ -47,6 +52,7 @@ type ScheduledTaskPatch struct {
 	Prompt         string
 	When           string
 	NotifyChannels []string
+	NotifyMode     string // "always" or "on_alert"; empty means unchanged
 	Status         string // "paused" or "pending"
 }
 
@@ -102,7 +108,7 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "schedule_task",
-			Description: "Schedule a proactive autonomous task. At the scheduled time the agent runs in the background with its normal tools (web search, MCP, memory, files) and reports the result to the user. Use this for requests like 'every morning tell me how bitcoin is doing'. Before calling this, confirm the exact schedule with the user (ask_clarification if the hour is ambiguous). Creation always asks the user for approval.",
+			Description: "Schedule a proactive autonomous task. At the scheduled time the agent runs in the background with its normal tools (web search, MCP, memory, files) and reports the result to the user. Use this for requests like 'every morning tell me how bitcoin is doing', or 'every 5 hours check for news about X and only tell me if something happens' with notify_mode 'on_alert'. Before calling this, confirm the exact schedule with the user (ask_clarification if the hour is ambiguous). Creation always asks the user for approval.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -122,6 +128,11 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 						"type":        "array",
 						"items":       map[string]any{"type": "string", "enum": []string{"web", "telegram"}},
 						"description": "Channels that receive the result. Defaults to web and telegram when available.",
+					},
+					"notify_mode": map[string]any{
+						"type":        "string",
+						"enum":        []string{"always", "on_alert"},
+						"description": "Use 'on_alert' for silent monitoring: the agent only messages the user when the condition is met or something materially new appears, by calling send_scheduled_alert. Use 'always' (default) to report on every run.",
 					},
 				},
 				"required": []string{"instruction", "when"},
@@ -176,6 +187,11 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 						"type":        "array",
 						"items":       map[string]any{"type": "string", "enum": []string{"web", "telegram"}},
 						"description": "New delivery channels (omit to keep the current ones).",
+					},
+					"notify_mode": map[string]any{
+						"type":        "string",
+						"enum":        []string{"always", "on_alert"},
+						"description": "New notification mode: 'always' reports every run, 'on_alert' only when the agent decides there is news (omit to keep the current one).",
 					},
 					"status": map[string]any{
 						"type":        "string",
@@ -232,6 +248,35 @@ func (r *Registry) SetSchedulerManager(sm SchedulerService) {
 	r.SetSchedulerService(sm)
 }
 
+// SetScheduledAlertHandler enables send_scheduled_alert inside silent
+// monitoring runs. The scheduler installs a collector and delivers whatever
+// the model decides to report.
+func (r *Registry) SetScheduledAlertHandler(h func(string)) {
+	r.scheduledAlertHandler = h
+	if h == nil {
+		return
+	}
+
+	r.enabled["send_scheduled_alert"] = true
+	r.defs = append(r.defs, ollama.Tool{
+		Type: "function",
+		Function: ollama.ToolDefinition{
+			Name:        "send_scheduled_alert",
+			Description: "Send the user a proactive alert for a silent monitoring task. Call this ONLY when the condition described in the task is met or something materially new appeared since the previous observation. If nothing new happened, do not call it and finish normally: the user will not be notified.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"message": map[string]any{
+						"type":        "string",
+						"description": "The concise user-facing alert. Say what changed and why it matters; no internal reasoning.",
+					},
+				},
+				"required": []string{"message"},
+			},
+		},
+	})
+}
+
 func (r *Registry) SetChannel(channel string) {
 	r.channel = channel
 }
@@ -266,6 +311,27 @@ func scheduleNotifyChannels(args map[string]any) []string {
 		}
 	}
 	return out
+}
+
+func scheduleNotifyMode(args map[string]any) string {
+	mode, _ := args["notify_mode"].(string)
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode != "always" && mode != "on_alert" {
+		return ""
+	}
+	return mode
+}
+
+func (r *Registry) executeSendScheduledAlert(args map[string]any) (string, error) {
+	if r.scheduledAlertHandler == nil {
+		return "", fmt.Errorf("scheduled alerts are not available in this run")
+	}
+	message, _ := args["message"].(string)
+	if strings.TrimSpace(message) == "" {
+		return "", fmt.Errorf("missing alert message")
+	}
+	r.scheduledAlertHandler(strings.TrimSpace(message))
+	return "Alert queued. The user will receive it when this run finishes.", nil
 }
 
 func (r *Registry) executeScheduleReminder(args map[string]any) (string, error) {
@@ -323,13 +389,14 @@ func (r *Registry) executeScheduleTask(args map[string]any) (string, error) {
 		Prompt:          instruction,
 		When:            when,
 		NotifyChannels:  scheduleNotifyChannels(args),
+		NotifyMode:      scheduleNotifyMode(args),
 	})
 	if err != nil {
 		return "", err
 	}
 
-	return fmt.Sprintf("Autonomous background task scheduled successfully!\nID: %s\nTitle: %s\nTarget: %s\nInstruction: %s\nChannels: %s",
-		task.ID, task.Title, describeSchedule(task), task.Prompt, strings.Join(task.NotifyChannels, ", ")), nil
+	return fmt.Sprintf("Autonomous background task scheduled successfully!\nID: %s\nTitle: %s\nTarget: %s\nInstruction: %s\nChannels: %s\nNotify mode: %s",
+		task.ID, task.Title, describeSchedule(task), task.Prompt, strings.Join(task.NotifyChannels, ", "), notifyModeLabel(task.NotifyMode)), nil
 }
 
 func describeSchedule(t ScheduledTaskInfo) string {
@@ -341,6 +408,13 @@ func describeSchedule(t ScheduledTaskInfo) string {
 	default:
 		return t.NextRunAt.Format("2006-01-02 15:04:05")
 	}
+}
+
+func notifyModeLabel(mode string) string {
+	if mode == "on_alert" {
+		return "only when there is something new"
+	}
+	return "every run"
 }
 
 func (r *Registry) executeScheduleList(args map[string]any) (string, error) {
@@ -387,6 +461,9 @@ func (r *Registry) executeScheduleList(args map[string]any) (string, error) {
 		if len(t.NotifyChannels) > 0 {
 			fmt.Fprintf(&sb, "   - **Channels**: %s\n", strings.Join(t.NotifyChannels, ", "))
 		}
+		if t.NotifyMode == "on_alert" {
+			sb.WriteString("   - **Notify**: only when there is something new (silent monitoring)\n")
+		}
 		if t.LastError != "" {
 			fmt.Fprintf(&sb, "   - **Last error**: %s\n", t.LastError)
 		}
@@ -414,18 +491,19 @@ func (r *Registry) executeScheduleUpdate(args map[string]any) (string, error) {
 		Prompt:         strings.TrimSpace(instruction),
 		When:           strings.TrimSpace(when),
 		NotifyChannels: scheduleNotifyChannels(args),
+		NotifyMode:     scheduleNotifyMode(args),
 		Status:         strings.TrimSpace(strings.ToLower(status)),
 	}
-	if patch.Title == "" && patch.Prompt == "" && patch.When == "" && patch.NotifyChannels == nil && patch.Status == "" {
-		return "", fmt.Errorf("nothing to update: provide title, instruction, when, notify_channels or status")
+	if patch.Title == "" && patch.Prompt == "" && patch.When == "" && patch.NotifyChannels == nil && patch.NotifyMode == "" && patch.Status == "" {
+		return "", fmt.Errorf("nothing to update: provide title, instruction, when, notify_channels, notify_mode or status")
 	}
 
 	task, err := r.schedulerService.UpdateScheduledTask(taskID, patch)
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Scheduled task %q updated.\nTitle: %s\nStatus: %s\nSchedule: %s\nChannels: %s\n\nReport this change to the user.",
-		task.ID, task.Title, task.Status, describeSchedule(task), strings.Join(task.NotifyChannels, ", ")), nil
+	return fmt.Sprintf("Scheduled task %q updated.\nTitle: %s\nStatus: %s\nSchedule: %s\nChannels: %s\nNotify mode: %s\n\nReport this change to the user.",
+		task.ID, task.Title, task.Status, describeSchedule(task), strings.Join(task.NotifyChannels, ", "), notifyModeLabel(task.NotifyMode)), nil
 }
 
 func (r *Registry) executeScheduleDelete(args map[string]any) (string, error) {

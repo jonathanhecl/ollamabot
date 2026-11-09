@@ -78,6 +78,7 @@ type Registry struct {
 	safetyPolicy            SafetyPolicy
 	dryRun                  bool
 	schedulerService        SchedulerService
+	scheduledAlertHandler   func(string)
 	channel                 string
 	targetChatID            int64
 	telegramBotToken        string
@@ -2866,6 +2867,8 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		return r.executeScheduleDelete(args)
 	case "schedule_cancel":
 		return r.executeScheduleCancel(args)
+	case "send_scheduled_alert":
+		return r.executeSendScheduledAlert(args)
 	case "send_telegram":
 		msg, _ := args["message"].(string)
 		if strings.TrimSpace(msg) == "" && args["paths"] == nil {

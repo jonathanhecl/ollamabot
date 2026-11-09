@@ -51,6 +51,9 @@ type Deps struct {
 	CachePath        string
 	MCPManager       *mcp.Manager
 	SchedulerManager tools.SchedulerService
+	// ScheduledAlertHandler collects alerts emitted by send_scheduled_alert
+	// during a silent monitoring run.
+	ScheduledAlertHandler func(string)
 
 	ApprovalHandler         tools.ApprovalHandler
 	ApprovalService         *sessions.ApprovalService
@@ -326,6 +329,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	if deps.SchedulerManager != nil {
 		registry.SetSchedulerService(deps.SchedulerManager)
 	}
+	registry.SetScheduledAlertHandler(deps.ScheduledAlertHandler)
 	registry.SetTelegramConfig(cfg.TelegramBotToken, cfg.TelegramAuthorizedIDs)
 	// Only expose send_voice when a speech model is configured. Channels
 	// without an attachment handler still refuse at execution time.

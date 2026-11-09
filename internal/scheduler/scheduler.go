@@ -16,6 +16,12 @@ const (
 	TaskTypeAgentTask TaskType = "agent_task" // Autonomous agent execution with tools
 )
 
+// Notification modes for agent tasks.
+const (
+	NotifyModeAlways  = "always"   // Report on every run
+	NotifyModeOnAlert = "on_alert" // Silent monitoring: only when the agent reports news
+)
+
 type ScheduleType string
 
 const (
@@ -48,6 +54,10 @@ type Task struct {
 	OriginSessionID string       `json:"origin_session_id,omitempty"`
 	SessionID       string       `json:"session_id,omitempty"` // dedicated run session for agent tasks
 	NotifyChannels  []string     `json:"notify_channels,omitempty"`
+	NotifyMode      string       `json:"notify_mode,omitempty"` // "always" or "on_alert"
+	LastObservation string       `json:"last_observation,omitempty"`
+	LastAlert       string       `json:"last_alert,omitempty"`
+	LastAlertAt     *time.Time   `json:"last_alert_at,omitempty"`
 	TargetChatID    int64        `json:"target_chat_id,omitempty"`
 	CreatedAt       time.Time    `json:"created_at"`
 	NextRunAt       time.Time    `json:"next_run_at"`

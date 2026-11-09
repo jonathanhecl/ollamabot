@@ -22,6 +22,7 @@ func (m *mockSchedulerService) CreateScheduledTask(spec ScheduledTaskSpec) (Sche
 		Prompt:         spec.Prompt,
 		Channel:        spec.Channel,
 		NotifyChannels: spec.NotifyChannels,
+		NotifyMode:     spec.NotifyMode,
 		Status:         "pending",
 	}
 	if spec.Type == "agent_task" {
@@ -172,6 +173,50 @@ func TestScheduleCreationRequiresApproval(t *testing.T) {
 	}
 	if !strings.Contains(got, "denied") {
 		t.Fatalf("expected the creation to be denied by the approval handler, got %q", got)
+	}
+}
+
+func TestScheduleTaskPassesNotifyMode(t *testing.T) {
+	mock := &mockSchedulerService{}
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSchedulerService(mock)
+
+	if _, err := registry.execute(context.Background(), "schedule_task", map[string]any{
+		"instruction":     "Check for news about X",
+		"when":            "every 5h",
+		"notify_mode":     "on_alert",
+		"notify_channels": []any{"web"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(mock.tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(mock.tasks))
+	}
+	if mock.tasks[0].NotifyMode != "on_alert" {
+		t.Fatalf("notify mode = %q, want on_alert", mock.tasks[0].NotifyMode)
+	}
+}
+
+func TestSendScheduledAlertTool(t *testing.T) {
+	var alerts []string
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetScheduledAlertHandler(func(message string) {
+		alerts = append(alerts, message)
+	})
+
+	result, err := registry.execute(context.Background(), "send_scheduled_alert", map[string]any{
+		"message": "New development in the story",
+	})
+	if err != nil {
+		t.Fatalf("send_scheduled_alert failed: %v", err)
+	}
+	if len(alerts) != 1 || alerts[0] != "New development in the story" {
+		t.Fatalf("unexpected alerts: %#v (result %q)", alerts, result)
+	}
+
+	disabled := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	if _, err := disabled.execute(context.Background(), "send_scheduled_alert", map[string]any{"message": "x"}); err == nil {
+		t.Fatal("expected an error when no alert handler is configured")
 	}
 }
 

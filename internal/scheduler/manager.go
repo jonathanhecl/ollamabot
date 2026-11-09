@@ -42,10 +42,53 @@ type Manager struct {
 	isExecuting  map[string]bool
 }
 
-const scheduledTaskSystemPrompt = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
+const scheduledTaskSystemPromptBase = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
 Use your available tools (web search, MCP tools, memory, files, etc.) to accomplish the task thoroughly.
 When finished, write a self-contained report the user can read without any other context: the answer first, then the key details.
 Do not ask questions and do not wait for confirmation; nobody will reply. If something is impossible, say exactly what failed.`
+
+// scheduledTaskSystemPrompt adds the silent-monitoring contract and the
+// previous observation so the model can decide whether something is new.
+func scheduledTaskSystemPrompt(task Task) string {
+	prompt := scheduledTaskSystemPromptBase
+	if task.NotifyMode != NotifyModeOnAlert {
+		return prompt
+	}
+
+	prompt += `
+
+This is a SILENT MONITORING task. The user only wants a message when the condition described in the task is met, or when something materially new appeared since the previous observation.
+Call send_scheduled_alert with the exact user-facing message when that happens. If nothing new happened, or the condition is not met, finish normally WITHOUT calling it: the user will not be notified.
+Do not repeat an alert that has no material change.`
+
+	if obs := strings.TrimSpace(task.LastObservation); obs != "" {
+		prompt += "\n\nPrevious run observation:\n" + truncateTaskText(obs, 2000)
+	}
+	if alert := strings.TrimSpace(task.LastAlert); alert != "" {
+		when := ""
+		if task.LastAlertAt != nil {
+			when = " (" + task.LastAlertAt.Format("2006-01-02 15:04") + ")"
+		}
+		prompt += "\n\nLast alert sent" + when + ":\n" + truncateTaskText(alert, 2000)
+	}
+	return prompt
+}
+
+func truncateTaskText(s string, max int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
+func normalizeNotifyMode(mode string, taskType TaskType) string {
+	if taskType == TaskTypeAgentTask && strings.TrimSpace(strings.ToLower(mode)) == NotifyModeOnAlert {
+		return NotifyModeOnAlert
+	}
+	return NotifyModeAlways
+}
 
 func (m *Manager) config() config.Config {
 	return m.cfgMgr.Get()
@@ -207,6 +250,10 @@ func (m *Manager) migrateTask(t *Task) {
 	if len(t.NotifyChannels) == 0 {
 		t.NotifyChannels = m.defaultNotifyChannels(t.Channel)
 	}
+	if strings.TrimSpace(t.NotifyMode) == "" {
+		t.NotifyMode = NotifyModeAlways
+	}
+	t.NotifyMode = normalizeNotifyMode(t.NotifyMode, t.Type)
 }
 
 // Save writes tasks to disk atomically.
@@ -269,6 +316,7 @@ func (m *Manager) AddTask(task Task) (Task, error) {
 	} else {
 		task.NotifyChannels = normalizeChannels(task.NotifyChannels, task.Channel)
 	}
+	task.NotifyMode = normalizeNotifyMode(task.NotifyMode, task.Type)
 	m.ensureTaskSession(&task)
 
 	m.mu.Lock()
@@ -294,6 +342,10 @@ func (t Task) ToInfo() tools.ScheduledTaskInfo {
 		OriginSessionID: t.OriginSessionID,
 		SessionID:       t.SessionID,
 		NotifyChannels:  append([]string(nil), t.NotifyChannels...),
+		NotifyMode:      t.NotifyMode,
+		LastObservation: t.LastObservation,
+		LastAlert:       t.LastAlert,
+		LastAlertAt:     t.LastAlertAt,
 		NextRunAt:       t.NextRunAt,
 		LastRunAt:       t.LastRunAt,
 		Status:          string(t.Status),
@@ -331,6 +383,7 @@ func (m *Manager) CreateScheduledTask(spec tools.ScheduledTaskSpec) (tools.Sched
 		OriginSessionID: origin,
 		TargetChatID:    spec.TargetChatID,
 		NotifyChannels:  spec.NotifyChannels,
+		NotifyMode:      normalizeNotifyMode(spec.NotifyMode, tType),
 		CreatedAt:       now,
 		NextRunAt:       nextRun,
 		Status:          TaskStatusPending,
@@ -384,6 +437,9 @@ func (m *Manager) UpdateScheduledTask(id string, patch tools.ScheduledTaskPatch)
 	}
 	if patch.NotifyChannels != nil {
 		task.NotifyChannels = normalizeChannels(patch.NotifyChannels, task.Channel)
+	}
+	if strings.TrimSpace(patch.NotifyMode) != "" {
+		task.NotifyMode = normalizeNotifyMode(patch.NotifyMode, task.Type)
 	}
 
 	switch strings.ToLower(strings.TrimSpace(patch.Status)) {
@@ -674,6 +730,9 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 
 	log.Printf("[scheduler] Executing autonomous task %s in session %s: %q", task.ID, task.SessionID, task.Prompt)
 
+	silent := task.NotifyMode == NotifyModeOnAlert
+	var alerts []string
+
 	deps := engine.Deps{
 		ConfigMgr:        m.cfgMgr,
 		Client:           m.client,
@@ -684,9 +743,16 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		// Nobody is present to approve risky tools during a scheduled run.
 		ApprovalHandler: denyApprovals{},
 	}
+	if silent {
+		deps.ScheduledAlertHandler = func(message string) {
+			if text := strings.TrimSpace(message); text != "" {
+				alerts = append(alerts, text)
+			}
+		}
+	}
 
 	messages := []router.MediaMessage{
-		{Message: ollama.Message{Role: "system", Content: scheduledTaskSystemPrompt}},
+		{Message: ollama.Message{Role: "system", Content: scheduledTaskSystemPrompt(task)}},
 		{Message: ollama.Message{Role: "user", Content: task.Prompt}},
 	}
 
@@ -703,14 +769,71 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		return
 	}
 
-	m.updateAfterRun(task, now, err)
-	if err != nil {
-		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, err)
-		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed** (%s):\nError: %v", task.Prompt, err))
+	answer := ""
+	if err == nil {
+		answer = strings.TrimSpace(result.FinalAnswer)
+	}
+	m.finishAgentRun(task, now, err, answer, alerts)
+}
+
+// finishAgentRun persists the run outcome and decides whether the user gets a
+// message. Silent monitoring tasks only notify when the agent called
+// send_scheduled_alert; failures always notify.
+func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer string, alerts []string) {
+	m.mu.Lock()
+	current, ok := m.tasks[task.ID]
+	if !ok {
+		m.mu.Unlock()
+		log.Printf("[scheduler] Task %s was deleted while running; keeping it deleted", task.ID)
+		return
+	}
+	current.LastRunAt = &now
+	current.RunCount++
+	if runErr != nil {
+		current.LastError = runErr.Error()
+		if current.Status != TaskStatusPaused {
+			if current.ScheduleType == ScheduleTypeOnce {
+				current.Status = TaskStatusFailed
+			} else {
+				m.advanceOrComplete(&current, now)
+			}
+		}
+	} else {
+		current.LastError = ""
+		if strings.TrimSpace(answer) != "" {
+			current.LastObservation = truncateTaskText(answer, 4000)
+		}
+		if len(alerts) > 0 {
+			current.LastAlert = truncateTaskText(strings.Join(alerts, "\n\n"), 4000)
+			current.LastAlertAt = &now
+		}
+		if current.Status != TaskStatusPaused {
+			m.advanceOrComplete(&current, now)
+		}
+	}
+	m.tasks[task.ID] = current
+	m.mu.Unlock()
+
+	if err := m.Save(); err != nil {
+		log.Printf("[scheduler] Failed to persist task %s after run: %v", task.ID, err)
+	}
+
+	if runErr != nil {
+		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, runErr)
+		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed** (%s):\nError: %v", task.Prompt, runErr))
 		return
 	}
 
-	response := strings.TrimSpace(result.FinalAnswer)
+	if current.NotifyMode == NotifyModeOnAlert {
+		if len(alerts) == 0 {
+			return
+		}
+		title := deriveTaskTitle(current.Title, current.Prompt)
+		m.notify(task, fmt.Sprintf("🔔 **%s**\n\n%s", title, strings.Join(alerts, "\n\n")))
+		return
+	}
+
+	response := answer
 	if response == "" {
 		response = "Task completed successfully with no additional output."
 	}

@@ -269,4 +269,107 @@ func TestManager_MigratesLegacyTask(t *testing.T) {
 	if len(task.NotifyChannels) == 0 {
 		t.Fatal("expected default notify channels after migration")
 	}
+	if task.NotifyMode != NotifyModeAlways {
+		t.Fatalf("legacy notify mode = %q, want always", task.NotifyMode)
+	}
+}
+
+func TestManager_NotifyModes(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+
+	reminder, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:    "web",
+		Type:       "alert",
+		Prompt:     "Take a break",
+		When:       "0 9 * * *",
+		NotifyMode: "on_alert",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reminder.NotifyMode != "always" {
+		t.Fatalf("reminders must always notify, got %q", reminder.NotifyMode)
+	}
+
+	task, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:    "web",
+		Type:       "agent_task",
+		Prompt:     "Check the news",
+		When:       "every 5h",
+		NotifyMode: "on_alert",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.NotifyMode != "on_alert" {
+		t.Fatalf("notify mode = %q, want on_alert", task.NotifyMode)
+	}
+
+	updated, err := mgr.UpdateScheduledTask(task.ID, tools.ScheduledTaskPatch{NotifyMode: "always"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.NotifyMode != "always" {
+		t.Fatalf("updated notify mode = %q, want always", updated.NotifyMode)
+	}
+}
+
+func TestManager_SilentRunOnlyNotifiesOnAlert(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+	ch := make(chan string, 2)
+	mgr.RegisterNotifier("web", func(task Task, message string) error {
+		ch <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:        "web",
+		Type:           "agent_task",
+		Title:          "News watch",
+		Prompt:         "Check for news about X",
+		When:           "every 5h",
+		NotifyChannels: []string{"web"},
+		NotifyMode:     "on_alert",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Nothing new: the run is recorded in the session but no message is sent.
+	mgr.finishAgentRun(task, time.Now(), nil, "Nothing new happened", nil)
+	select {
+	case msg := <-ch:
+		t.Fatalf("unexpected notification for a silent run: %s", msg)
+	case <-time.After(150 * time.Millisecond):
+	}
+	updated, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.LastObservation != "Nothing new happened" {
+		t.Fatalf("last observation = %q", updated.LastObservation)
+	}
+
+	// The agent reported news: the user gets the alert text.
+	mgr.finishAgentRun(updated, time.Now(), nil, "There is news", []string{"Something important happened"})
+	select {
+	case msg := <-ch:
+		if !strings.Contains(msg, "Something important happened") || !strings.Contains(msg, "News watch") {
+			t.Fatalf("unexpected alert message %q", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the alert")
+	}
+
+	updated, err = mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.LastAlert, "Something important happened") || updated.LastAlertAt == nil {
+		t.Fatalf("alert state not persisted: %+v", updated)
+	}
 }
