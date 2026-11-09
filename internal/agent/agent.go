@@ -67,22 +67,26 @@ Each session, you start fresh. Your files and documentation *are* your memory. R
 
 _This file represents your core identity. As you evolve, keep it updated._`
 
+const (
+	soulDir         = "agent"
+	soulFileName    = "SOUL.md"
+	soulAltFileName = "soul.md"
+)
+
 // EnsureSoulDirAndFile checks if "agent/SOUL.md" (or "agent/soul.md") exists.
 // If the "agent" folder or file doesn't exist, it creates the folder and the default "SOUL.md" file.
 func EnsureSoulDirAndFile() error {
-	dir := "agent"
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(soulDir, 0755); err != nil {
 		return fmt.Errorf("failed to create agent directory: %w", err)
 	}
 
-	filePath := filepath.Join(dir, "SOUL.md")
-	altFilePath := filepath.Join(dir, "soul.md")
+	filePath := filepath.Join(soulDir, soulFileName)
 
 	// Check if either SOUL.md or soul.md exists
 	if _, err := os.Stat(filePath); err == nil {
 		return nil
 	}
-	if _, err := os.Stat(altFilePath); err == nil {
+	if _, err := os.Stat(filepath.Join(soulDir, soulAltFileName)); err == nil {
 		return nil
 	}
 
@@ -94,30 +98,85 @@ func EnsureSoulDirAndFile() error {
 	return nil
 }
 
-// LoadSoul loads the soul description from "agent/SOUL.md" or "agent/soul.md".
-// If neither exists, it ensures it and returns the default.
-func LoadSoul() (string, error) {
+// SoulPath returns the resolved soul file path, creating the default file when
+// none exists. It mirrors LoadSoul's order: SOUL.md first, then soul.md.
+func SoulPath() (string, error) {
 	if err := EnsureSoulDirAndFile(); err != nil {
 		return "", err
 	}
 
-	dir := "agent"
-	filePath := filepath.Join(dir, "SOUL.md")
-	altFilePath := filepath.Join(dir, "soul.md")
-
-	// Try reading SOUL.md first
-	content, err := os.ReadFile(filePath)
-	if err == nil {
-		return string(content), nil
+	filePath := filepath.Join(soulDir, soulFileName)
+	if _, err := os.Stat(filePath); err == nil {
+		return filePath, nil
 	}
 
-	// Try reading soul.md second
-	content, err = os.ReadFile(altFilePath)
-	if err == nil {
-		return string(content), nil
+	altFilePath := filepath.Join(soulDir, soulAltFileName)
+	if _, err := os.Stat(altFilePath); err == nil {
+		return altFilePath, nil
 	}
 
 	return "", errors.New("soul file not found")
+}
+
+// LoadSoul loads the soul description from "agent/SOUL.md" or "agent/soul.md".
+// If neither exists, it ensures it and returns the default.
+func LoadSoul() (string, error) {
+	path, err := SoulPath()
+	if err != nil {
+		return "", err
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return string(content), nil
+}
+
+// SaveSoul persists a new soul (personality) with a rolling backup. The write
+// is atomic so a turn starting mid-save never reads a partial file.
+func SaveSoul(content string) error {
+	if strings.TrimSpace(content) == "" {
+		return errors.New("soul content cannot be empty")
+	}
+	path, err := SoulPath()
+	if err != nil {
+		return err
+	}
+	if err := backupFile(path); err != nil {
+		fmt.Printf("Warning: failed to backup soul file: %v\n", err)
+	}
+	return writeFileAtomic(path, []byte(content))
+}
+
+// ResetSoul restores the built-in default personality.
+func ResetSoul() error {
+	return SaveSoul(DefaultSoulContent)
+}
+
+// IsDefaultSoul reports whether content matches the built-in default.
+func IsDefaultSoul(content string) bool {
+	return strings.TrimSpace(content) == strings.TrimSpace(DefaultSoulContent)
+}
+
+func writeFileAtomic(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".soul-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 var (
