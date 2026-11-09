@@ -324,9 +324,25 @@ func (b *Bot) SetSchedulerManager(sm *scheduler.Manager) {
 	b.schedulerMgr = sm
 	if sm != nil {
 		sm.RegisterNotifier("telegram", func(task scheduler.Task, message string) error {
+			if !schedulerNotifiesTelegram(task) {
+				return nil
+			}
 			targetChatID := task.TargetChatID
+			if targetChatID == 0 && task.OriginSessionID != "" {
+				targetChatID = b.lookupChatID(task.OriginSessionID)
+			}
 			if targetChatID == 0 && task.SessionID != "" {
 				targetChatID = b.lookupChatID(task.SessionID)
+			}
+			if targetChatID == 0 {
+				// A task created from the web chat has no chat mapping. In a
+				// single-owner bot, deliver to the first authorized chat.
+				for _, authID := range b.config().TelegramAuthorizedIDs {
+					if id, err := strconv.ParseInt(strings.TrimSpace(authID), 10, 64); err == nil {
+						targetChatID = id
+						break
+					}
+				}
 			}
 			if targetChatID == 0 {
 				log.Printf("[Telegram] Cannot deliver reminder %s: no chatID found", task.ID)
@@ -336,6 +352,19 @@ func (b *Bot) SetSchedulerManager(sm *scheduler.Manager) {
 			return err
 		})
 	}
+}
+
+// schedulerNotifiesTelegram reports whether a task targets this channel.
+func schedulerNotifiesTelegram(task scheduler.Task) bool {
+	if len(task.NotifyChannels) == 0 {
+		return task.Channel == "telegram"
+	}
+	for _, ch := range task.NotifyChannels {
+		if ch == "telegram" {
+			return true
+		}
+	}
+	return false
 }
 
 func (b *Bot) lookupChatID(sessionID string) int64 {
@@ -1321,13 +1350,13 @@ func (b *Bot) processMessageInput(msg *Message, sessionID string) {
 	sessions.NotifyUpdate(sessionID)
 
 	turnResult, err := engine.ProcessTurn(ctx, engine.Deps{
-		ConfigMgr:       b.cfg,
-		Client:          b.client,
-		SessionStore:    b.sessions,
-		MemoryStore:     b.memoryStore,
-		CachePath:       snapshotPath(),
-		ApprovalService: b.approvalService,
-		MCPManager:      b.mcpManager,
+		ConfigMgr:        b.cfg,
+		Client:           b.client,
+		SessionStore:     b.sessions,
+		MemoryStore:      b.memoryStore,
+		CachePath:        snapshotPath(),
+		ApprovalService:  b.approvalService,
+		MCPManager:       b.mcpManager,
 		SchedulerManager: b.schedulerMgr,
 		ApprovalHandler: &telegramApprovalHandler{
 			bot:    b,

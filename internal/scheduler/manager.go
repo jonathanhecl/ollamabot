@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,11 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/mcp"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
@@ -39,6 +41,11 @@ type Manager struct {
 	interval     time.Duration
 	isExecuting  map[string]bool
 }
+
+const scheduledTaskSystemPrompt = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
+Use your available tools (web search, MCP tools, memory, files, etc.) to accomplish the task thoroughly.
+When finished, write a self-contained report the user can read without any other context: the answer first, then the key details.
+Do not ask questions and do not wait for confirmation; nobody will reply. If something is impossible, say exactly what failed.`
 
 func (m *Manager) config() config.Config {
 	return m.cfgMgr.Get()
@@ -83,19 +90,36 @@ func (m *Manager) UnregisterNotifier(channel string) {
 	delete(m.notifiers, channel)
 }
 
+// notify delivers the message to every channel the task targets. Delivery is
+// fan-out: a task created in the web chat can also push to Telegram and vice
+// versa.
 func (m *Manager) notify(task Task, message string) {
+	channels := task.NotifyChannels
+	if len(channels) == 0 {
+		channels = []string{task.Channel}
+	}
+
 	m.mu.RLock()
-	fn, ok := m.notifiers[task.Channel]
+	targets := make(map[string]NotificationFunc, len(channels))
+	for _, ch := range channels {
+		if fn, ok := m.notifiers[ch]; ok && fn != nil {
+			targets[ch] = fn
+		}
+	}
 	m.mu.RUnlock()
 
-	if ok && fn != nil {
+	if len(targets) == 0 {
+		log.Printf("[scheduler] No notifier registered for channels %v (task %s)", channels, task.ID)
+		return
+	}
+
+	for channel, fn := range targets {
+		channel, fn := channel, fn
 		go func() {
 			if err := fn(task, message); err != nil {
-				log.Printf("[scheduler] Notification failed for task %s on channel %s: %v", task.ID, task.Channel, err)
+				log.Printf("[scheduler] Notification failed for task %s on channel %s: %v", task.ID, channel, err)
 			}
 		}()
-	} else {
-		log.Printf("[scheduler] No notifier registered for channel %q (task %s)", task.Channel, task.ID)
 	}
 }
 
@@ -143,7 +167,7 @@ func (m *Manager) Stop() {
 	<-m.tickerDone
 }
 
-// Load reads tasks from disk.
+// Load reads tasks from disk and migrates legacy records in place.
 func (m *Manager) Load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -163,12 +187,29 @@ func (m *Manager) Load() error {
 
 	m.tasks = make(map[string]Task, len(list))
 	for _, t := range list {
+		m.migrateTask(&t)
 		m.tasks[t.ID] = t
 	}
 	return nil
 }
 
-// Save writes tasks to disk.
+// migrateTask fills fields introduced after the first scheduler release.
+func (m *Manager) migrateTask(t *Task) {
+	if strings.TrimSpace(t.Title) == "" {
+		t.Title = deriveTaskTitle("", t.Prompt)
+	}
+	if t.OriginSessionID == "" {
+		t.OriginSessionID = t.SessionID
+		// Legacy records stored the origin chat as SessionID. Runs now get a
+		// dedicated session, so the origin is preserved separately.
+		t.SessionID = ""
+	}
+	if len(t.NotifyChannels) == 0 {
+		t.NotifyChannels = m.defaultNotifyChannels(t.Channel)
+	}
+}
+
+// Save writes tasks to disk atomically.
 func (m *Manager) Save() error {
 	m.mu.RLock()
 	list := make([]Task, 0, len(m.tasks))
@@ -186,7 +227,23 @@ func (m *Manager) Save() error {
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(m.storagePath, data, 0644)
+	tmp, err := os.CreateTemp(dir, ".scheduler-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, m.storagePath)
 }
 
 // AddTask adds and validates a task.
@@ -204,8 +261,15 @@ func (m *Manager) AddTask(task Task) (Task, error) {
 		task.Status = TaskStatusPending
 	}
 	if task.Channel == "" {
-		task.Channel = "telegram"
+		task.Channel = "web"
 	}
+	task.Title = deriveTaskTitle(task.Title, task.Prompt)
+	if len(task.NotifyChannels) == 0 {
+		task.NotifyChannels = m.defaultNotifyChannels(task.Channel)
+	} else {
+		task.NotifyChannels = normalizeChannels(task.NotifyChannels, task.Channel)
+	}
+	m.ensureTaskSession(&task)
 
 	m.mu.Lock()
 	m.tasks[task.ID] = task
@@ -219,88 +283,248 @@ func (m *Manager) AddTask(task Task) (Task, error) {
 
 func (t Task) ToInfo() tools.ScheduledTaskInfo {
 	return tools.ScheduledTaskInfo{
-		ID:           t.ID,
-		Type:         string(t.Type),
-		ScheduleType: string(t.ScheduleType),
-		Prompt:       t.Prompt,
-		CronExpr:     t.CronExpr,
-		IntervalStr:  t.IntervalStr,
-		NextRunAt:    t.NextRunAt,
-		Status:       string(t.Status),
+		ID:              t.ID,
+		Type:            string(t.Type),
+		ScheduleType:    string(t.ScheduleType),
+		Title:           t.Title,
+		Prompt:          t.Prompt,
+		CronExpr:        t.CronExpr,
+		IntervalStr:     t.IntervalStr,
+		Channel:         t.Channel,
+		OriginSessionID: t.OriginSessionID,
+		SessionID:       t.SessionID,
+		NotifyChannels:  append([]string(nil), t.NotifyChannels...),
+		NextRunAt:       t.NextRunAt,
+		LastRunAt:       t.LastRunAt,
+		Status:          string(t.Status),
+		LastError:       t.LastError,
+		RunCount:        t.RunCount,
 	}
+}
+
+// CreateScheduledTask creates a reminder (alert) or an autonomous agent task.
+func (m *Manager) CreateScheduledTask(spec tools.ScheduledTaskSpec) (tools.ScheduledTaskInfo, error) {
+	now := time.Now()
+	schedType, nextRun, expr, err := ParseSchedule(spec.When, now)
+	if err != nil {
+		return tools.ScheduledTaskInfo{}, fmt.Errorf("invalid schedule format %q: %w", spec.When, err)
+	}
+
+	tType := TaskTypeAlert
+	switch spec.Type {
+	case "agent_task":
+		tType = TaskTypeAgentTask
+	case "", "alert":
+		tType = TaskTypeAlert
+	default:
+		return tools.ScheduledTaskInfo{}, fmt.Errorf("unknown task type %q", spec.Type)
+	}
+
+	origin := strings.TrimSpace(spec.OriginSessionID)
+	task := Task{
+		ID:              GenerateTaskID(),
+		Type:            tType,
+		ScheduleType:    schedType,
+		Title:           deriveTaskTitle(spec.Title, spec.Prompt),
+		Prompt:          spec.Prompt,
+		Channel:         spec.Channel,
+		OriginSessionID: origin,
+		TargetChatID:    spec.TargetChatID,
+		NotifyChannels:  spec.NotifyChannels,
+		CreatedAt:       now,
+		NextRunAt:       nextRun,
+		Status:          TaskStatusPending,
+	}
+
+	if schedType == ScheduleTypeCron {
+		task.CronExpr = expr
+	} else if schedType == ScheduleTypeInterval {
+		task.IntervalStr = expr
+	}
+
+	added, err := m.AddTask(task)
+	if err != nil {
+		return tools.ScheduledTaskInfo{}, err
+	}
+	return added.ToInfo(), nil
+}
+
+// UpdateScheduledTask edits an existing task in place.
+func (m *Manager) UpdateScheduledTask(id string, patch tools.ScheduledTaskPatch) (tools.ScheduledTaskInfo, error) {
+	now := time.Now()
+
+	m.mu.Lock()
+	task, ok := m.tasks[id]
+	if !ok {
+		m.mu.Unlock()
+		return tools.ScheduledTaskInfo{}, fmt.Errorf("task %q not found", id)
+	}
+
+	if strings.TrimSpace(patch.Title) != "" {
+		task.Title = deriveTaskTitle(patch.Title, task.Prompt)
+	}
+	if strings.TrimSpace(patch.Prompt) != "" {
+		task.Prompt = patch.Prompt
+	}
+	if strings.TrimSpace(patch.When) != "" {
+		schedType, nextRun, expr, err := ParseSchedule(patch.When, now)
+		if err != nil {
+			m.mu.Unlock()
+			return tools.ScheduledTaskInfo{}, fmt.Errorf("invalid schedule format %q: %w", patch.When, err)
+		}
+		task.ScheduleType = schedType
+		task.NextRunAt = nextRun
+		task.CronExpr = ""
+		task.IntervalStr = ""
+		if schedType == ScheduleTypeCron {
+			task.CronExpr = expr
+		} else if schedType == ScheduleTypeInterval {
+			task.IntervalStr = expr
+		}
+	}
+	if patch.NotifyChannels != nil {
+		task.NotifyChannels = normalizeChannels(patch.NotifyChannels, task.Channel)
+	}
+
+	switch strings.ToLower(strings.TrimSpace(patch.Status)) {
+	case "paused":
+		task.Status = TaskStatusPaused
+	case "pending", "resumed", "active":
+		task.Status = TaskStatusPending
+		if !task.NextRunAt.After(now) {
+			m.reschedule(&task, now)
+		}
+	}
+
+	m.ensureTaskSession(&task)
+	m.syncTaskSessionTitle(&task)
+
+	m.tasks[id] = task
+	m.mu.Unlock()
+
+	if err := m.Save(); err != nil {
+		return tools.ScheduledTaskInfo{}, err
+	}
+	return task.ToInfo(), nil
+}
+
+// reschedule moves a task that is already due to its next sensible run.
+func (m *Manager) reschedule(task *Task, now time.Time) {
+	switch task.ScheduleType {
+	case ScheduleTypeCron:
+		if next, err := NextCronTime(task.CronExpr, now); err == nil {
+			task.NextRunAt = next
+			return
+		}
+	case ScheduleTypeInterval:
+		if dur, ok := parseCustomDuration(task.IntervalStr); ok && dur > 0 {
+			task.NextRunAt = now.Add(dur)
+			return
+		}
+	}
+	task.NextRunAt = now
+}
+
+// ensureTaskSession creates the dedicated session that shows a task's output in
+// the web UI. Only web-delivered tasks need one; agent runs create theirs
+// lazily if web is not a delivery channel.
+func (m *Manager) ensureTaskSession(task *Task) {
+	if task == nil || task.SessionID != "" || m.sessionStore == nil {
+		return
+	}
+	if !containsChannel(task.NotifyChannels, "web") {
+		return
+	}
+	cfg := m.config()
+	model := config.ResolveModel(cfg, config.ModelRoleMain)
+	if strings.TrimSpace(model) == "" {
+		model = cfg.OllamaDefaultModel
+	}
+	sess := sessions.Session{
+		ID:    sessions.GenerateID(),
+		Title: taskSessionTitle(*task),
+		Model: model,
+	}
+	if err := m.sessionStore.Save(sess); err != nil {
+		log.Printf("[scheduler] Failed to create session for task %s: %v", task.ID, err)
+		return
+	}
+	task.SessionID = sess.ID
+	sessions.NotifyUpdate(sess.ID)
+}
+
+// syncTaskSessionTitle keeps the task's session label aligned with its title.
+func (m *Manager) syncTaskSessionTitle(task *Task) {
+	if task == nil || task.SessionID == "" || m.sessionStore == nil {
+		return
+	}
+	sess, err := m.sessionStore.Get(task.SessionID)
+	if err != nil {
+		return
+	}
+	title := taskSessionTitle(*task)
+	if sess.Title == title {
+		return
+	}
+	// Only rename sessions owned by the scheduler; never touch a real chat.
+	if !strings.HasPrefix(sess.Title, "⏰ ") {
+		return
+	}
+	sess.Title = title
+	if err := m.sessionStore.Save(sess); err != nil {
+		log.Printf("[scheduler] Failed to rename session for task %s: %v", task.ID, err)
+		return
+	}
+	sessions.NotifyUpdate(sess.ID)
+}
+
+func containsChannel(channels []string, want string) bool {
+	for _, ch := range channels {
+		if ch == want {
+			return true
+		}
+	}
+	return false
+}
+
+// DeleteScheduledTask removes a task permanently.
+func (m *Manager) DeleteScheduledTask(id string) error {
+	m.mu.Lock()
+	if _, ok := m.tasks[id]; !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("task %q not found", id)
+	}
+	delete(m.tasks, id)
+	m.mu.Unlock()
+	return m.Save()
 }
 
 // CreateReminder is a helper to schedule a simple text alert.
 func (m *Manager) CreateReminder(channel string, sessionID string, targetChatID int64, text string, when string) (tools.ScheduledTaskInfo, error) {
-	now := time.Now()
-	schedType, nextRun, expr, err := ParseSchedule(when, now)
-	if err != nil {
-		return tools.ScheduledTaskInfo{}, fmt.Errorf("invalid schedule format %q: %w", when, err)
-	}
-
-	task := Task{
-		ID:           GenerateTaskID(),
-		Type:         TaskTypeAlert,
-		ScheduleType: schedType,
-		Prompt:       text,
-		Channel:      channel,
-		SessionID:    sessionID,
-		TargetChatID: targetChatID,
-		CreatedAt:    now,
-		NextRunAt:    nextRun,
-		Status:       TaskStatusPending,
-	}
-
-	if schedType == ScheduleTypeCron {
-		task.CronExpr = expr
-	} else if schedType == ScheduleTypeInterval {
-		task.IntervalStr = expr
-	}
-
-	added, err := m.AddTask(task)
-	if err != nil {
-		return tools.ScheduledTaskInfo{}, err
-	}
-	return added.ToInfo(), nil
+	return m.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:         channel,
+		OriginSessionID: sessionID,
+		TargetChatID:    targetChatID,
+		Type:            "alert",
+		Prompt:          text,
+		When:            when,
+	})
 }
 
 // CreateTask is a helper to schedule an autonomous agent execution.
 func (m *Manager) CreateTask(channel string, sessionID string, targetChatID int64, instruction string, when string, isAgentTask bool) (tools.ScheduledTaskInfo, error) {
-	now := time.Now()
-	schedType, nextRun, expr, err := ParseSchedule(when, now)
-	if err != nil {
-		return tools.ScheduledTaskInfo{}, fmt.Errorf("invalid schedule format %q: %w", when, err)
-	}
-
-	tType := TaskTypeAlert
+	tType := "alert"
 	if isAgentTask {
-		tType = TaskTypeAgentTask
+		tType = "agent_task"
 	}
-
-	task := Task{
-		ID:           GenerateTaskID(),
-		Type:         tType,
-		ScheduleType: schedType,
-		Prompt:       instruction,
-		Channel:      channel,
-		SessionID:    sessionID,
-		TargetChatID: targetChatID,
-		CreatedAt:    now,
-		NextRunAt:    nextRun,
-		Status:       TaskStatusPending,
-	}
-
-	if schedType == ScheduleTypeCron {
-		task.CronExpr = expr
-	} else if schedType == ScheduleTypeInterval {
-		task.IntervalStr = expr
-	}
-
-	added, err := m.AddTask(task)
-	if err != nil {
-		return tools.ScheduledTaskInfo{}, err
-	}
-	return added.ToInfo(), nil
+	return m.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:         channel,
+		OriginSessionID: sessionID,
+		TargetChatID:    targetChatID,
+		Type:            tType,
+		Prompt:          instruction,
+		When:            when,
+	})
 }
 
 // CancelTask marks a task as cancelled.
@@ -331,20 +555,9 @@ func (m *Manager) GetTask(id string) (Task, error) {
 
 // ListTasks returns active or all tasks filtered optionally by session or channel.
 func (m *Manager) ListTasks(channel string, sessionID string, includeCompleted bool) []tools.ScheduledTaskInfo {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var result []tools.ScheduledTaskInfo
-	for _, t := range m.tasks {
-		if !includeCompleted && (t.Status == TaskStatusCompleted || t.Status == TaskStatusCancelled) {
-			continue
-		}
-		if channel != "" && t.Channel != channel {
-			continue
-		}
-		if sessionID != "" && t.SessionID != sessionID {
-			continue
-		}
+	raw := m.ListRawTasks(channel, sessionID, includeCompleted)
+	result := make([]tools.ScheduledTaskInfo, 0, len(raw))
+	for _, t := range raw {
 		result = append(result, t.ToInfo())
 	}
 	return result
@@ -413,116 +626,131 @@ func (m *Manager) executeTask(ctx context.Context, task Task) {
 
 	if task.Type == TaskTypeAlert {
 		msg := fmt.Sprintf("⏰ **Reminder**: %s", task.Prompt)
+		m.updateAfterRun(task, now, nil)
 		m.notify(task, msg)
-
-		m.mu.Lock()
-		task.LastRunAt = &now
-		task.RunCount++
-		m.advanceOrComplete(&task, now)
-		m.tasks[task.ID] = task
-		m.mu.Unlock()
-
-		_ = m.Save()
 		return
 	}
 
-	// TaskTypeAgentTask: Run autonomous turn using agent loop
-	releaseSlot := sessions.TryAcquireBackgroundSlot()
-	if releaseSlot == nil {
+	m.executeAgentTask(ctx, task, now)
+}
+
+func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time) {
+	m.mu.RLock()
+	_, exists := m.tasks[task.ID]
+	m.mu.RUnlock()
+	if !exists {
+		return
+	}
+
+	cfg := m.config()
+	model := config.ResolveModel(cfg, config.ModelRoleMain)
+	if strings.TrimSpace(model) == "" {
+		model = cfg.OllamaDefaultModel
+	}
+	if strings.TrimSpace(model) == "" {
+		m.updateAfterRun(task, now, fmt.Errorf("no default model configured"))
+		return
+	}
+
+	if m.sessionStore != nil && strings.TrimSpace(task.SessionID) == "" {
+		sess := sessions.Session{
+			ID:    sessions.GenerateID(),
+			Title: taskSessionTitle(task),
+			Model: model,
+		}
+		if err := m.sessionStore.Save(sess); err != nil {
+			m.updateAfterRun(task, now, fmt.Errorf("failed to create run session: %w", err))
+			return
+		}
+		task.SessionID = sess.ID
+		m.mu.Lock()
+		m.tasks[task.ID] = task
+		m.mu.Unlock()
+		if err := m.Save(); err != nil {
+			log.Printf("[scheduler] Failed to persist run session for task %s: %v", task.ID, err)
+		}
+		sessions.NotifyUpdate(task.SessionID)
+	}
+
+	log.Printf("[scheduler] Executing autonomous task %s in session %s: %q", task.ID, task.SessionID, task.Prompt)
+
+	deps := engine.Deps{
+		ConfigMgr:        m.cfgMgr,
+		Client:           m.client,
+		SessionStore:     m.sessionStore,
+		MemoryStore:      m.memoryStore,
+		MCPManager:       m.mcpMgr,
+		SchedulerManager: m,
+		// Nobody is present to approve risky tools during a scheduled run.
+		ApprovalHandler: denyApprovals{},
+	}
+
+	messages := []router.MediaMessage{
+		{Message: ollama.Message{Role: "system", Content: scheduledTaskSystemPrompt}},
+		{Message: ollama.Message{Role: "user", Content: task.Prompt}},
+	}
+
+	result, err := engine.ProcessTurn(ctx, deps, engine.TurnRequest{
+		SessionID:  task.SessionID,
+		Channel:    "scheduler",
+		Background: true,
+		Messages:   messages,
+	})
+	if errors.Is(err, engine.ErrBackgroundBusy) {
+		// Another background loop (sleep, goal) is using the model. Leave the
+		// task pending so the next tick retries it.
 		log.Printf("[scheduler] Background slot busy, deferring agent task %s", task.ID)
 		return
 	}
-	defer releaseSlot()
 
-	log.Printf("[scheduler] Executing autonomous task %s: %q", task.ID, task.Prompt)
-
-	model := config.ResolveModel(m.config(), config.ModelRoleMain)
-	if strings.TrimSpace(model) == "" {
-		model = m.config().OllamaDefaultModel
-	}
-
-	registry := tools.NewRegistry(m.config().WebSearchEnabled, m.config().Workspace, m.memoryStore, m.client, m.config().OllamaModelEmbed, tools.SearchConfig{
-		Providers:    m.config().SearchProviders,
-		BraveAPIKey:  m.config().BraveSearchAPIKey,
-		TavilyAPIKey: m.config().TavilyAPIKey,
-	})
-	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
-	registry.SetMCPManager(m.mcpMgr)
-	registry.SetSessionStore(m.sessionStore)
-	registry.SetSessionID(task.SessionID)
-
-	a := agent.NewAgent(m.cfgMgr, m.client, registry)
-	systemPrompt := `You are OllamaBot executing a scheduled background task.
-Use your available tools (such as web search, MCP tools, memory, etc.) to accomplish the goal thoroughly.
-When finished, provide a clear, concise, and helpful final summary report for the user. Do not return empty messages.`
-
-	messages := []ollama.Message{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Content: fmt.Sprintf("Execute scheduled task: %s", task.Prompt)},
-	}
-
-	runCtx, runCancel := agent.SubagentContext(ctx, m.config())
-	finalHistory, err := a.Run(runCtx, model, messages, m.config().OllamaThinkEnabled, &noopStreamHandler{})
-	runCancel()
-
+	m.updateAfterRun(task, now, err)
 	if err != nil {
 		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, err)
-		m.mu.Lock()
-		task.LastRunAt = &now
-		task.LastError = err.Error()
-		if task.ScheduleType == ScheduleTypeOnce {
-			task.Status = TaskStatusFailed
-		} else {
-			m.advanceOrComplete(&task, now)
-		}
-		m.tasks[task.ID] = task
-		m.mu.Unlock()
-		_ = m.Save()
-
 		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed** (%s):\nError: %v", task.Prompt, err))
 		return
 	}
 
-	// Extract response
-	var response string
-	for i := len(finalHistory) - 1; i >= 0; i-- {
-		if finalHistory[i].Role == "assistant" && strings.TrimSpace(finalHistory[i].Content) != "" {
-			response = strings.TrimSpace(finalHistory[i].Content)
-			break
-		}
-	}
+	response := strings.TrimSpace(result.FinalAnswer)
 	if response == "" {
 		response = "Task completed successfully with no additional output."
 	}
+	m.notify(task, fmt.Sprintf("📋 **Scheduled Task Report**\n**Task**: %s\n\n%s", task.Prompt, response))
+}
 
-	// Notify user
-	notifyMsg := fmt.Sprintf("📋 **Scheduled Task Report**\n**Task**: %s\n\n%s", task.Prompt, response)
-	m.notify(task, notifyMsg)
-
-	// Save to session history if sessionID is set
-	if m.sessionStore != nil && task.SessionID != "" {
-		if sess, err := m.sessionStore.Get(task.SessionID); err == nil {
-			asstMsg := sessions.RawMsg{
-				Role:    "assistant",
-				Content: fmt.Sprintf("[Scheduled Task Result for %q]\n\n%s", task.Prompt, response),
-			}
-			if raw, err := json.Marshal(asstMsg); err == nil {
-				sess.Messages = append(sess.Messages, raw)
-				_ = m.sessionStore.Save(sess)
-				sessions.NotifyUpdate(task.SessionID)
+// updateAfterRun records the run outcome and advances the schedule. It re-reads
+// the stored task so edits or deletions made while the run was executing are
+// not overwritten by the stale copy that started the run.
+func (m *Manager) updateAfterRun(task Task, now time.Time, runErr error) {
+	m.mu.Lock()
+	current, ok := m.tasks[task.ID]
+	if !ok {
+		m.mu.Unlock()
+		log.Printf("[scheduler] Task %s was deleted while running; keeping it deleted", task.ID)
+		return
+	}
+	current.LastRunAt = &now
+	current.RunCount++
+	if runErr != nil {
+		current.LastError = runErr.Error()
+		if current.Status != TaskStatusPaused {
+			if current.ScheduleType == ScheduleTypeOnce {
+				current.Status = TaskStatusFailed
+			} else {
+				m.advanceOrComplete(&current, now)
 			}
 		}
+	} else {
+		current.LastError = ""
+		if current.Status != TaskStatusPaused {
+			m.advanceOrComplete(&current, now)
+		}
 	}
-
-	m.mu.Lock()
-	task.LastRunAt = &now
-	task.RunCount++
-	task.LastError = ""
-	m.advanceOrComplete(&task, now)
-	m.tasks[task.ID] = task
+	m.tasks[task.ID] = current
 	m.mu.Unlock()
 
-	_ = m.Save()
+	if err := m.Save(); err != nil {
+		log.Printf("[scheduler] Failed to persist task %s after run: %v", task.ID, err)
+	}
 }
 
 func (m *Manager) advanceOrComplete(task *Task, now time.Time) {
@@ -549,16 +777,83 @@ func (m *Manager) advanceOrComplete(task *Task, now time.Time) {
 	}
 }
 
-type noopStreamHandler struct{}
+// denyApprovals keeps the risk gate active during unattended runs: risky tools
+// fail with a message instead of waiting for a button nobody can press.
+type denyApprovals struct{}
 
-func (noopStreamHandler) OnThinking(string)                                {}
-func (noopStreamHandler) OnContent(string)                                 {}
-func (noopStreamHandler) OnToolCall(ollama.ToolCall)                       {}
-func (noopStreamHandler) OnToolStart(string, any, string)                  {}
-func (noopStreamHandler) OnToolResult(string, string, string)              {}
-func (noopStreamHandler) OnMediaPreProcessing(string)                      {}
-func (noopStreamHandler) OnDone(ollama.ChatResponse)                       {}
-func (noopStreamHandler) OnEvent(string, any)                              {}
-func (noopStreamHandler) OnContextOptimizationStart(int, float64)          {}
-func (noopStreamHandler) OnContextOptimizationEnd(int, float64, float64)   {}
-func (noopStreamHandler) OnContextOptimized([]ollama.Message, string, int) {}
+func (denyApprovals) RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error) {
+	return false, nil
+}
+
+// defaultNotifyChannels picks the channels a new task reports to. A task
+// created from any channel reaches web and Telegram when they are available.
+func (m *Manager) defaultNotifyChannels(origin string) []string {
+	cfg := m.config()
+	return buildNotifyChannels(nil, origin, cfg.ServerEnabled, cfg.TelegramBotToken != "")
+}
+
+// normalizeChannels sanitizes an explicit channel list. An empty list falls
+// back to the origin channel so a task never ends up undeliverable.
+func normalizeChannels(channels []string, origin string) []string {
+	return buildNotifyChannels(channels, origin, false, false)
+}
+
+func buildNotifyChannels(channels []string, origin string, serverEnabled, telegramEnabled bool) []string {
+	seen := make(map[string]bool)
+	out := make([]string, 0, 3)
+	add := func(ch string) {
+		ch = strings.ToLower(strings.TrimSpace(ch))
+		if ch == "" || seen[ch] {
+			return
+		}
+		seen[ch] = true
+		out = append(out, ch)
+	}
+
+	explicit := false
+	for _, ch := range channels {
+		if ch != "web" && ch != "telegram" {
+			continue
+		}
+		explicit = true
+		add(ch)
+	}
+
+	if !explicit {
+		add(origin)
+		if serverEnabled {
+			add("web")
+		}
+		if telegramEnabled {
+			add("telegram")
+		}
+	}
+	if len(out) == 0 {
+		if strings.TrimSpace(origin) != "" {
+			add(origin)
+		} else {
+			add("web")
+		}
+	}
+	return out
+}
+
+func deriveTaskTitle(title, prompt string) string {
+	title = strings.Join(strings.Fields(strings.TrimSpace(title)), " ")
+	if title == "" {
+		title = strings.Join(strings.Fields(strings.TrimSpace(prompt)), " ")
+	}
+	if title == "" {
+		return "Scheduled task"
+	}
+	runes := []rune(title)
+	if len(runes) > 60 {
+		return strings.TrimSpace(string(runes[:60])) + "…"
+	}
+	return title
+}
+
+func taskSessionTitle(task Task) string {
+	title := deriveTaskTitle(task.Title, task.Prompt)
+	return "⏰ " + title
+}

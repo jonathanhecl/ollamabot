@@ -1506,6 +1506,11 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			Label:   fmt.Sprintf("Remove MCP server %q", srvName),
 			Summary: fmt.Sprintf("Removing MCP server %q will stop it and remove its tools from the configuration.", srvName),
 		}
+	} else if name == "schedule_task" || name == "schedule_reminder" {
+		// Creating a proactive task changes what the assistant will do on its
+		// own in the future, so it always passes through the confirmation card.
+		needsApprovalCheck = true
+		assessment = classifyScheduleCreation(name, args)
 	}
 
 	if (r.approvalService != nil || r.approvalHandler != nil) && needsApprovalCheck {
@@ -2855,6 +2860,10 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		return r.executeScheduleTask(args)
 	case "schedule_list":
 		return r.executeScheduleList(args)
+	case "schedule_update":
+		return r.executeScheduleUpdate(args)
+	case "schedule_delete":
+		return r.executeScheduleDelete(args)
 	case "schedule_cancel":
 		return r.executeScheduleCancel(args)
 	case "send_telegram":

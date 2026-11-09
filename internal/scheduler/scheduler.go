@@ -29,6 +29,7 @@ type TaskStatus string
 const (
 	TaskStatusPending   TaskStatus = "pending"
 	TaskStatusRunning   TaskStatus = "running"
+	TaskStatusPaused    TaskStatus = "paused"
 	TaskStatusCompleted TaskStatus = "completed"
 	TaskStatusFailed    TaskStatus = "failed"
 	TaskStatusCancelled TaskStatus = "cancelled"
@@ -36,21 +37,24 @@ const (
 
 // Task represents a scheduled reminder or background agent task.
 type Task struct {
-	ID           string       `json:"id"`
-	Type         TaskType     `json:"type"`
-	ScheduleType ScheduleType `json:"schedule_type"`
-	Prompt       string       `json:"prompt"`
-	CronExpr     string       `json:"cron_expr,omitempty"`
-	IntervalStr  string       `json:"interval_str,omitempty"`
-	Channel      string       `json:"channel"` // "telegram" or "web"
-	SessionID    string       `json:"session_id,omitempty"`
-	TargetChatID int64        `json:"target_chat_id,omitempty"`
-	CreatedAt    time.Time    `json:"created_at"`
-	NextRunAt    time.Time    `json:"next_run_at"`
-	LastRunAt    *time.Time   `json:"last_run_at,omitempty"`
-	Status       TaskStatus   `json:"status"`
-	LastError    string       `json:"last_error,omitempty"`
-	RunCount     int          `json:"run_count"`
+	ID              string       `json:"id"`
+	Type            TaskType     `json:"type"`
+	ScheduleType    ScheduleType `json:"schedule_type"`
+	Title           string       `json:"title,omitempty"`
+	Prompt          string       `json:"prompt"`
+	CronExpr        string       `json:"cron_expr,omitempty"`
+	IntervalStr     string       `json:"interval_str,omitempty"`
+	Channel         string       `json:"channel"` // origin channel: "telegram", "web", "device"
+	OriginSessionID string       `json:"origin_session_id,omitempty"`
+	SessionID       string       `json:"session_id,omitempty"` // dedicated run session for agent tasks
+	NotifyChannels  []string     `json:"notify_channels,omitempty"`
+	TargetChatID    int64        `json:"target_chat_id,omitempty"`
+	CreatedAt       time.Time    `json:"created_at"`
+	NextRunAt       time.Time    `json:"next_run_at"`
+	LastRunAt       *time.Time   `json:"last_run_at,omitempty"`
+	Status          TaskStatus   `json:"status"`
+	LastError       string       `json:"last_error,omitempty"`
+	RunCount        int          `json:"run_count"`
 }
 
 func GenerateTaskID() string {

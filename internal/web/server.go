@@ -241,21 +241,42 @@ func (s *Server) SetSchedulerManager(sm *scheduler.Manager) {
 	s.mu.Unlock()
 	if sm != nil {
 		sm.RegisterNotifier("web", func(task scheduler.Task, message string) error {
-			if task.SessionID != "" {
-				sess, err := s.sessionStore.Get(task.SessionID)
-				if err == nil {
-					asstMsg := sessions.RawMsg{
-						Role:      "assistant",
-						Content:   message,
-						Timestamp: time.Now().Format(time.RFC3339),
-					}
-					if raw, err := json.Marshal(asstMsg); err == nil {
-						sess.Messages = append(sess.Messages, raw)
-						_ = s.sessionStore.Save(sess)
-						sessions.NotifyUpdate(task.SessionID)
-					}
+			// Agent tasks already persisted the full run (including the final
+			// answer) through the engine recorder. Just wake the web listeners.
+			if task.Type == scheduler.TaskTypeAgentTask {
+				if task.SessionID != "" {
+					sessions.NotifyUpdate(task.SessionID)
 				}
+				return nil
 			}
+
+			// Reminders are plain text: append them to their dedicated session,
+			// or to the origin chat for legacy tasks created before sessions.
+			target := strings.TrimSpace(task.SessionID)
+			if target == "" {
+				target = strings.TrimSpace(task.OriginSessionID)
+			}
+			if target == "" {
+				return nil
+			}
+			sess, err := s.sessionStore.Get(target)
+			if err != nil {
+				return nil
+			}
+			asstMsg := sessions.RawMsg{
+				Role:      "assistant",
+				Content:   message,
+				Timestamp: time.Now().Format(time.RFC3339),
+			}
+			raw, err := json.Marshal(asstMsg)
+			if err != nil {
+				return err
+			}
+			sess.Messages = append(sess.Messages, raw)
+			if err := s.sessionStore.Save(sess); err != nil {
+				return err
+			}
+			sessions.NotifyUpdate(target)
 			return nil
 		})
 	}
@@ -319,6 +340,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/tools/plan-confirm", s.handlePlanConfirm)
 	mux.HandleFunc("GET /api/scheduler/tasks", s.handleListSchedulerTasks)
 	mux.HandleFunc("POST /api/scheduler/tasks", s.handleCreateSchedulerTask)
+	mux.HandleFunc("PATCH /api/scheduler/tasks/{id}", s.handleUpdateSchedulerTask)
 	mux.HandleFunc("DELETE /api/scheduler/tasks/{id}", s.handleCancelSchedulerTask)
 
 	// Autonomous projects endpoints
@@ -3082,6 +3104,9 @@ func (s *Server) handleListSchedulerTasks(w http.ResponseWriter, r *http.Request
 	channel := r.URL.Query().Get("channel")
 	includeCompleted := r.URL.Query().Get("include_completed") == "true"
 	tasks := s.schedulerMgr.ListRawTasks(channel, sessionID, includeCompleted)
+	if tasks == nil {
+		tasks = []scheduler.Task{}
+	}
 	writeJSON(w, http.StatusOK, tasks)
 }
 
@@ -3091,11 +3116,13 @@ func (s *Server) handleCreateSchedulerTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	var req struct {
-		Text        string `json:"text"`
-		When        string `json:"when"`
-		Channel     string `json:"channel"`
-		SessionID   string `json:"session_id"`
-		IsAgentTask bool   `json:"is_agent_task"`
+		Text           string   `json:"text"`
+		Title          string   `json:"title"`
+		When           string   `json:"when"`
+		Channel        string   `json:"channel"`
+		SessionID      string   `json:"session_id"`
+		IsAgentTask    bool     `json:"is_agent_task"`
+		NotifyChannels []string `json:"notify_channels"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, err)
@@ -3104,12 +3131,82 @@ func (s *Server) handleCreateSchedulerTask(w http.ResponseWriter, r *http.Reques
 	if req.Channel == "" {
 		req.Channel = "web"
 	}
-	task, err := s.schedulerMgr.CreateTask(req.Channel, req.SessionID, 0, req.Text, req.When, req.IsAgentTask)
+	taskType := "alert"
+	if req.IsAgentTask {
+		taskType = "agent_task"
+	}
+	info, err := s.schedulerMgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:         req.Channel,
+		OriginSessionID: req.SessionID,
+		Title:           req.Title,
+		Type:            taskType,
+		Prompt:          req.Text,
+		When:            req.When,
+		NotifyChannels:  req.NotifyChannels,
+	})
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err)
 		return
 	}
+	task, err := s.schedulerMgr.GetTask(info.ID)
+	if err != nil {
+		writeJSON(w, http.StatusCreated, info)
+		return
+	}
 	writeJSON(w, http.StatusCreated, task)
+}
+
+func (s *Server) handleUpdateSchedulerTask(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("scheduler service is not available"))
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, errors.New("missing task id"))
+		return
+	}
+	var req struct {
+		Title          *string  `json:"title"`
+		Text           *string  `json:"text"`
+		When           *string  `json:"when"`
+		NotifyChannels []string `json:"notify_channels"`
+		Status         *string  `json:"status"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+
+	patch := tools.ScheduledTaskPatch{NotifyChannels: req.NotifyChannels}
+	if req.Title != nil {
+		patch.Title = strings.TrimSpace(*req.Title)
+	}
+	if req.Text != nil {
+		patch.Prompt = strings.TrimSpace(*req.Text)
+	}
+	if req.When != nil {
+		patch.When = strings.TrimSpace(*req.When)
+	}
+	if req.Status != nil {
+		patch.Status = strings.TrimSpace(*req.Status)
+	}
+
+	info, err := s.schedulerMgr.UpdateScheduledTask(id, patch)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			writeError(w, http.StatusNotFound, err)
+			return
+		}
+		writeError(w, http.StatusBadRequest, err)
+		return
+	}
+	task, err := s.schedulerMgr.GetTask(info.ID)
+	if err != nil {
+		writeJSON(w, http.StatusOK, info)
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
 }
 
 func (s *Server) handleCancelSchedulerTask(w http.ResponseWriter, r *http.Request) {
@@ -3117,14 +3214,14 @@ func (s *Server) handleCancelSchedulerTask(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusServiceUnavailable, errors.New("scheduler service is not available"))
 		return
 	}
-	id := r.PathValue("id")
+	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		writeError(w, http.StatusBadRequest, errors.New("missing task id"))
 		return
 	}
-	if err := s.schedulerMgr.CancelTask(id); err != nil {
+	if err := s.schedulerMgr.DeleteScheduledTask(id); err != nil {
 		writeError(w, http.StatusNotFound, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "cancelled", "id": id})
+	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted", "id": id})
 }

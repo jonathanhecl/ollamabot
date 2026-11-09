@@ -37,6 +37,12 @@ Background services started once in `cmd/ollamabot/main.go` and shared by channe
 | Sleep manager | `internal/learning` | Runs without web open; `OnSleepActivity` from engine |
 | Goal manager | `internal/agent/goal.go` | Per-session objectives; API + Telegram `/goal` |
 | Autonomous projects | `internal/agent/autonomous.go` | Workspace projects; web UI + notifications |
+| Scheduled tasks | `internal/scheduler` | Reminders and proactive agent tasks; each task owns a session and fan-outs results to web + Telegram |
+
+Scheduled tasks are created by the agent with `schedule_task` / `schedule_reminder` (always behind the
+tool approval card) and managed with `schedule_list` / `schedule_update` / `schedule_delete`. Agent runs go
+through `engine.ProcessTurn` with `TurnRequest.Background`, append to the task's `⏰ <title>` session, and
+deliver the result to every channel in `notify_channels`.
 
 ## Design principles
 

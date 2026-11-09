@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"path/filepath"
@@ -73,7 +74,15 @@ type TurnRequest struct {
 	TargetChatID int64
 	Messages     []router.MediaMessage
 	BaseHistory  []sessions.RawMsg
+	// Background runs on the shared background slot instead of the interactive
+	// slot. Used by the scheduler so autonomous runs never compete with the
+	// user for the model.
+	Background bool
 }
+
+// ErrBackgroundBusy reports that another background loop is already running.
+// Callers that can retry later (the scheduler) should leave the work pending.
+var ErrBackgroundBusy = errors.New("background slot busy")
 
 type TurnResult struct {
 	FinalHistory  []ollama.Message
@@ -144,11 +153,19 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		deps.OnSleepActivity()
 	}
 
-	releaseInteractiveSlot, err := sessions.AcquireInteractiveSlot(ctx)
-	if err != nil {
-		return TurnResult{}, err
+	if req.Background {
+		releaseBackgroundSlot := sessions.TryAcquireBackgroundSlot()
+		if releaseBackgroundSlot == nil {
+			return TurnResult{}, ErrBackgroundBusy
+		}
+		defer releaseBackgroundSlot()
+	} else {
+		releaseInteractiveSlot, err := sessions.AcquireInteractiveSlot(ctx)
+		if err != nil {
+			return TurnResult{}, err
+		}
+		defer releaseInteractiveSlot()
 	}
-	defer releaseInteractiveSlot()
 
 	if strings.TrimSpace(req.SessionID) != "" {
 		sessions.MarkProcessing(req.SessionID)

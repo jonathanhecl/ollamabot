@@ -50,6 +50,43 @@ func ClassifyToolRisk(tool string, args map[string]any, workspace string) RiskAs
 	}
 }
 
+// classifyScheduleCreation always requires confirmation: creating a task
+// changes what the assistant does autonomously in the future.
+func classifyScheduleCreation(tool string, args map[string]any) RiskAssessment {
+	when, _ := args["when"].(string)
+	title, _ := args["title"].(string)
+	text, _ := args["text"].(string)
+	if strings.TrimSpace(text) == "" {
+		text, _ = args["instruction"].(string)
+	}
+
+	kind := "reminder"
+	if tool == "schedule_task" {
+		kind = "autonomous task"
+	}
+	label := fmt.Sprintf("Create a scheduled %s", kind)
+	if when = strings.TrimSpace(when); when != "" {
+		label = fmt.Sprintf("Schedule %s for %q", kind, when)
+	}
+
+	summary := fmt.Sprintf("This creates a proactive %s. Schedule: %q.", kind, when)
+	if t := strings.TrimSpace(title); t != "" {
+		summary += fmt.Sprintf(" Title: %q.", truncateForApproval(t, 80))
+	}
+	if t := strings.TrimSpace(text); t != "" {
+		summary += fmt.Sprintf(" It will run: %q.", truncateForApproval(t, 240))
+	}
+	return RiskAssessment{Level: RiskNeedsApproval, Label: label, Summary: summary}
+}
+
+func truncateForApproval(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
+}
+
 func classifyCommandRisk(args map[string]any, workspace string, label string) RiskAssessment {
 	command, _ := args["command"].(string)
 	base := filepath.Base(strings.TrimSpace(command))
