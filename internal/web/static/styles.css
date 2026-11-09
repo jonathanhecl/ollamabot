@@ -3094,6 +3094,26 @@ textarea {
     -webkit-overflow-scrolling: touch !important;
   }
 
+  /* Soul / Personality Modal on Mobile */
+  .soul-form {
+    padding: 10px 12px 12px !important;
+    gap: 8px !important;
+  }
+
+  .soul-form textarea {
+    min-height: 220px !important;
+    max-height: calc(80vh - 240px) !important;
+    font-size: 12px !important;
+  }
+
+  .soul-actions {
+    flex-wrap: wrap !important;
+  }
+
+  .soul-dirty {
+    width: 100% !important;
+  }
+
   .memory-table th, .memory-table td,
   .skills-table th, .skills-table td,
   .mcp-table th, .mcp-table td {
@@ -4514,7 +4534,8 @@ textarea {
 }
 
 .skill-edit-form input,
-.skill-edit-form textarea {
+.skill-edit-form textarea,
+.skill-edit-form select {
   width: 100%;
   box-sizing: border-box;
   background: rgba(0, 0, 0, 0.25);
@@ -4529,6 +4550,89 @@ textarea {
 .skill-edit-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* --- Soul / Personality Editor Styles --- */
+.soul-modal {
+  width: min(820px, calc(100vw - 28px)) !important;
+  max-height: min(760px, calc(100vh - 28px)) !important;
+  border-color: rgba(126, 196, 255, 0.25);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 24px rgba(126, 196, 255, 0.05);
+}
+
+.soul-modal[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.soul-form {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.soul-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.soul-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.soul-meta span:first-child {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.soul-form textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 320px;
+  max-height: 55vh;
+  resize: vertical;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 12px 14px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+.soul-form textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.soul-form textarea:disabled {
+  opacity: 0.6;
+}
+
+.soul-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.soul-dirty {
+  margin-right: auto;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.soul-dirty.is-dirty {
+  color: #f5a623;
 }
 
 /* Score Badge Styling */

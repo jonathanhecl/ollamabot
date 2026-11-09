@@ -417,6 +417,19 @@ const els = {
   skillEditHomepage: document.querySelector("#skillEditHomepage"),
   skillEditInstructions: document.querySelector("#skillEditInstructions"),
 
+  // Soul / Personality DOM Elements
+  openSoul: document.querySelector("#openSoul"),
+  soulDialog: document.querySelector("#soulDialog"),
+  soulForm: document.querySelector("#soulForm"),
+  soulContent: document.querySelector("#soulContent"),
+  soulPathLabel: document.querySelector("#soulPathLabel"),
+  soulUpdatedLabel: document.querySelector("#soulUpdatedLabel"),
+  soulDirtyLabel: document.querySelector("#soulDirtyLabel"),
+  soulResetBtn: document.querySelector("#soulResetBtn"),
+  soulSaveBtn: document.querySelector("#soulSaveBtn"),
+  drawerOpenSoul: document.querySelector("#drawerOpenSoul"),
+
+
   // MCP DOM Elements
   openMcp: document.querySelector("#openMcp"),
   mcpDialog: document.querySelector("#mcpDialog"),
@@ -558,6 +571,12 @@ if (els.drawerOpenSkills) {
     if (els.openSkills) els.openSkills.click();
   });
 }
+if (els.drawerOpenSoul) {
+  els.drawerOpenSoul.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openSoul) els.openSoul.click();
+  });
+}
 if (els.drawerOpenMcp) {
   els.drawerOpenMcp.addEventListener("click", () => {
     closeRightDrawer();
@@ -625,6 +644,12 @@ els.openMemory.addEventListener("click", () => {
 els.openSkills.addEventListener("click", () => {
   openSkillsExplorer();
 });
+
+if (els.openSoul) {
+  els.openSoul.addEventListener("click", () => {
+    openSoulEditor();
+  });
+}
 
 const openSkillsMobile = document.querySelector("#openSkillsMobile");
 if (openSkillsMobile) {
@@ -1052,6 +1077,17 @@ const SLASH_COMMANDS = [
     }
   },
   {
+    cmd: "/soul",
+    args: "",
+    icon: "🎭",
+    desc: "View and edit the agent personality (SOUL.md)",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openSoul) els.openSoul.click();
+    }
+  },
+  {
     cmd: "/models",
     args: "",
     icon: "🤖",
@@ -1348,6 +1384,7 @@ setupBackdropClose(els.memoryTextDialog);
 setupBackdropClose(els.skillsDialog);
 setupBackdropClose(els.skillViewDialog);
 setupBackdropClose(els.skillEditDialog);
+setupBackdropClose(els.soulDialog);
 setupBackdropClose(els.mcpDialog);
 setupBackdropClose(els.mcpEditDialog);
 setupBackdropClose(els.mcpToolsDialog);
@@ -7135,6 +7172,116 @@ els.skillEditForm.addEventListener("submit", async (e) => {
     showToast(`Error: ${err.message}`, "error");
   }
 });
+
+// --- SOUL / PERSONALITY EDITOR ---
+
+let soulOriginalContent = "";
+
+async function openSoulEditor() {
+  if (!els.soulDialog) return;
+  els.soulDialog.showModal();
+  await loadSoul();
+}
+
+function setSoulMeta(data) {
+  els.soulPathLabel.textContent = data.path || "agent/SOUL.md";
+  els.soulUpdatedLabel.textContent = data.updated_at
+    ? `Updated ${new Date(data.updated_at).toLocaleString()}`
+    : "";
+}
+
+function updateSoulDirtyState() {
+  const dirty = els.soulContent.value !== soulOriginalContent;
+  els.soulDirtyLabel.textContent = dirty ? "Unsaved changes" : "";
+  els.soulDirtyLabel.classList.toggle("is-dirty", dirty);
+  els.soulSaveBtn.disabled = !dirty;
+  return dirty;
+}
+
+async function loadSoul() {
+  els.soulContent.disabled = true;
+  els.soulDirtyLabel.textContent = "Loading...";
+  els.soulDirtyLabel.classList.remove("is-dirty");
+  try {
+    const res = await fetch("/api/soul");
+    if (!res.ok) throw new Error("Failed to load personality");
+    const data = await res.json();
+    soulOriginalContent = data.content || "";
+    els.soulContent.value = soulOriginalContent;
+    setSoulMeta(data);
+    els.soulDirtyLabel.textContent = "";
+    els.soulSaveBtn.disabled = true;
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+    els.soulDirtyLabel.textContent = "";
+  } finally {
+    els.soulContent.disabled = false;
+  }
+}
+
+async function saveSoul() {
+  const content = els.soulContent.value;
+  if (!content.trim()) {
+    showToast("Personality cannot be empty. Use Reset to Default to restore it.", "error");
+    return;
+  }
+  els.soulSaveBtn.disabled = true;
+  els.soulSaveBtn.textContent = "Saving...";
+  try {
+    const res = await fetch("/api/soul", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not save personality");
+    soulOriginalContent = typeof data.content === "string" ? data.content : content;
+    els.soulContent.value = soulOriginalContent;
+    setSoulMeta(data);
+    updateSoulDirtyState();
+    showToast("Personality saved. It applies from your next message.", "success");
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+    els.soulSaveBtn.disabled = false;
+  } finally {
+    els.soulSaveBtn.textContent = "Save Personality";
+  }
+}
+
+async function resetSoul() {
+  const okReset = await showConfirm({
+    title: "Reset personality?",
+    message: "Restore the built-in default SOUL.md. Your current personality is backed up first.",
+    okLabel: "Reset to Default",
+    danger: true,
+  });
+  if (!okReset) return;
+  try {
+    const res = await fetch("/api/soul/reset", { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not reset personality");
+    soulOriginalContent = data.content || "";
+    els.soulContent.value = soulOriginalContent;
+    setSoulMeta(data);
+    updateSoulDirtyState();
+    showToast("Personality restored to default", "success");
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+if (els.soulForm) {
+  els.soulForm.addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveSoul();
+  });
+}
+if (els.soulContent) {
+  els.soulContent.addEventListener("input", updateSoulDirtyState);
+}
+if (els.soulResetBtn) {
+  els.soulResetBtn.addEventListener("click", resetSoul);
+}
 
 // Password visibility toggler
 document.addEventListener("click", (e) => {

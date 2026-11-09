@@ -1599,3 +1599,13 @@ A device turn transcribed the clip with the audio model correctly, but the turn 
 - `internal/sessions/sessions.go`: `loadMessagesWithAttachments` now resolves the attachment kind from the message metadata, MIME type and file extension, and only inlines images into `Images`. Audio references keep their name/path (served by the existing attachment route) instead of being re-offered as image payloads. Legacy plain binaries without any hint still default to image.
 - `internal/router/media.go`: history sanitizing applies to **every** role, not just `user`; audio payloads are detected by content magic bytes as a last line of defense, so a payload that is really audio is never treated as an image even when its metadata says so.
 - `internal/router/media_test.go`, `internal/device/audio_history_test.go`: regression tests covering media on assistant history and the full reload → router path.
+
+## 2026-11-09 — Web editor for the agent personality (SOUL.md)
+
+Added a browser-based view/edit surface for `agent/SOUL.md`, previously editable only by the agent's own file tools or by hand on disk:
+
+- `internal/agent/agent.go`: exported `SoulPath`, `SaveSoul`, `ResetSoul`, `IsDefaultSoul`; saves write atomically through a temp file and reuse the existing rolling `agent/backups/SOUL.md.bakN` snapshots.
+- `internal/web/soul.go`: `GET /api/soul` (content, path, updated_at, is_default), `PUT /api/soul` (validates non-empty, 256 KiB cap) and `POST /api/soul/reset` (restores `DefaultSoulContent`).
+- `internal/web/static/index.html`, `app.js`, `styles.css`: "Personality (Soul)" dialog with path/timestamp metadata, monospace editor, dirty-state tracking, Save and Reset to Default (confirmation), reachable from the More menu, the mobile drawer and the `/soul` slash command.
+- No restart needed: `buildStaticSystemPrefix` already reloads the soul per turn, so edits apply to the next message.
+- Tests: `internal/agent/soul_io_test.go` (default creation, backups, lowercase `soul.md` preference) and `internal/web/soul_test.go` (get/update/reset, empty rejection).

@@ -40,6 +40,7 @@
               <button class="ghost-button dropdown-toggle" type="button">More ▾</button>
               <div class="dropdown-menu">
                 <button id="openMemory" type="button">Memory</button>
+                <button id="openSoul" type="button">Personality</button>
                 <button id="openProjects" type="button">Projects</button>
                 <button id="openFeedback" type="button">Feedback</button>
                 <button id="debugEventsToggle" type="button">🔍 Debug events: Off</button>
@@ -120,6 +121,10 @@
           <button id="drawerOpenSkills" class="drawer-menu-item" type="button">
             <span class="drawer-item-icon">⚡</span>
             <span class="drawer-item-label">Skills Catalog</span>
+          </button>
+          <button id="drawerOpenSoul" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">🎭</span>
+            <span class="drawer-item-label">Personality (Soul)</span>
           </button>
           <button id="drawerOpenMcp" class="drawer-menu-item" type="button">
             <span class="drawer-item-icon">🔌</span>
@@ -251,6 +256,31 @@
           </table>
         </div>
       </div>
+    </dialog>
+
+    <dialog id="soulDialog" class="modal soul-modal">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Agent Identity</p>
+          <h2>Personality (SOUL.md)</h2>
+        </div>
+        <button class="ghost-button" value="close">Close</button>
+      </form>
+      <form id="soulForm" class="soul-form">
+        <p class="soul-hint">
+          Loaded as the first system message on every turn. Changes apply to your next message; no restart needed.
+        </p>
+        <div class="soul-meta">
+          <span id="soulPathLabel">agent/SOUL.md</span>
+          <span id="soulUpdatedLabel"></span>
+        </div>
+        <textarea id="soulContent" spellcheck="false" placeholder="Describe the agent's identity, tone and rules..."></textarea>
+        <div class="soul-actions">
+          <span id="soulDirtyLabel" class="soul-dirty" aria-live="polite"></span>
+          <button id="soulResetBtn" class="ghost-button" type="button">Reset to Default</button>
+          <button id="soulSaveBtn" class="primary-button" type="submit">Save Personality</button>
+        </div>
+      </form>
     </dialog>
 
     <dialog id="mcpDialog" class="modal mcp-modal">
