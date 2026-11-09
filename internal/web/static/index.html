@@ -41,6 +41,7 @@
               <div class="dropdown-menu">
                 <button id="openMemory" type="button">Memory</button>
                 <button id="openSoul" type="button">Personality</button>
+                <button id="openScheduler" type="button">Scheduled Tasks</button>
                 <button id="openProjects" type="button">Projects</button>
                 <button id="openFeedback" type="button">Feedback</button>
                 <button id="debugEventsToggle" type="button">🔍 Debug events: Off</button>
@@ -125,6 +126,10 @@
           <button id="drawerOpenSoul" class="drawer-menu-item" type="button">
             <span class="drawer-item-icon">🎭</span>
             <span class="drawer-item-label">Personality (Soul)</span>
+          </button>
+          <button id="drawerOpenScheduler" class="drawer-menu-item" type="button">
+            <span class="drawer-item-icon">📅</span>
+            <span class="drawer-item-label">Scheduled Tasks</span>
           </button>
           <button id="drawerOpenMcp" class="drawer-menu-item" type="button">
             <span class="drawer-item-icon">🔌</span>
@@ -279,6 +284,85 @@
           <span id="soulDirtyLabel" class="soul-dirty" aria-live="polite"></span>
           <button id="soulResetBtn" class="ghost-button" type="button">Reset to Default</button>
           <button id="soulSaveBtn" class="primary-button" type="submit">Save Personality</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="schedulerDialog" class="modal skills-modal">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow">Agent Autonomy</p>
+          <h2>Scheduled Tasks</h2>
+        </div>
+        <div style="display: flex; gap: 8px;">
+          <button id="addScheduledTaskBtn" class="primary-button" type="button" style="min-height:34px; font-size:12.5px;">New Task</button>
+          <button class="ghost-button" value="close">Close</button>
+        </div>
+      </form>
+      <div class="skills-modal-body">
+        <div class="skills-stats-bar">
+          <span id="schedulerCount">Active tasks: 0</span>
+          <label class="scheduler-finished-toggle">
+            <input id="schedulerShowFinished" type="checkbox" />
+            <span>Show finished</span>
+          </label>
+        </div>
+        <div class="skills-list-container">
+          <table class="skills-table">
+            <thead>
+              <tr>
+                <th>Task</th>
+                <th>Schedule</th>
+                <th>Next run</th>
+                <th>Channels</th>
+                <th style="text-align: right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="schedulerListBody"></tbody>
+          </table>
+        </div>
+        <p class="scheduler-hint">
+          The agent creates tasks on request, always behind a confirmation card. It may edit or delete them on its own and will report what changed.
+        </p>
+      </div>
+    </dialog>
+
+    <dialog id="schedulerEditDialog" class="modal" style="max-width: 640px; width: 90%;">
+      <form method="dialog" class="modal-head">
+        <div>
+          <p class="eyebrow" id="schedulerEditEyebrow">New Task</p>
+          <h2 id="schedulerEditTitle">Scheduled Task</h2>
+        </div>
+        <button class="ghost-button" value="close">Cancel</button>
+      </form>
+      <form id="schedulerEditForm" class="skill-edit-form">
+        <label>
+          Title
+          <input id="schedulerEditName" type="text" placeholder="Bitcoin morning check" />
+        </label>
+        <label>
+          Type
+          <select id="schedulerEditType">
+            <option value="agent_task">Autonomous task (runs tools and reports)</option>
+            <option value="alert">Reminder (fixed text)</option>
+          </select>
+        </label>
+        <label>
+          Instruction / message
+          <textarea id="schedulerEditPrompt" rows="5" placeholder="Tell me how bitcoin is doing today"></textarea>
+        </label>
+        <label>
+          Schedule
+          <input id="schedulerEditWhen" type="text" placeholder="0 9 * * * / every 2h / 15:30 / in 20m" />
+          <span class="scheduler-field-hint">Cron, interval, absolute time or relative delay, in the server's local time.</span>
+        </label>
+        <fieldset class="scheduler-channels">
+          <legend>Deliver to</legend>
+          <label><input id="schedulerChannelWeb" type="checkbox" checked /> Web session</label>
+          <label><input id="schedulerChannelTelegram" type="checkbox" /> Telegram</label>
+        </fieldset>
+        <div class="skill-edit-actions">
+          <button id="schedulerEditSaveBtn" class="primary-button" type="submit">Save Task</button>
         </div>
       </form>
     </dialog>

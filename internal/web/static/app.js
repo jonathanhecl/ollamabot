@@ -429,6 +429,25 @@ const els = {
   soulSaveBtn: document.querySelector("#soulSaveBtn"),
   drawerOpenSoul: document.querySelector("#drawerOpenSoul"),
 
+  // Scheduled Tasks DOM Elements
+  openScheduler: document.querySelector("#openScheduler"),
+  schedulerDialog: document.querySelector("#schedulerDialog"),
+  schedulerListBody: document.querySelector("#schedulerListBody"),
+  schedulerCount: document.querySelector("#schedulerCount"),
+  schedulerShowFinished: document.querySelector("#schedulerShowFinished"),
+  addScheduledTaskBtn: document.querySelector("#addScheduledTaskBtn"),
+  schedulerEditDialog: document.querySelector("#schedulerEditDialog"),
+  schedulerEditForm: document.querySelector("#schedulerEditForm"),
+  schedulerEditEyebrow: document.querySelector("#schedulerEditEyebrow"),
+  schedulerEditTitle: document.querySelector("#schedulerEditTitle"),
+  schedulerEditName: document.querySelector("#schedulerEditName"),
+  schedulerEditType: document.querySelector("#schedulerEditType"),
+  schedulerEditPrompt: document.querySelector("#schedulerEditPrompt"),
+  schedulerEditWhen: document.querySelector("#schedulerEditWhen"),
+  schedulerChannelWeb: document.querySelector("#schedulerChannelWeb"),
+  schedulerChannelTelegram: document.querySelector("#schedulerChannelTelegram"),
+  schedulerEditSaveBtn: document.querySelector("#schedulerEditSaveBtn"),
+  drawerOpenScheduler: document.querySelector("#drawerOpenScheduler"),
 
   // MCP DOM Elements
   openMcp: document.querySelector("#openMcp"),
@@ -577,6 +596,12 @@ if (els.drawerOpenSoul) {
     if (els.openSoul) els.openSoul.click();
   });
 }
+if (els.drawerOpenScheduler) {
+  els.drawerOpenScheduler.addEventListener("click", () => {
+    closeRightDrawer();
+    if (els.openScheduler) els.openScheduler.click();
+  });
+}
 if (els.drawerOpenMcp) {
   els.drawerOpenMcp.addEventListener("click", () => {
     closeRightDrawer();
@@ -648,6 +673,12 @@ els.openSkills.addEventListener("click", () => {
 if (els.openSoul) {
   els.openSoul.addEventListener("click", () => {
     openSoulEditor();
+  });
+}
+
+if (els.openScheduler) {
+  els.openScheduler.addEventListener("click", () => {
+    openSchedulerDialog();
   });
 }
 
@@ -1088,6 +1119,17 @@ const SLASH_COMMANDS = [
     }
   },
   {
+    cmd: "/tasks",
+    args: "",
+    icon: "📅",
+    desc: "View and manage scheduled reminders and autonomous tasks",
+    action: () => {
+      hideSlashMenu();
+      els.prompt.value = "";
+      if (els.openScheduler) els.openScheduler.click();
+    }
+  },
+  {
     cmd: "/models",
     args: "",
     icon: "🤖",
@@ -1385,6 +1427,8 @@ setupBackdropClose(els.skillsDialog);
 setupBackdropClose(els.skillViewDialog);
 setupBackdropClose(els.skillEditDialog);
 setupBackdropClose(els.soulDialog);
+setupBackdropClose(els.schedulerDialog);
+setupBackdropClose(els.schedulerEditDialog);
 setupBackdropClose(els.mcpDialog);
 setupBackdropClose(els.mcpEditDialog);
 setupBackdropClose(els.mcpToolsDialog);
@@ -5374,6 +5418,22 @@ function renderApprovalPreviewHTML(toolName, args) {
     `;
   }
 
+  // 5. Scheduled task creation: show the schedule and the instruction plainly.
+  if (tool === "schedule_task" || tool === "schedule_reminder") {
+    const when = args.when || "";
+    const text = args.instruction || args.text || "";
+    const title = args.title || "";
+    const kind = tool === "schedule_task" ? "Autonomous task" : "Reminder";
+    return `
+      <div class="approval-schedule-box">
+        <div class="approval-schedule-row"><span>Type</span><strong>${escapeHtml(kind)}</strong></div>
+        ${title ? `<div class="approval-schedule-row"><span>Title</span><strong>${escapeHtml(title)}</strong></div>` : ""}
+        <div class="approval-schedule-row"><span>Schedule</span><code>${escapeHtml(when)}</code></div>
+        <div class="approval-schedule-instruction"><span>Will run</span><p>${escapeHtml(text)}</p></div>
+      </div>
+    `;
+  }
+
   // Fallback: pretty formatted JSON
   return `<pre class="approval-raw-json">${escapeHtml(JSON.stringify(args, null, 2))}</pre>`;
 }
@@ -7172,6 +7232,266 @@ els.skillEditForm.addEventListener("submit", async (e) => {
     showToast(`Error: ${err.message}`, "error");
   }
 });
+
+// --- SCHEDULED TASKS ---
+
+let editingScheduledTaskId = null;
+let schedulerTasksCache = [];
+
+async function openSchedulerDialog() {
+  if (!els.schedulerDialog) return;
+  els.schedulerDialog.showModal();
+  await loadAndRenderSchedulerTasks();
+}
+
+function scheduledTaskScheduleLabel(task) {
+  if (task.schedule_type === "cron") return `Cron ${task.cron_expr || ""}`;
+  if (task.schedule_type === "interval") return `Every ${task.interval_str || ""}`;
+  return "One-off";
+}
+
+function scheduledTaskNextRunLabel(task) {
+  if (task.status === "paused") return "Paused";
+  if (task.status !== "pending") return "—";
+  const when = new Date(task.next_run_at);
+  if (isNaN(when.getTime())) return "—";
+  const diff = when.getTime() - Date.now();
+  if (diff <= 0) return "Due now";
+  const mins = Math.round(diff / 60000);
+  const rel = mins < 60
+    ? `in ${mins}m`
+    : mins < 1440
+      ? `in ${Math.round(mins / 60)}h`
+      : `in ${Math.round(mins / 1440)}d`;
+  return `${when.toLocaleString()} (${rel})`;
+}
+
+function scheduledTaskWhenInput(task) {
+  if (task.schedule_type === "cron") return task.cron_expr || "";
+  if (task.schedule_type === "interval") return task.interval_str ? `every ${task.interval_str}` : "";
+  const d = new Date(task.next_run_at);
+  if (isNaN(d.getTime())) return "";
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function loadAndRenderSchedulerTasks() {
+  try {
+    const include = els.schedulerShowFinished && els.schedulerShowFinished.checked;
+    const res = await fetch(`/api/scheduler/tasks?include_completed=${include ? "true" : "false"}`);
+    if (!res.ok) throw new Error("Failed to load scheduled tasks");
+    const data = await res.json();
+    schedulerTasksCache = Array.isArray(data) ? data : [];
+    renderSchedulerTasks(schedulerTasksCache);
+  } catch (err) {
+    els.schedulerListBody.innerHTML = `
+      <tr><td colspan="5" style="text-align:center;padding:20px;color:#ff6b6b;">
+        Error loading tasks: ${escapeHtml(err.message)}
+      </td></tr>`;
+  }
+}
+
+function renderSchedulerTasks(tasks) {
+  const active = tasks.filter((t) => t.status !== "completed" && t.status !== "cancelled");
+  els.schedulerCount.textContent = tasks.length === active.length
+    ? `Active tasks: ${active.length}`
+    : `Active tasks: ${active.length} · ${tasks.length} total`;
+
+  els.schedulerListBody.innerHTML = "";
+  if (tasks.length === 0) {
+    els.schedulerListBody.innerHTML = `
+      <tr><td colspan="5" style="text-align:center;padding:20px;color:var(--muted);">
+        No scheduled tasks yet. Ask the agent to check something every morning, or create one here.
+      </td></tr>`;
+    return;
+  }
+
+  tasks.forEach((task) => {
+    const title = task.title || task.prompt || "Task";
+    const prompt = task.prompt || "";
+    const preview = prompt.length > 110 ? `${prompt.slice(0, 110)}…` : prompt;
+    const typeClass = task.type === "agent_task" ? "agent" : "alert";
+    const typeLabel = task.type === "agent_task" ? "Autonomous" : "Reminder";
+    const channels = Array.isArray(task.notify_channels) && task.notify_channels.length
+      ? task.notify_channels.join(", ")
+      : (task.channel || "—");
+    const canToggle = task.status === "pending" || task.status === "paused";
+    const statusBadge = task.status === "paused"
+      ? `<span class="scheduler-badge paused">paused</span>`
+      : task.status === "failed"
+        ? `<span class="scheduler-badge failed">failed</span>`
+        : "";
+
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>
+        <div class="scheduler-task-title">${escapeHtml(title)} ${statusBadge}</div>
+        <div class="scheduler-task-preview">${escapeHtml(preview)}</div>
+        <div class="scheduler-task-meta">
+          <span class="scheduler-badge ${typeClass}">${typeLabel}</span>
+          <code>${escapeHtml(task.id)}</code>
+        </div>
+        ${task.last_error ? `<div class="scheduler-task-error">${escapeHtml(task.last_error)}</div>` : ""}
+      </td>
+      <td style="font-size: 12px;">${escapeHtml(scheduledTaskScheduleLabel(task))}</td>
+      <td style="font-size: 12px; color: var(--muted);">${escapeHtml(scheduledTaskNextRunLabel(task))}</td>
+      <td style="font-size: 12px;">${escapeHtml(channels)}</td>
+      <td style="text-align: right; white-space: nowrap;">
+        ${task.session_id ? `<button class="ghost-button" data-action="open" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">Open</button>` : ""}
+        ${canToggle ? `<button class="ghost-button" data-action="toggle" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">${task.status === "paused" ? "Resume" : "Pause"}</button>` : ""}
+        <button class="ghost-button" data-action="edit" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">Edit</button>
+        <button class="ghost-button" data-action="delete" data-id="${escapeAttr(task.id)}" type="button" style="color: #ff6b6b; border-color: rgba(255,107,107,0.3); font-size: 11px; padding: 2px 8px;">Delete</button>
+      </td>
+    `;
+    els.schedulerListBody.appendChild(tr);
+  });
+}
+
+async function toggleScheduledTask(task) {
+  const status = task.status === "paused" ? "pending" : "paused";
+  try {
+    const res = await fetch(`/api/scheduler/tasks/${encodeURIComponent(task.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not update task");
+    showToast(status === "paused" ? "Task paused" : "Task resumed", "success");
+    await loadAndRenderSchedulerTasks();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+async function deleteScheduledTask(task) {
+  const ok = await showConfirm({
+    title: "Delete scheduled task?",
+    message: `"${task.title || task.prompt}" will stop running. Its session history is kept.`,
+    okLabel: "Delete Task",
+    danger: true,
+  });
+  if (!ok) return;
+  try {
+    const res = await fetch(`/api/scheduler/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
+    if (!res.ok) throw new Error("Could not delete task");
+    showToast("Scheduled task deleted", "success");
+    await loadAndRenderSchedulerTasks();
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  }
+}
+
+function openSchedulerEdit(task) {
+  editingScheduledTaskId = task ? task.id : null;
+  const isEdit = !!task;
+  els.schedulerEditEyebrow.textContent = isEdit ? "Edit Task" : "New Task";
+  els.schedulerEditTitle.textContent = isEdit ? (task.title || "Scheduled Task") : "New Scheduled Task";
+  els.schedulerEditName.value = task ? (task.title || "") : "";
+  els.schedulerEditType.value = task ? task.type : "agent_task";
+  els.schedulerEditType.disabled = isEdit;
+  els.schedulerEditPrompt.value = task ? (task.prompt || "") : "";
+  els.schedulerEditWhen.value = task ? scheduledTaskWhenInput(task) : "";
+  const channels = task && Array.isArray(task.notify_channels) && task.notify_channels.length
+    ? task.notify_channels
+    : ["web", "telegram"];
+  els.schedulerChannelWeb.checked = channels.includes("web");
+  els.schedulerChannelTelegram.checked = channels.includes("telegram");
+  els.schedulerEditDialog.showModal();
+}
+
+if (els.schedulerListBody) {
+  els.schedulerListBody.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-action]");
+    if (!btn) return;
+    const task = schedulerTasksCache.find((t) => t.id === btn.dataset.id);
+    if (!task) return;
+    switch (btn.dataset.action) {
+      case "open":
+        els.schedulerDialog.close();
+        await loadSession(task.session_id);
+        break;
+      case "toggle":
+        await toggleScheduledTask(task);
+        break;
+      case "edit":
+        openSchedulerEdit(task);
+        break;
+      case "delete":
+        await deleteScheduledTask(task);
+        break;
+    }
+  });
+}
+
+if (els.schedulerShowFinished) {
+  els.schedulerShowFinished.addEventListener("change", loadAndRenderSchedulerTasks);
+}
+if (els.addScheduledTaskBtn) {
+  els.addScheduledTaskBtn.addEventListener("click", () => openSchedulerEdit(null));
+}
+if (els.schedulerEditForm) {
+  els.schedulerEditForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const wasEdit = !!editingScheduledTaskId;
+    const title = els.schedulerEditName.value.trim();
+    const text = els.schedulerEditPrompt.value.trim();
+    const when = els.schedulerEditWhen.value.trim();
+    const type = els.schedulerEditType.value;
+    const notify = [];
+    if (els.schedulerChannelWeb.checked) notify.push("web");
+    if (els.schedulerChannelTelegram.checked) notify.push("telegram");
+
+    if (!text) {
+      showToast("Write the instruction or reminder text", "error");
+      return;
+    }
+    if (!when) {
+      showToast("Set a schedule: cron, interval, time or delay", "error");
+      return;
+    }
+    if (notify.length === 0) {
+      showToast("Pick at least one delivery channel", "error");
+      return;
+    }
+
+    const payload = { title, text, when, notify_channels: notify };
+    let url = "/api/scheduler/tasks";
+    let method = "POST";
+    if (wasEdit) {
+      url += `/${encodeURIComponent(editingScheduledTaskId)}`;
+      method = "PATCH";
+    } else {
+      payload.channel = "web";
+      payload.session_id = state.activeSessionId || "";
+      payload.is_agent_task = type === "agent_task";
+    }
+
+    els.schedulerEditSaveBtn.disabled = true;
+    els.schedulerEditSaveBtn.textContent = "Saving...";
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || "Could not save task");
+      els.schedulerEditDialog.close();
+      editingScheduledTaskId = null;
+      showToast("Scheduled task saved", "success");
+      await loadAndRenderSchedulerTasks();
+      if (!wasEdit) {
+        await loadSessions();
+      }
+    } catch (err) {
+      showToast(`Error: ${err.message}`, "error");
+    } finally {
+      els.schedulerEditSaveBtn.disabled = false;
+      els.schedulerEditSaveBtn.textContent = "Save Task";
+    }
+  });
+}
 
 // --- SOUL / PERSONALITY EDITOR ---
 

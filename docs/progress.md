@@ -1609,3 +1609,16 @@ Added a browser-based view/edit surface for `agent/SOUL.md`, previously editable
 - `internal/web/static/index.html`, `app.js`, `styles.css`: "Personality (Soul)" dialog with path/timestamp metadata, monospace editor, dirty-state tracking, Save and Reset to Default (confirmation), reachable from the More menu, the mobile drawer and the `/soul` slash command.
 - No restart needed: `buildStaticSystemPrefix` already reloads the soul per turn, so edits apply to the next message.
 - Tests: `internal/agent/soul_io_test.go` (default creation, backups, lowercase `soul.md` preference) and `internal/web/soul_test.go` (get/update/reset, empty rejection).
+
+## 2026-11-09 — Proactive scheduled tasks: own session, fan-out delivery and web manager
+
+The scheduler now behaves as a real proactive assistant instead of dropping a message into the origin chat:
+
+- `internal/scheduler`: tasks gained `Title`, `OriginSessionID`, `NotifyChannels` and `paused` state; `CreateScheduledTask` / `UpdateScheduledTask` / `DeleteScheduledTask`; legacy records migrate on load; storage writes atomically.
+- Agent tasks run through `engine.ProcessTurn` (channel `scheduler`) with the shared background slot, a recorder and a dedicated session titled `⏰ <task>` created at task creation when web is a delivery channel. The full run (tool steps + final answer) is visible in the web UI; each run appends to the same session for continuity.
+- `inner/engine`: `TurnRequest.Background` uses the background slot and returns `ErrBackgroundBusy` so the scheduler retries on the next tick; unattended runs pass a deny-all approval handler.
+- Delivery fans out to every channel in `NotifyChannels` (web + Telegram by default when available). Web reminders append to their session, agent-task reports are already persisted by the recorder (no duplicate append). Telegram resolves a chat from the target, the origin session, or the first authorized chat for web-created tasks.
+- Confirmation is enforced by the tool risk gate: `schedule_task` and `schedule_reminder` are `RiskNeedsApproval`, so web and Telegram show their normal approval card before creating. `schedule_update` and `schedule_delete` stay autonomous and instruct the model to report the change.
+- New tools `schedule_update` / `schedule_delete`; `schedule_list` now shows every channel. Web API gained `PATCH /api/scheduler/tasks/{id}`, `DELETE` now deletes permanently, and `GET` returns `[]` instead of `null`.
+- Web UI: "Scheduled Tasks" dialog (More menu, mobile drawer, `/tasks`) with status, schedule, next run, channels, last error, and Open/Pause/Resume/Edit/Delete actions; creation/edit form for title, type, instruction, schedule and delivery channels; schedule-aware approval preview.
+- Tests: scheduler CRUD/migration/fan-out/session creation, tool update/delete and approval denial, web API create/update/delete.
