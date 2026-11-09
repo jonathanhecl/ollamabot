@@ -42,7 +42,7 @@ Background services started once in `cmd/ollamabot/main.go` and shared by channe
 Scheduled tasks are created by the agent with `schedule_task` / `schedule_reminder` (always behind the
 tool approval card) and managed with `schedule_list` / `schedule_update` / `schedule_delete`. Agent runs go
 through `engine.ProcessTurn` with `TurnRequest.Background`, append to the task's `⏰ <title>` session, and
-deliver the result to every channel in `notify_channels`. Agent tasks with `notify_mode: "on_alert"` run silently and only push a message when the model calls `send_scheduled_alert`; the previous observation and the last alert are given to the next run.
+deliver the result to every channel in `notify_channels`. Agent tasks with `notify_mode: "on_alert"` run silently and only push a message when the model calls `send_scheduled_alert`; the previous observation and the last alert are given to the next run. Tasks are embedded (title + instruction) and stored in `sessions/scheduler_task_embeddings.json`; a chat turn uses the query embedding to inject only the related tasks and their last observation, with the measurement time.
 
 ## Design principles
 

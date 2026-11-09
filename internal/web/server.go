@@ -675,10 +675,14 @@ func (s *Server) handleUpdateSettings(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.sleepMgr = nil
 	}
+	schedMgr := s.schedulerMgr
 	s.mu.Unlock()
 
 	if strings.TrimSpace(s.envPath) != "" {
 		_ = config.SaveBasic(s.envPath, currCfg)
+	}
+	if schedMgr != nil {
+		schedMgr.RefreshEmbeddings()
 	}
 	writeJSON(w, http.StatusOK, settingsResponse(currCfg))
 }

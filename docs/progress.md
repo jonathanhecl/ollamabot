@@ -1633,3 +1633,14 @@ Scheduled agent tasks can now run silently and only message the user when there 
 - `internal/engine`: `Deps.ScheduledAlertHandler` wires the collector into the tool registry.
 - Web: the task form has a "Only notify me when there is something new" option for autonomous tasks, the list shows a `silent` badge, and the create/edit API accepts `notify_mode`.
 - Tests: notify-mode normalization and migration, silent-run notification decisions, `send_scheduled_alert` collection, and API create/update with `notify_mode`.
+
+## 2026-11-09 — Task embeddings for fast, relevant recall in chat
+
+Scheduled tasks are now indexed by embedding so a chat turn only pulls the tasks related to the question:
+
+- `internal/scheduler`: each autonomous task gets a vector stored in `sessions/scheduler_task_embeddings.json` (model, vector, updated_at), separate from `scheduler_tasks.json` to keep API responses small. Vectors are computed on creation, after title/instruction edits, at startup, and when the embedding model changes; stale vectors are dropped immediately when the text changes.
+- `SchedulerService.RelatedTasks` scores active tasks against the query embedding (cosine, threshold 0.50) and falls back to keyword matching when a vector is missing or belongs to another model.
+- `internal/agent`: the query embedding already used for memory recall is reused to fetch the related tasks; a compact "Related Scheduled Task Observations" system block includes each match, its last observation, the measurement time and the task condition. The prompt tells the model to state when the data was measured and to refresh and compare when the user asks for the current value. Scheduled runs skip this block because their prompt already carries their own previous observation.
+- `schedule_list` now returns each task's last run, last observation, last alert and notification mode.
+- Web settings call `RefreshEmbeddings` when the embedding model changes.
+- Tests: embedding ranking, keyword fallback, persistence and deletion cleanup, and related-task prompt formatting.

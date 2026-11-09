@@ -21,7 +21,7 @@ func TestStaticPrefixCarriesDeviceAndLanguageRules(t *testing.T) {
 	a := NewAgent(config.NewManager(cfg), nil, registry)
 
 	var joined strings.Builder
-	for _, msg := range buildStaticSystemPrefix(a, "", "", "", "") {
+	for _, msg := range buildStaticSystemPrefix(a, "", "", "", "", "") {
 		joined.WriteString(msg.Content)
 		joined.WriteString("\n")
 	}

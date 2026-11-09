@@ -49,11 +49,11 @@ type StreamHandler interface {
 }
 
 type Agent struct {
-	cfgMgr      *config.Manager
-	client      *ollama.Client
-	registry    *tools.Registry
-	paths       *pathMemory
-	currentGoal string
+	cfgMgr        *config.Manager
+	client        *ollama.Client
+	registry      *tools.Registry
+	paths         *pathMemory
+	currentGoal   string
 	options       map[string]any
 	maxIterations int
 	mu            sync.RWMutex
@@ -142,22 +142,24 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		_ = UpdateSoulFromPrompt(goal)
 	}
 
-	// Proactive Auto-RAG context pre-fetching (Hybrid: Vector + Keyword)
+	// Proactive Auto-RAG context pre-fetching (Hybrid: Vector + Keyword).
+	// The query embedding is shared by long-term memory and scheduled task
+	// matching, so it is computed once even when memory is disabled.
+	var queryEmbedding []float64
+	if goal != "" && a.config().OllamaModelEmbed != "" && a.client != nil {
+		embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
+			Model: a.config().OllamaModelEmbed,
+			Input: goal,
+		})
+		if err == nil && len(embedResp.Embeddings) > 0 {
+			queryEmbedding = embedResp.Embeddings[0]
+		} else if err != nil {
+			log.Printf("[Agent Run] Memory pre-fetch embedding error: %v (falling back to keyword matching)", err)
+		}
+	}
+
 	var recalledMemoriesBlock string
 	if a.registry != nil && a.registry.MemoryStore() != nil && goal != "" {
-		var queryEmbedding []float64
-		if a.config().OllamaModelEmbed != "" && a.client != nil {
-			embedResp, err := a.client.Embed(ctx, ollama.EmbedRequest{
-				Model: a.config().OllamaModelEmbed,
-				Input: goal,
-			})
-			if err == nil && len(embedResp.Embeddings) > 0 {
-				queryEmbedding = embedResp.Embeddings[0]
-			} else if err != nil {
-				log.Printf("[Agent Run] Memory pre-fetch embedding error: %v (falling back to keyword matching)", err)
-			}
-		}
-
 		results := a.registry.MemoryStore().SearchHybrid(goal, queryEmbedding, 3, 0.70)
 		if len(results) > 0 {
 			var sb strings.Builder
@@ -183,6 +185,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				recalledMemoriesBlock = sb.String()
 			}
 		}
+	}
+
+	// Scheduled tasks are matched by their own embeddings, so only the tasks
+	// related to this question reach the prompt instead of every task.
+	var relatedTasksBlock string
+	if a.registry != nil && a.registry.SchedulerEnabled() && goal != "" && a.registry.Channel() != "scheduler" {
+		relatedTasksBlock = a.registry.RelatedScheduledTasksContext(goal, queryEmbedding, 3)
 	}
 
 	// Load and inject only relevant custom skills from configurable skills path
@@ -220,7 +229,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	// --- STATIC SYSTEM PREFIX (computed once, reused every iteration) ---
 	// These messages don't change between loop iterations, so we build them
 	// once before the loop instead of re-reading files from disk every turn.
-	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, skillsBlock, pastSessionsBlock)
+	staticPrefix := buildStaticSystemPrefix(a, goal, recalledMemoriesBlock, relatedTasksBlock, skillsBlock, pastSessionsBlock)
 
 	// Record the context-injection decisions for debugging: what long-term
 	// memory / past sessions / skills were injected, and which plan mode is
@@ -229,6 +238,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		injection := map[string]any{
 			"past_sessions_len": len(pastSessionsBlock),
 			"skills_len":        len(skillsBlock),
+			"related_tasks_len": len(relatedTasksBlock),
 		}
 		if recalledMemoriesBlock != "" {
 			injection["memories"] = recalledMemoriesBlock
@@ -1375,7 +1385,7 @@ func buildTodoProgressNote(snap []tools.TodoItem) string {
 // instructions, recalled memories, skills, goal reinforcement, and
 // clarification reinforcement. Computing these once per Run avoids
 // re-reading files from disk up to 50 times.
-func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock, pastSessionsBlock string) []ollama.Message {
+func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasksBlock, skillsBlock, pastSessionsBlock string) []ollama.Message {
 	var prefix []ollama.Message
 
 	// Load SOUL.md once
@@ -1415,6 +1425,18 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 		})
 	}
 
+	// Scheduled task observations guidance (static, only when scheduler tools exist)
+	if a.registry != nil && a.registry.SchedulerEnabled() {
+		prefix = append(prefix, ollama.Message{
+			Role: "system",
+			Content: "## Scheduled Task Observations\n" +
+				"Scheduled tasks save their latest result together with the time it was measured. When the conversation includes a \"Related Scheduled Task Observations\" block, it contains the tasks that match the user's question; `schedule_list` returns every task's last observation and measurement time.\n" +
+				"When you answer from a scheduled observation, always say when it was measured (for example, \"as of 14:30\"). Never present an old observation as the current value.\n" +
+				"If the user asks for the current value (\"now\", \"right now\", \"today\") or the observation is not recent enough for the question, refresh it with your tools and compare: state the current value, the earlier value and when it was measured, and whether it rose or fell.\n" +
+				"Use this to avoid unnecessary tool calls: a recent observation can answer the question directly, but a stale one must be refreshed before answering.",
+		})
+	}
+
 	// Adaptive Problem-Solving & Fallback instruction (static)
 	prefix = append(prefix, ollama.Message{
 		Role: "system",
@@ -1428,7 +1450,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 	// Voice reply instruction (static, only when the channel can deliver audio)
 	if a.registry != nil && a.registry.VoiceEnabled() {
 		prefix = append(prefix, ollama.Message{
-			Role: "system",
+			Role:    "system",
 			Content: "You can answer with your voice through the `send_voice` tool. Choose it only when hearing the answer is better than reading it: a short greeting, a quick confirmation, a brief conversational reply, or a human-sounding answer. Keep the spoken text the way a person talks, without Markdown, code, lists or emoji, and under 1500 characters. Never use it for code, file contents, tables, step-by-step instructions, numbers, URLs, error output or long explanations: those belong in text. The audio reaches the user with its transcription, so never repeat the spoken text afterwards: end your turn right after the call unless you have further tasks. You may send several voice messages in one turn (for example, progress updates during a long task), but each call must say something NEW: never resend the same or nearly the same words, and never call send_voice twice in one model response.",
 		})
 	}
@@ -1522,6 +1544,14 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, skillsBlock,
 		prefix = append(prefix, ollama.Message{
 			Role:    "system",
 			Content: recalledMemoriesBlock,
+		})
+	}
+
+	// Related scheduled task observations (static for this Run)
+	if relatedTasksBlock != "" {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: relatedTasksBlock,
 		})
 	}
 
