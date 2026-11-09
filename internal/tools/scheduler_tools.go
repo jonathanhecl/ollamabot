@@ -62,6 +62,7 @@ type SchedulerService interface {
 	UpdateScheduledTask(id string, patch ScheduledTaskPatch) (ScheduledTaskInfo, error)
 	DeleteScheduledTask(id string) error
 	ListTasks(channel string, sessionID string, includeCompleted bool) []ScheduledTaskInfo
+	RelatedTasks(query string, queryEmbedding []float64, limit int) []ScheduledTaskInfo
 	CancelTask(id string) error
 }
 
@@ -145,7 +146,7 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "schedule_list",
-			Description: "List every scheduled reminder and autonomous task, with its ID, schedule, channels and last result state. Use it before editing or deleting so you reference the right ID.",
+			Description: "List every scheduled reminder and autonomous task, with its ID, schedule, channels, status, last run and last observation. Use it before editing or deleting so you reference the right ID, and to answer from recent task data without re-running the task. The last observation includes when it was measured.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -246,6 +247,51 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 // SetSchedulerManager is an alias for SetSchedulerService for convenience.
 func (r *Registry) SetSchedulerManager(sm SchedulerService) {
 	r.SetSchedulerService(sm)
+}
+
+// SchedulerEnabled reports whether scheduled task tools are available.
+func (r *Registry) SchedulerEnabled() bool {
+	return r != nil && r.schedulerService != nil
+}
+
+// RelatedScheduledTasksContext builds the compact prompt block with the tasks
+// related to the current question. It relies on task embeddings computed by the
+// scheduler and only includes the best matches.
+func (r *Registry) RelatedScheduledTasksContext(query string, queryEmbedding []float64, limit int) string {
+	if r == nil || r.schedulerService == nil {
+		return ""
+	}
+	tasks := r.schedulerService.RelatedTasks(query, queryEmbedding, limit)
+	if len(tasks) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Related Scheduled Task Observations\n")
+	sb.WriteString("These background tasks match the user's question. Use their latest observation when it is recent enough and state when it was measured; refresh with tools if the user asks for the current value.\n")
+	for _, task := range tasks {
+		title := strings.TrimSpace(task.Title)
+		if title == "" {
+			title = strings.TrimSpace(task.Prompt)
+		}
+		fmt.Fprintf(&sb, "- **%s**", title)
+		if task.Status == "paused" {
+			sb.WriteString(" (paused)")
+		}
+		if task.LastRunAt != nil {
+			fmt.Fprintf(&sb, " (measured %s)", task.LastRunAt.Format("2006-01-02 15:04"))
+		}
+		if strings.TrimSpace(task.LastObservation) != "" {
+			fmt.Fprintf(&sb, ": %s", truncateRunes(task.LastObservation, 500))
+		} else {
+			sb.WriteString(": no observation yet")
+		}
+		if condition := strings.TrimSpace(task.Prompt); condition != "" && !strings.Contains(condition, title) {
+			fmt.Fprintf(&sb, " [condition: %s]", truncateRunes(condition, 200))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
 }
 
 // SetScheduledAlertHandler enables send_scheduled_alert inside silent
@@ -463,6 +509,19 @@ func (r *Registry) executeScheduleList(args map[string]any) (string, error) {
 		}
 		if t.NotifyMode == "on_alert" {
 			sb.WriteString("   - **Notify**: only when there is something new (silent monitoring)\n")
+		}
+		if t.LastRunAt != nil {
+			fmt.Fprintf(&sb, "   - **Last run**: %s\n", t.LastRunAt.Format("2006-01-02 15:04"))
+		}
+		if t.LastObservation != "" {
+			fmt.Fprintf(&sb, "   - **Last observation**: %s\n", truncateRunes(t.LastObservation, 700))
+		}
+		if t.LastAlert != "" {
+			when := ""
+			if t.LastAlertAt != nil {
+				when = " (" + t.LastAlertAt.Format("2006-01-02 15:04") + ")"
+			}
+			fmt.Fprintf(&sb, "   - **Last alert%s**: %s\n", when, truncateRunes(t.LastAlert, 400))
 		}
 		if t.LastError != "" {
 			fmt.Fprintf(&sb, "   - **Last error**: %s\n", t.LastError)

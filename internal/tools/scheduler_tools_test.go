@@ -75,6 +75,13 @@ func (m *mockSchedulerService) ListTasks(channel string, sessionID string, inclu
 	return m.tasks
 }
 
+func (m *mockSchedulerService) RelatedTasks(query string, queryEmbedding []float64, limit int) []ScheduledTaskInfo {
+	if limit <= 0 || limit > len(m.tasks) {
+		limit = len(m.tasks)
+	}
+	return m.tasks[:limit]
+}
+
 func (m *mockSchedulerService) CancelTask(id string) error {
 	return m.DeleteScheduledTask(id)
 }
@@ -217,6 +224,27 @@ func TestSendScheduledAlertTool(t *testing.T) {
 	disabled := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
 	if _, err := disabled.execute(context.Background(), "send_scheduled_alert", map[string]any{"message": "x"}); err == nil {
 		t.Fatal("expected an error when no alert handler is configured")
+	}
+}
+
+func TestRelatedScheduledTasksContext(t *testing.T) {
+	lastRun := time.Date(2026, 11, 9, 14, 30, 0, 0, time.UTC)
+	mock := &mockSchedulerService{tasks: []ScheduledTaskInfo{{
+		ID:              "task_btc",
+		Title:           "Bitcoin price",
+		Type:            "agent_task",
+		Prompt:          "Check the BTC price every 2h and alert above 100k",
+		LastObservation: "BTC is at 67,100 USD",
+		LastRunAt:       &lastRun,
+	}}}
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSchedulerService(mock)
+
+	block := registry.RelatedScheduledTasksContext("how is bitcoin doing?", nil, 3)
+	for _, want := range []string{"Related Scheduled Task Observations", "Bitcoin price", "67,100", "measured 2026-11-09 14:30", "condition"} {
+		if !strings.Contains(block, want) {
+			t.Fatalf("related task block missing %q:\n%s", want, block)
+		}
 	}
 }
 
