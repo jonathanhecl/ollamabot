@@ -243,27 +243,40 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 
 	start := time.Now()
 	var lastErr error
-	for attempt := 1; attempt <= 2; attempt++ {
+	for attempt := 1; attempt <= len(transcriptionAttempts); attempt++ {
+		opts := map[string]any{"num_ctx": 8000, "num_predict": transcriptionMaxTokens}
+		for k, v := range transcriptionAttempts[attempt-1] {
+			opts[k] = v
+		}
 		resp, err := r.client.Chat(ctx, ollama.ChatRequest{
 			Model: model,
 			Messages: []ollama.Message{
 				{Role: "user", Content: audioTranscriptionPrompt, Images: []string{base64data}},
 			},
 			Format:  audioTranscriptionSchema,
-			Options: map[string]any{"temperature": 0, "num_ctx": 8000},
+			Options: opts,
 		})
 		if err != nil {
 			log.Printf("[Router] TranscribeAudio FAILED (attempt %d): %v", attempt, err)
 			lastErr = fmt.Errorf("audio transcription (%s): %w", model, err)
+			if ctx.Err() != nil {
+				break
+			}
 			continue
 		}
 		raw := strings.TrimSpace(resp.Message.Content)
+		if resp.DoneReason == "length" {
+			log.Printf("[Router] TranscribeAudio: output hit the token limit (attempt %d, len=%d), retrying", attempt, len(raw))
+			lastErr = fmt.Errorf("audio transcription (%s): output truncated at the token limit (runaway generation)", model)
+			continue
+		}
 		var out AudioTranscription
 		if err := json.Unmarshal([]byte(raw), &out); err != nil {
 			log.Printf("[Router] TranscribeAudio: invalid JSON (attempt %d, len=%d): %v", attempt, len(raw), err)
 			lastErr = fmt.Errorf("audio transcription (%s): invalid JSON output: %w", model, err)
-			// Last resort on final attempt: treat the raw text as transcription.
-			if attempt == 2 && raw != "" {
+			// Last resort on final attempt: treat the raw text as transcription,
+			// unless it is broken JSON or degenerate output.
+			if attempt == len(transcriptionAttempts) && raw != "" && !strings.HasPrefix(raw, "{") && !isDegenerateText(raw) {
 				log.Printf("[Router] TranscribeAudio: falling back to raw text as transcription")
 				return AudioTranscription{Transcription: raw, DurationMs: time.Since(start).Milliseconds()}, nil
 			}
@@ -272,6 +285,11 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 		out.Transcription = strings.TrimSpace(out.Transcription)
 		out.Sounds = normalizeNone(out.Sounds)
 		out.Language = normalizeNone(out.Language)
+		if isDegenerateText(out.Transcription) || isDegenerateText(out.Sounds) {
+			log.Printf("[Router] TranscribeAudio: degenerate repetitive output (attempt %d, transcription_len=%d, sounds_len=%d), retrying", attempt, len(out.Transcription), len(out.Sounds))
+			lastErr = fmt.Errorf("audio transcription (%s): degenerate repetitive output", model)
+			continue
+		}
 		if out.Transcription == "" && out.Sounds == "" {
 			out.Unreadable = true
 		}
@@ -280,6 +298,37 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 		return out, nil
 	}
 	return AudioTranscription{}, lastErr
+}
+
+// transcriptionMaxTokens bounds runaway generations: without it a looping model
+// fills the whole context and returns truncated, garbage JSON.
+const transcriptionMaxTokens = 2048
+
+// transcriptionAttempts holds the per-attempt sampling overrides. The first
+// attempt is deterministic; retries add temperature and a repeat penalty so a
+// repetition loop at temperature 0 is not simply replayed.
+var transcriptionAttempts = []map[string]any{
+	{"temperature": 0},
+	{"temperature": 0.3, "repeat_penalty": 1.3, "seed": 1},
+	{"temperature": 0.6, "repeat_penalty": 1.5, "seed": 2},
+}
+
+// isDegenerateText reports whether s looks like a repetition loop (e.g.
+// "p, t, r, d, ... p, t, r, d, ..."): long text whose 8-rune shingles are
+// mostly duplicates. Natural speech, even with a repeated chorus, keeps most
+// shingles unique.
+func isDegenerateText(s string) bool {
+	const shingle, minRunes = 8, 200
+	runes := []rune(strings.Join(strings.Fields(strings.ToLower(s)), " "))
+	if len(runes) < minRunes {
+		return false
+	}
+	total := len(runes) - shingle + 1
+	seen := make(map[string]struct{}, total)
+	for i := 0; i < total; i++ {
+		seen[string(runes[i:i+shingle])] = struct{}{}
+	}
+	return float64(len(seen))/float64(total) < 0.3
 }
 
 // normalizeNone clears placeholder values some models emit for empty fields.

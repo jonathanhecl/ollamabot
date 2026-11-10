@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -436,6 +437,163 @@ func TestTranscribeAudio(t *testing.T) {
 	_, err = rFail.TranscribeAudio(context.Background(), "base64-audio")
 	if err == nil {
 		t.Fatal("expected error on connection failure, got nil")
+	}
+}
+
+// degenerateSoundsLoop is a repetition-loop string that isDegenerateText
+// must flag, used both directly and as a model-produced "sounds" field.
+var degenerateSoundsLoop = strings.Repeat("p, t, r, d, e, a, u, o, n, g, h, w, y, s, c, l, f, v, ", 40)
+
+func TestIsDegenerateText(t *testing.T) {
+	natural := "El mercado amaneció con una niebla espesa que apenas dejaba ver los primeros metros de la calle. " +
+		"Los vecinos salieron temprano a buscar pan y café, comentando el tiempo con los tenderos de la esquina. " +
+		"Más tarde, cuando el sol rompió entre las nubes grises, la ciudad recuperó su ritmo habitual. " +
+		"Los niños volvieron a los parques, los vendedores montaron sus puestos y el tráfico llenó de nuevo las avenidas principales."
+
+	tests := []struct {
+		name string
+		in   string
+		want bool
+	}{
+		{"repetition loop", degenerateSoundsLoop, true},
+		{"empty", "", false},
+		{"short repetition", "no no no no", false},
+		{"natural paragraph", natural, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := isDegenerateText(tt.in); got != tt.want {
+				t.Errorf("isDegenerateText() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTranscribeAudioDegenerateRetry(t *testing.T) {
+	var attemptCount int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		var content string
+		if attemptCount == 1 {
+			transcription := AudioTranscription{
+				Transcription: "Hola, ¿cómo estás hoy?",
+				Language:      "es",
+				Sounds:        degenerateSoundsLoop,
+			}
+			raw, _ := json.Marshal(transcription)
+			content = string(raw)
+		} else {
+			var req ollama.ChatRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Errorf("failed to decode request body: %v", err)
+			} else {
+				if _, ok := req.Options["repeat_penalty"]; !ok {
+					t.Errorf("expected repeat_penalty in retry options, got %v", req.Options)
+				}
+				if got, ok := req.Options["num_predict"]; !ok || got != float64(transcriptionMaxTokens) {
+					t.Errorf("expected num_predict=%d in retry options, got %v", transcriptionMaxTokens, req.Options)
+				}
+			}
+			transcription := AudioTranscription{
+				Transcription: "Hola mundo",
+				Language:      "es",
+			}
+			raw, _ := json.Marshal(transcription)
+			content = string(raw)
+		}
+
+		resp := ollama.ChatResponse{
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: content,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	r := New(client, Config{AudioModel: "audio-model"})
+
+	out, err := r.TranscribeAudio(context.Background(), "base64-audio")
+	if err != nil {
+		t.Fatalf("TranscribeAudio failed: %v", err)
+	}
+	if out.Transcription != "Hola mundo" {
+		t.Errorf("expected 'Hola mundo', got %q", out.Transcription)
+	}
+	if attemptCount != 2 {
+		t.Errorf("expected 2 attempts, got %d", attemptCount)
+	}
+}
+
+func TestTranscribeAudioLengthTruncated(t *testing.T) {
+	var attemptCount int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		resp := ollama.ChatResponse{
+			DoneReason: "length",
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: `{"language": "en", "sounds": "p, t, r, `,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	r := New(client, Config{AudioModel: "audio-model"})
+
+	out, err := r.TranscribeAudio(context.Background(), "base64-audio")
+	if err == nil {
+		t.Fatal("expected error for length-truncated output, got nil")
+	}
+	if attemptCount != 3 {
+		t.Errorf("expected 3 attempts, got %d", attemptCount)
+	}
+	if out.Transcription != "" {
+		t.Errorf("expected empty transcription on error, got %q", out.Transcription)
+	}
+}
+
+func TestTranscribeAudioNoRawFallbackForBrokenJSON(t *testing.T) {
+	var attemptCount int
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attemptCount++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		resp := ollama.ChatResponse{
+			DoneReason: "stop",
+			Message: ollama.Message{
+				Role:    "assistant",
+				Content: `{"transcription": "hola`,
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	r := New(client, Config{AudioModel: "audio-model"})
+
+	out, err := r.TranscribeAudio(context.Background(), "base64-audio")
+	if err == nil {
+		t.Fatal("expected error for broken JSON output, got nil")
+	}
+	if attemptCount != 3 {
+		t.Errorf("expected 3 attempts, got %d", attemptCount)
+	}
+	if out.Transcription != "" {
+		t.Errorf("expected empty transcription on error, got %q", out.Transcription)
 	}
 }
 

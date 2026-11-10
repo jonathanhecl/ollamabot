@@ -1644,3 +1644,12 @@ Scheduled tasks are now indexed by embedding so a chat turn only pulls the tasks
 - `schedule_list` now returns each task's last run, last observation, last alert and notification mode.
 - Web settings call `RefreshEmbeddings` when the embedding model changes.
 - Tests: embedding ranking, keyword fallback, persistence and deletion cleanup, and related-task prompt formatting.
+
+## 2026-11-10 — Detect and retry garbage audio transcriptions
+
+A 1-second voice clip produced a runaway `sounds` loop ("p, t, r, d, ...") that filled the context; the truncated JSON was then injected verbatim through the raw-text fallback.
+
+- `internal/router`: `TranscribeAudio` caps generation with `num_predict` (2048), treats `done_reason: "length"` as a failure, and rejects degenerate repetitive `transcription`/`sounds` (`isDegenerateText`: 8-rune shingle uniqueness < 30% on texts ≥ 200 runes).
+- Retries go up to 3 attempts; retries add temperature and `repeat_penalty` so the temperature-0 loop is not replayed.
+- The raw-text fallback no longer applies to broken JSON or degenerate text; if every attempt fails the audio is marked unreadable instead of injecting garbage.
+- Tests: degenerate detection, retry after a looping attempt, length-truncated output, no fallback for broken JSON.
