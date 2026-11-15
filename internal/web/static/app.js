@@ -373,6 +373,7 @@ const els = {
   clarificationQuestion: document.querySelector("#clarificationQuestion"),
   clarificationOptionsContainer: document.querySelector("#clarificationOptionsContainer"),
   clarificationCancel: document.querySelector("#clarificationCancel"),
+  clarificationCountdown: document.querySelector("#clarificationCountdown"),
   clarificationCustomInput: document.querySelector("#clarificationCustomInput"),
   clarificationSendCustom: document.querySelector("#clarificationSendCustom"),
   planConfirmationSelect: document.querySelector("#planConfirmationSelect"),
@@ -4012,6 +4013,15 @@ async function processNextQueueItem() {
     }
   } finally {
     // Stream is fully closed by the server. All rounds are complete!
+    // A clarification still open here means the turn ended without an answer
+    // (abort or server timeout): drop the card so it cannot linger in the timeline.
+    if (state.currentClarificationId) {
+      clearClarification();
+      if (els.clarificationCard) {
+        els.clarificationCard.style.display = "none";
+        els.messages.appendChild(els.clarificationCard);
+      }
+    }
     assistant.waiting = false;
     assistant.streaming = false;
     assistant.timestamp = new Date().toISOString();
@@ -4338,6 +4348,14 @@ function renderMessages() {
       els.messages.appendChild(els.planConfirmationCard);
     }
     els.planConfirmationCard.style.display = "block";
+  }
+  // The clarification card lives inside the timeline, so it must be re-attached
+  // after the innerHTML reset above, exactly like the plan confirmation card.
+  if (state.currentClarificationId && els.clarificationCard) {
+    if (els.clarificationCard.parentNode !== els.messages) {
+      els.messages.appendChild(els.clarificationCard);
+    }
+    els.clarificationCard.style.display = "block";
   }
   els.messages.scrollTop = els.messages.scrollHeight;
 }
@@ -5310,6 +5328,12 @@ function writeAscii(view, offset, value) {
 let approvalInterval = null;
 let clarificationInterval = null;
 
+// Answer sent when the user dismisses the clarification card instead of picking
+// an option. It reaches the model as the tool result, so it must be a sentence
+// the agent can act on.
+const CLARIFICATION_DISMISSED_ANSWER =
+  "The user dismissed the question without choosing an option. Do not ask it again; proceed with your best judgment and tell the user what you assumed.";
+
 function normalizeApprovalPayload(value) {
   if (!value) return null;
   if (value.approval) value = value.approval;
@@ -5542,11 +5566,11 @@ function showClarificationDialog(id, question, options) {
     els.clarificationOptionsContainer.appendChild(btn);
   });
   
-  // Setup cancel button
+  // Setup cancel button. The server keeps blocking on this clarification, so the
+  // dismissal must be reported back: otherwise the turn only unblocks when the
+  // client aborts the SSE stream.
   els.clarificationCancel.onclick = () => {
-    clearClarification();
-    els.clarificationCard.style.display = "none";
-    els.messages.appendChild(els.clarificationCard);
+    respondToClarification(id, CLARIFICATION_DISMISSED_ANSWER);
   };
   
   // Setup custom send button
@@ -5577,7 +5601,7 @@ function showClarificationDialog(id, question, options) {
   existingCard.scrollIntoView({ behavior: "smooth", block: "center" });
   
   // Auto-answer timer
-  const countdownEl = document.querySelector("#clarificationCountdown");
+  const countdownEl = els.clarificationCountdown;
   if (countdownEl) {
     const startTime = Date.now();
     const duration = 300 * 1000; // 5 minutes
