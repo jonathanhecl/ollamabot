@@ -40,6 +40,7 @@ type Manager struct {
 	refreshMu      sync.Mutex
 	refreshing     bool
 	notifiers      map[string]NotificationFunc
+	rootCtx        context.Context
 	cancelFunc     context.CancelFunc
 	tickerDone     chan struct{}
 	interval       time.Duration
@@ -96,6 +97,18 @@ func normalizeNotifyMode(mode string, taskType TaskType) string {
 
 func (m *Manager) config() config.Config {
 	return m.cfgMgr.Get()
+}
+
+// runContext is the long-lived context manual runs use. Forcing a task must
+// outlive the tool call or HTTP request that asked for it, so it hangs off the
+// manager lifecycle instead of the caller.
+func (m *Manager) runContext() context.Context {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.rootCtx != nil {
+		return m.rootCtx
+	}
+	return context.Background()
 }
 
 // NewManager creates a new scheduler Manager.
@@ -183,6 +196,7 @@ func (m *Manager) Start(ctx context.Context) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancelFunc = cancel
+	m.rootCtx = ctx
 	m.tickerDone = make(chan struct{})
 	interval := m.interval
 	m.mu.Unlock()
@@ -698,6 +712,67 @@ func (m *Manager) Tick(ctx context.Context) {
 }
 
 func (m *Manager) executeTask(ctx context.Context, task Task) {
+	m.runTask(ctx, task, false)
+}
+
+// runOutcome is what one execution produced, so a forced run can report back
+// to whoever asked for it.
+type runOutcome struct {
+	answer string
+	alerts []string
+	err    error
+}
+
+// RunScheduledTaskNow forces an immediate run of a task, ignoring its schedule
+// and its current status. The run is the real one: same prompt, same tools,
+// same model and same delivery channels, and it records its observation so the
+// next scheduled run keeps its continuity. The schedule itself is untouched.
+// The returned channel receives the outcome once and is then closed.
+func (m *Manager) RunScheduledTaskNow(id string) (<-chan tools.ManualRunOutcome, tools.ScheduledTaskInfo, error) {
+	task, err := m.GetTask(id)
+	if err != nil {
+		return nil, tools.ScheduledTaskInfo{}, err
+	}
+
+	m.mu.Lock()
+	if m.isExecuting[task.ID] {
+		m.mu.Unlock()
+		return nil, task.ToInfo(), fmt.Errorf("task %q is already running", id)
+	}
+	// Claim the slot before the goroutine starts so a tick or a second request
+	// cannot launch the same task twice.
+	m.isExecuting[task.ID] = true
+	m.mu.Unlock()
+
+	out := make(chan tools.ManualRunOutcome, 1)
+	go func() {
+		defer close(out)
+		start := time.Now()
+		res := m.runTask(m.runContext(), task, true)
+		info := task.ToInfo()
+		if updated, err := m.GetTask(task.ID); err == nil {
+			info = updated.ToInfo()
+		}
+		outcome := tools.ManualRunOutcome{
+			Info:     info,
+			Answer:   res.answer,
+			Alerts:   res.alerts,
+			Duration: time.Since(start),
+		}
+		if res.err != nil {
+			outcome.Err = res.err.Error()
+		}
+		out <- outcome
+	}()
+
+	log.Printf("[scheduler] Forced run of task %s (%s)", task.ID, task.Type)
+	return out, task.ToInfo(), nil
+}
+
+// runTask executes one task now. manual marks a forced run requested by the
+// user: it keeps the schedule and the task status untouched, and it runs on the
+// interactive slot so it can start while the user is still in a chat turn.
+func (m *Manager) runTask(ctx context.Context, task Task, manual bool) runOutcome {
 	m.mu.Lock()
 	m.isExecuting[task.ID] = true
 	m.mu.Unlock()
@@ -712,20 +787,20 @@ func (m *Manager) executeTask(ctx context.Context, task Task) {
 
 	if task.Type == TaskTypeAlert {
 		msg := fmt.Sprintf("⏰ **Reminder**: %s", task.Prompt)
-		m.updateAfterRun(task, now, nil)
+		m.recordRun(task, now, nil, manual, nil)
 		m.notify(task, msg)
-		return
+		return runOutcome{answer: msg}
 	}
 
-	m.executeAgentTask(ctx, task, now)
+	return m.executeAgentTask(ctx, task, now, manual)
 }
 
-func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time) {
+func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time, manual bool) runOutcome {
 	m.mu.RLock()
 	_, exists := m.tasks[task.ID]
 	m.mu.RUnlock()
 	if !exists {
-		return
+		return runOutcome{err: fmt.Errorf("task %q was removed", task.ID)}
 	}
 
 	cfg := m.config()
@@ -734,8 +809,9 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		model = cfg.OllamaDefaultModel
 	}
 	if strings.TrimSpace(model) == "" {
-		m.updateAfterRun(task, now, fmt.Errorf("no default model configured"))
-		return
+		err := fmt.Errorf("no default model configured")
+		m.recordRun(task, now, err, manual, nil)
+		return runOutcome{err: err}
 	}
 
 	if m.sessionStore != nil && strings.TrimSpace(task.SessionID) == "" {
@@ -745,8 +821,9 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 			Model: model,
 		}
 		if err := m.sessionStore.Save(sess); err != nil {
-			m.updateAfterRun(task, now, fmt.Errorf("failed to create run session: %w", err))
-			return
+			err = fmt.Errorf("failed to create run session: %w", err)
+			m.recordRun(task, now, err, manual, nil)
+			return runOutcome{err: err}
 		}
 		task.SessionID = sess.ID
 		m.mu.Lock()
@@ -789,63 +866,42 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 	result, err := engine.ProcessTurn(ctx, deps, engine.TurnRequest{
 		SessionID:  task.SessionID,
 		Channel:    "scheduler",
-		Background: true,
+		Background: !manual,
 		Messages:   messages,
 	})
 	if errors.Is(err, engine.ErrBackgroundBusy) {
 		// Another background loop (sleep, goal) is using the model. Leave the
 		// task pending so the next tick retries it.
 		log.Printf("[scheduler] Background slot busy, deferring agent task %s", task.ID)
-		return
+		return runOutcome{err: err}
 	}
 
 	answer := ""
 	if err == nil {
 		answer = strings.TrimSpace(result.FinalAnswer)
 	}
-	m.finishAgentRun(task, now, err, answer, alerts)
+	m.finishAgentRun(task, now, err, answer, alerts, manual)
+	return runOutcome{answer: answer, alerts: alerts, err: err}
 }
 
 // finishAgentRun persists the run outcome and decides whether the user gets a
 // message. Silent monitoring tasks only notify when the agent called
 // send_scheduled_alert; failures always notify.
-func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer string, alerts []string) {
-	m.mu.Lock()
-	current, ok := m.tasks[task.ID]
-	if !ok {
-		m.mu.Unlock()
-		log.Printf("[scheduler] Task %s was deleted while running; keeping it deleted", task.ID)
-		return
-	}
-	current.LastRunAt = &now
-	current.RunCount++
-	if runErr != nil {
-		current.LastError = runErr.Error()
-		if current.Status != TaskStatusPaused {
-			if current.ScheduleType == ScheduleTypeOnce {
-				current.Status = TaskStatusFailed
-			} else {
-				m.advanceOrComplete(&current, now)
-			}
+func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer string, alerts []string, manual bool) {
+	current, ok := m.recordRun(task, now, runErr, manual, func(t *Task) {
+		if runErr != nil {
+			return
 		}
-	} else {
-		current.LastError = ""
 		if strings.TrimSpace(answer) != "" {
-			current.LastObservation = truncateTaskText(answer, 4000)
+			t.LastObservation = truncateTaskText(answer, 4000)
 		}
 		if len(alerts) > 0 {
-			current.LastAlert = truncateTaskText(strings.Join(alerts, "\n\n"), 4000)
-			current.LastAlertAt = &now
+			t.LastAlert = truncateTaskText(strings.Join(alerts, "\n\n"), 4000)
+			t.LastAlertAt = &now
 		}
-		if current.Status != TaskStatusPaused {
-			m.advanceOrComplete(&current, now)
-		}
-	}
-	m.tasks[task.ID] = current
-	m.mu.Unlock()
-
-	if err := m.Save(); err != nil {
-		log.Printf("[scheduler] Failed to persist task %s after run: %v", task.ID, err)
+	})
+	if !ok {
+		return
 	}
 
 	if runErr != nil {
@@ -856,6 +912,7 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 
 	if current.NotifyMode == NotifyModeOnAlert {
 		if len(alerts) == 0 {
+			log.Printf("[scheduler] Silent task %s produced no alert; the user was not notified", task.ID)
 			return
 		}
 		title := deriveTaskTitle(current.Title, current.Prompt)
@@ -870,22 +927,24 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 	m.notify(task, fmt.Sprintf("📋 **Scheduled Task Report**\n**Task**: %s\n\n%s", task.Prompt, response))
 }
 
-// updateAfterRun records the run outcome and advances the schedule. It re-reads
+// recordRun stores the outcome of a run and advances the schedule. It re-reads
 // the stored task so edits or deletions made while the run was executing are
-// not overwritten by the stale copy that started the run.
-func (m *Manager) updateAfterRun(task Task, now time.Time, runErr error) {
+// not overwritten by the stale copy that started the run. A manual run records
+// the run but never advances the schedule or completes the task: forcing a task
+// must not consume its next scheduled slot.
+func (m *Manager) recordRun(task Task, now time.Time, runErr error, manual bool, mutate func(*Task)) (Task, bool) {
 	m.mu.Lock()
 	current, ok := m.tasks[task.ID]
 	if !ok {
 		m.mu.Unlock()
 		log.Printf("[scheduler] Task %s was deleted while running; keeping it deleted", task.ID)
-		return
+		return Task{}, false
 	}
 	current.LastRunAt = &now
 	current.RunCount++
 	if runErr != nil {
 		current.LastError = runErr.Error()
-		if current.Status != TaskStatusPaused {
+		if !manual && current.Status != TaskStatusPaused {
 			if current.ScheduleType == ScheduleTypeOnce {
 				current.Status = TaskStatusFailed
 			} else {
@@ -894,9 +953,12 @@ func (m *Manager) updateAfterRun(task Task, now time.Time, runErr error) {
 		}
 	} else {
 		current.LastError = ""
-		if current.Status != TaskStatusPaused {
+		if !manual && current.Status != TaskStatusPaused {
 			m.advanceOrComplete(&current, now)
 		}
+	}
+	if mutate != nil {
+		mutate(&current)
 	}
 	m.tasks[task.ID] = current
 	m.mu.Unlock()
@@ -904,6 +966,7 @@ func (m *Manager) updateAfterRun(task Task, now time.Time, runErr error) {
 	if err := m.Save(); err != nil {
 		log.Printf("[scheduler] Failed to persist task %s after run: %v", task.ID, err)
 	}
+	return current, true
 }
 
 func (m *Manager) advanceOrComplete(task *Task, now time.Time) {

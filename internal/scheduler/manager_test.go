@@ -340,7 +340,7 @@ func TestManager_SilentRunOnlyNotifiesOnAlert(t *testing.T) {
 	}
 
 	// Nothing new: the run is recorded in the session but no message is sent.
-	mgr.finishAgentRun(task, time.Now(), nil, "Nothing new happened", nil)
+	mgr.finishAgentRun(task, time.Now(), nil, "Nothing new happened", nil, false)
 	select {
 	case msg := <-ch:
 		t.Fatalf("unexpected notification for a silent run: %s", msg)
@@ -355,7 +355,7 @@ func TestManager_SilentRunOnlyNotifiesOnAlert(t *testing.T) {
 	}
 
 	// The agent reported news: the user gets the alert text.
-	mgr.finishAgentRun(updated, time.Now(), nil, "There is news", []string{"Something important happened"})
+	mgr.finishAgentRun(updated, time.Now(), nil, "There is news", []string{"Something important happened"}, false)
 	select {
 	case msg := <-ch:
 		if !strings.Contains(msg, "Something important happened") || !strings.Contains(msg, "News watch") {
@@ -371,5 +371,204 @@ func TestManager_SilentRunOnlyNotifiesOnAlert(t *testing.T) {
 	}
 	if !strings.Contains(updated.LastAlert, "Something important happened") || updated.LastAlertAt == nil {
 		t.Fatalf("alert state not persisted: %+v", updated)
+	}
+}
+
+func waitOutcome(t *testing.T, ch <-chan tools.ManualRunOutcome) tools.ManualRunOutcome {
+	t.Helper()
+	select {
+	case outcome, ok := <-ch:
+		if !ok {
+			t.Fatal("forced run closed without an outcome")
+		}
+		return outcome
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for the forced run")
+	}
+	return tools.ManualRunOutcome{}
+}
+
+func TestManager_ForcedRunOfReminderKeepsSchedule(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+	notified := make(chan string, 1)
+	mgr.RegisterNotifier("web", func(task Task, message string) error {
+		notified <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "alert",
+		Title:   "Water",
+		Prompt:  "Drink water",
+		When:    "0 9 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	outCh, started, err := mgr.RunScheduledTaskNow(info.ID)
+	if err != nil {
+		t.Fatalf("forced run rejected: %v", err)
+	}
+	if started.ID != info.ID {
+		t.Fatalf("started task = %q, want %q", started.ID, info.ID)
+	}
+	outcome := waitOutcome(t, outCh)
+	if outcome.Err != "" {
+		t.Fatalf("forced run failed: %s", outcome.Err)
+	}
+
+	select {
+	case msg := <-notified:
+		if !strings.Contains(msg, "Drink water") {
+			t.Fatalf("unexpected reminder %q", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the reminder")
+	}
+
+	after, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.NextRunAt.Equal(before.NextRunAt) {
+		t.Fatalf("forced run moved the schedule: %v -> %v", before.NextRunAt, after.NextRunAt)
+	}
+	if after.Status != TaskStatusPending {
+		t.Fatalf("status = %q, want pending", after.Status)
+	}
+	if after.RunCount != 1 || after.LastRunAt == nil {
+		t.Fatalf("run not recorded: count=%d last=%v", after.RunCount, after.LastRunAt)
+	}
+}
+
+func TestManager_ForcedRunOfPausedTaskRunsWithoutResuming(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+	notified := make(chan string, 1)
+	mgr.RegisterNotifier("web", func(task Task, message string) error {
+		notified <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "alert",
+		Prompt:  "Stretch",
+		When:    "0 9 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.UpdateScheduledTask(info.ID, tools.ScheduledTaskPatch{Status: "paused"}); err != nil {
+		t.Fatal(err)
+	}
+
+	outCh, _, err := mgr.RunScheduledTaskNow(info.ID)
+	if err != nil {
+		t.Fatalf("forced run of a paused task rejected: %v", err)
+	}
+	waitOutcome(t, outCh)
+
+	select {
+	case <-notified:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for the reminder")
+	}
+
+	after, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Status != TaskStatusPaused {
+		t.Fatalf("status = %q, want still paused", after.Status)
+	}
+}
+
+func TestManager_ForcedRunOfAgentTaskKeepsScheduleOnFailure(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+	notified := make(chan string, 1)
+	mgr.RegisterNotifier("web", func(task Task, message string) error {
+		notified <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "Check the news",
+		When:    "every 5h",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// No model is configured in this test: the run has to report the failure
+	// without touching the schedule or completing the task.
+	outCh, _, err := mgr.RunScheduledTaskNow(info.ID)
+	if err != nil {
+		t.Fatalf("forced run rejected: %v", err)
+	}
+	outcome := waitOutcome(t, outCh)
+	if outcome.Err == "" {
+		t.Fatal("expected the forced run to report the failure")
+	}
+
+	select {
+	case msg := <-notified:
+		t.Fatalf("a run that never reached the model must not notify: %q", msg)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	after, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.NextRunAt.Equal(before.NextRunAt) {
+		t.Fatalf("failed forced run moved the schedule: %v -> %v", before.NextRunAt, after.NextRunAt)
+	}
+	if after.Status != TaskStatusPending {
+		t.Fatalf("status = %q, want pending", after.Status)
+	}
+	if after.LastError == "" {
+		t.Fatal("expected the failure to be recorded")
+	}
+}
+
+func TestManager_ForcedRunRejectsWhileRunning(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "alert",
+		Prompt:  "Busy",
+		When:    "0 9 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mgr.mu.Lock()
+	mgr.isExecuting[info.ID] = true
+	mgr.mu.Unlock()
+
+	if _, _, err := mgr.RunScheduledTaskNow(info.ID); err == nil {
+		t.Fatal("expected the second forced run to be rejected")
+	}
+
+	mgr.mu.Lock()
+	delete(mgr.isExecuting, info.ID)
+	mgr.mu.Unlock()
+
+	if _, _, err := mgr.RunScheduledTaskNow("rem_missing"); err == nil {
+		t.Fatal("expected an unknown task to be rejected")
 	}
 }
