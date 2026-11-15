@@ -340,6 +340,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/tools/plan-confirm", s.handlePlanConfirm)
 	mux.HandleFunc("GET /api/scheduler/tasks", s.handleListSchedulerTasks)
 	mux.HandleFunc("POST /api/scheduler/tasks", s.handleCreateSchedulerTask)
+	mux.HandleFunc("POST /api/scheduler/tasks/{id}/run", s.handleRunSchedulerTask)
 	mux.HandleFunc("PATCH /api/scheduler/tasks/{id}", s.handleUpdateSchedulerTask)
 	mux.HandleFunc("DELETE /api/scheduler/tasks/{id}", s.handleCancelSchedulerTask)
 
@@ -3217,6 +3218,43 @@ func (s *Server) handleUpdateSchedulerTask(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, task)
+}
+
+// handleRunSchedulerTask starts a scheduled task immediately, ignoring its
+// schedule and paused state. The run continues in the scheduler after the
+// response, so the handler only reports that it started; the caller watches
+// last_run_at on the task to learn when it finished.
+func (s *Server) handleRunSchedulerTask(w http.ResponseWriter, r *http.Request) {
+	if s.schedulerMgr == nil {
+		writeError(w, http.StatusServiceUnavailable, errors.New("scheduler service is not available"))
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, errors.New("missing task id"))
+		return
+	}
+	// The outcome channel is buffered, so the run completes even if nobody
+	// reads it. The web UI reads the result from the task itself.
+	outcomes, info, err := s.schedulerMgr.RunScheduledTaskNow(id)
+	if err != nil {
+		lower := strings.ToLower(err.Error())
+		switch {
+		case strings.Contains(lower, "not found"):
+			writeError(w, http.StatusNotFound, err)
+		case strings.Contains(lower, "already running"):
+			writeError(w, http.StatusConflict, err)
+		default:
+			writeError(w, http.StatusBadRequest, err)
+		}
+		return
+	}
+	_ = outcomes
+	if task, err := s.schedulerMgr.GetTask(info.ID); err == nil {
+		writeJSON(w, http.StatusAccepted, task)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, info)
 }
 
 func (s *Server) handleCancelSchedulerTask(w http.ResponseWriter, r *http.Request) {

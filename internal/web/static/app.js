@@ -7264,6 +7264,7 @@ els.skillEditForm.addEventListener("submit", async (e) => {
 
 let editingScheduledTaskId = null;
 let schedulerTasksCache = [];
+const schedulerRunning = new Set();
 
 async function openSchedulerDialog() {
   if (!els.schedulerDialog) return;
@@ -7368,6 +7369,9 @@ function renderSchedulerTasks(tasks) {
       <td style="font-size: 12px; color: var(--muted);">${escapeHtml(scheduledTaskNextRunLabel(task))}</td>
       <td style="font-size: 12px;">${escapeHtml(channels)}</td>
       <td style="text-align: right; white-space: nowrap;">
+        ${schedulerRunning.has(task.id)
+          ? `<button class="ghost-button" type="button" disabled style="font-size: 11px; padding: 2px 8px; opacity: 0.55;">Running…</button>`
+          : `<button class="ghost-button" data-action="run" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">Run now</button>`}
         ${task.session_id ? `<button class="ghost-button" data-action="open" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">Open</button>` : ""}
         ${canToggle ? `<button class="ghost-button" data-action="toggle" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">${task.status === "paused" ? "Resume" : "Pause"}</button>` : ""}
         <button class="ghost-button" data-action="edit" data-id="${escapeAttr(task.id)}" type="button" style="font-size: 11px; padding: 2px 8px;">Edit</button>
@@ -7413,6 +7417,54 @@ async function deleteScheduledTask(task) {
   }
 }
 
+async function runScheduledTask(task) {
+  if (schedulerRunning.has(task.id)) return;
+  const startedFrom = task.last_run_at || "";
+  schedulerRunning.add(task.id);
+  renderSchedulerTasks(schedulerTasksCache);
+  try {
+    const res = await fetch(`/api/scheduler/tasks/${encodeURIComponent(task.id)}/run`, { method: "POST" });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || "Could not start the task");
+    showToast("Task started. Waiting for the run to finish…", "info");
+    await waitForScheduledRun(task.id, startedFrom);
+  } catch (err) {
+    showToast(`Error: ${err.message}`, "error");
+  } finally {
+    schedulerRunning.delete(task.id);
+    await loadAndRenderSchedulerTasks();
+  }
+}
+
+// A forced run keeps the schedule untouched, so the only sign that it finished
+// is last_run_at moving. Poll the task list until it does.
+async function waitForScheduledRun(taskId, startedFrom) {
+  const deadline = Date.now() + 180000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    let tasks;
+    try {
+      const res = await fetch("/api/scheduler/tasks?include_completed=true");
+      if (!res.ok) continue;
+      tasks = await res.json();
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(tasks)) continue;
+    const task = tasks.find((t) => t.id === taskId);
+    if (!task) return;
+    const finishedAt = task.last_run_at || "";
+    if (!finishedAt || finishedAt === startedFrom) continue;
+    if (task.last_error) {
+      showToast(`Run failed: ${task.last_error}`, "error", 6000);
+    } else {
+      showToast("Run finished successfully", "success");
+    }
+    return;
+  }
+  showToast("The task is still running. Check its session for the result.", "info", 6000);
+}
+
 function openSchedulerEdit(task) {
   editingScheduledTaskId = task ? task.id : null;
   const isEdit = !!task;
@@ -7455,6 +7507,9 @@ if (els.schedulerListBody) {
         break;
       case "toggle":
         await toggleScheduledTask(task);
+        break;
+      case "run":
+        await runScheduledTask(task);
         break;
       case "edit":
         openSchedulerEdit(task);

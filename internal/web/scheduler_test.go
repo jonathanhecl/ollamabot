@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/scheduler"
@@ -81,6 +82,62 @@ func TestSchedulerTasksAPI(t *testing.T) {
 		}
 		if updated.NotifyMode != "always" {
 			t.Fatalf("notify mode = %q, want always", updated.NotifyMode)
+		}
+	})
+
+	t.Run("run now", func(t *testing.T) {
+		body := `{"text":"Water the plants","title":"Plants","when":"0 9 * * *","notify_channels":["web"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/scheduler/tasks", strings.NewReader(body))
+		w := httptest.NewRecorder()
+		s.handleCreateSchedulerTask(w, req)
+		if w.Result().StatusCode != http.StatusCreated {
+			t.Fatalf("create status = %d body=%s", w.Result().StatusCode, w.Body.String())
+		}
+		var reminder scheduler.Task
+		if err := json.Unmarshal(w.Body.Bytes(), &reminder); err != nil {
+			t.Fatal(err)
+		}
+
+		runReq := httptest.NewRequest(http.MethodPost, "/api/scheduler/tasks/"+reminder.ID+"/run", nil)
+		runReq.SetPathValue("id", reminder.ID)
+		runW := httptest.NewRecorder()
+		s.handleRunSchedulerTask(runW, runReq)
+		if runW.Result().StatusCode != http.StatusAccepted {
+			t.Fatalf("run status = %d body=%s", runW.Result().StatusCode, runW.Body.String())
+		}
+
+		var ran scheduler.Task
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			current, err := s.schedulerMgr.GetTask(reminder.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.LastRunAt != nil {
+				ran = current
+				break
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("forced run never recorded last_run_at")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if ran.RunCount != 1 {
+			t.Fatalf("run count = %d, want 1", ran.RunCount)
+		}
+		if ran.Status != scheduler.TaskStatusPending {
+			t.Fatalf("status = %q, want pending (a forced run must not consume the task)", ran.Status)
+		}
+		if !ran.NextRunAt.Equal(reminder.NextRunAt) {
+			t.Fatalf("next run moved from %s to %s", reminder.NextRunAt, ran.NextRunAt)
+		}
+
+		missReq := httptest.NewRequest(http.MethodPost, "/api/scheduler/tasks/nope/run", nil)
+		missReq.SetPathValue("id", "nope")
+		missW := httptest.NewRecorder()
+		s.handleRunSchedulerTask(missW, missReq)
+		if missW.Result().StatusCode != http.StatusNotFound {
+			t.Fatalf("unknown id status = %d, want 404", missW.Result().StatusCode)
 		}
 	})
 
