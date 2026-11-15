@@ -1667,3 +1667,14 @@ A scheduled task could only prove itself at its scheduled time. Now it can be ru
 
 - `internal/web`: the scheduled tasks panel got a **Run now** button per task, backed by `POST /api/scheduler/tasks/{id}/run`. The endpoint answers `202 Accepted` as soon as the run starts (404 unknown task, 409 already running) and the panel then watches `last_run_at` for up to three minutes, reporting success or the run's error. The row shows `Running…` while it waits, so a run started here is visible and produces the same real effects as the scheduled one.
 - Tests: the run endpoint accepts a reminder, records `last_run_at`/`run_count` without moving `next_run_at` or leaving `pending`, and rejects an unknown task with 404.
+
+## 2026-11-15 — Unattended runs cannot ask, and orphaned plans stop looping
+
+A scheduled run that called `present_plan` approved its own plan: the scheduler wires no plan confirmation handler, so the tool took the `planConfirmationHandler == nil` branch, activated the plan and answered "Plan auto-approved and activated". A visitor to that task session then saw an **Execution Plan** card stuck at step 1 forever. Its first step was "confirm the hour and frequency with the user" — nobody is there during a scheduled run — and the next step needed `schedule_task`, which `denyApprovals` rejects by design, so the plan could never advance. `PlanMonitor` then resumed it every ten minutes, marking the session as processing each time.
+
+- `internal/tools`: the registry now knows when a turn is unattended (`SetUnattended`). `ask_clarification` and `present_plan` are removed from the definitions and rejected at execution time with a message that tells the model to act on its best judgment and report the assumption. The device channel keeps its stricter set (`send_voice`, `send_files` also dropped).
+- `internal/engine`: `Deps.Unattended` propagates the flag into the registry. The scheduler sets it for every run it starts — scheduled or forced — because a scheduled run has no one to answer inside it either way.
+- `internal/scheduler`: `IsTaskSession(id)` reports whether a session was created to log a task run.
+- `internal/agent`: `PlanMonitor` takes that lookup (`SetUnattendedSessionChecker`) and skips task sessions, so a plan inside a run log is never resumed forever. Its own resume runs are marked unattended too: they must execute the step, not ask for a new plan.
+- `cmd/ollamabot`: both entry points wire the scheduler lookup into the plan monitor.
+- Tests: unattended registries hide and reject both interactive tools while keeping `todo_write`, `read_file` and `complete_plan_step`; interactive turns keep the full set; the monitor leaves an unattended plan untouched and never calls the model; `IsTaskSession` matches only a task's run session.

@@ -367,6 +367,23 @@ func (r *Registry) SetChannel(channel string) {
 	r.channel = channel
 }
 
+// SetUnattended marks the turn as running with nobody able to answer it: a
+// scheduled task, a background loop or a plan resume. Tools that only exist to
+// ask a person something (a clarification, a plan approval) are not offered and
+// are rejected, because an unattended turn that calls them either stalls or
+// approves its own request.
+func (r *Registry) SetUnattended(unattended bool) {
+	r.unattended = unattended
+}
+
+// Unattended reports whether the turn runs without a person present.
+func (r *Registry) Unattended() bool {
+	if r == nil {
+		return false
+	}
+	return r.unattended
+}
+
 // Channel reports the transport the current turn came from ("web", "telegram",
 // "device"...). The agent uses it to adapt its answer to the channel.
 func (r *Registry) Channel() string {

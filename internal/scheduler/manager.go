@@ -653,6 +653,24 @@ func (m *Manager) GetTask(id string) (Task, error) {
 	return t, nil
 }
 
+// IsTaskSession reports whether the session was created by this manager to log
+// a scheduled run. Nobody reads those sessions while the task wakes up, so no
+// human is waiting on anything inside them.
+func (m *Manager) IsTaskSession(sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, task := range m.tasks {
+		if task.SessionID == sessionID {
+			return true
+		}
+	}
+	return false
+}
+
 // ListTasks returns active or all tasks filtered optionally by session or channel.
 func (m *Manager) ListTasks(channel string, sessionID string, includeCompleted bool) []tools.ScheduledTaskInfo {
 	raw := m.ListRawTasks(channel, sessionID, includeCompleted)
@@ -849,6 +867,8 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		SchedulerManager: m,
 		// Nobody is present to approve risky tools during a scheduled run.
 		ApprovalHandler: denyApprovals{},
+		// No plan confirmations, no clarifications: the run answers to nobody.
+		Unattended: true,
 	}
 	if silent {
 		deps.ScheduledAlertHandler = func(message string) {

@@ -572,3 +572,39 @@ func TestManager_ForcedRunRejectsWhileRunning(t *testing.T) {
 		t.Fatal("expected an unknown task to be rejected")
 	}
 }
+
+// The plan monitor uses this lookup to leave task sessions alone: a plan there
+// was approved by the run itself and nobody is waiting on it.
+func TestManager_IsTaskSession(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "News digest",
+		When:    "0 */6 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if mgr.IsTaskSession("") {
+		t.Fatal("an empty session ID is never a task session")
+	}
+	if mgr.IsTaskSession("sess_unknown") {
+		t.Fatal("expected an unknown session to be ignored")
+	}
+
+	mgr.mu.Lock()
+	task := mgr.tasks[info.ID]
+	task.SessionID = "sess_task_run"
+	mgr.tasks[info.ID] = task
+	mgr.mu.Unlock()
+
+	if !mgr.IsTaskSession("sess_task_run") {
+		t.Fatal("expected the run session of a task to be recognised")
+	}
+	if mgr.IsTaskSession("sess_other") {
+		t.Fatal("expected another session to be ignored")
+	}
+}

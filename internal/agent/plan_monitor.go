@@ -34,6 +34,9 @@ type PlanMonitor struct {
 	interval        time.Duration
 	staleAfter      time.Duration
 	notifiers       map[string]PlanNotificationFunc
+	// unattendedSession reports whether a session belongs to an autonomous
+	// run log (a scheduled task), where no person is waiting on the plan.
+	unattendedSession func(sessionID string) bool
 }
 
 func (pm *PlanMonitor) config() config.Config {
@@ -56,6 +59,23 @@ func NewPlanMonitor(cfg *config.Manager, client *ollama.Client, memoryStore *mem
 		staleAfter:      defaultPlanStaleAfter,
 		notifiers:       make(map[string]PlanNotificationFunc),
 	}
+}
+
+// SetUnattendedSessionChecker installs the lookup that identifies sessions
+// created for autonomous runs (scheduled tasks). Plans left inside those
+// sessions belong to nobody, so the monitor must never resume them: it would
+// retry the same step forever against a person who will never answer.
+func (pm *PlanMonitor) SetUnattendedSessionChecker(fn func(sessionID string) bool) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.unattendedSession = fn
+}
+
+func (pm *PlanMonitor) isUnattendedSession(sessionID string) bool {
+	pm.mu.RLock()
+	fn := pm.unattendedSession
+	pm.mu.RUnlock()
+	return fn != nil && fn(sessionID)
 }
 
 func (pm *PlanMonitor) SetApprovalService(service *sessions.ApprovalService) {
@@ -166,6 +186,11 @@ func (pm *PlanMonitor) Tick(ctx context.Context) {
 		if plan == nil || plan.Completed >= len(plan.Steps) {
 			continue
 		}
+		if pm.isUnattendedSession(meta.ID) {
+			// A scheduled run logs into its own session; a plan there was
+			// auto-approved by the run itself and no person is waiting on it.
+			continue
+		}
 		reason := ""
 		switch plan.Status {
 		case sessions.PlanStatusDeferred:
@@ -270,6 +295,8 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	registry.SetSessionsPath(pm.config().SessionsPath)
 	registry.SetApprovalService(pm.approvalService)
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	// The resume runs with nobody watching: it must execute the step, not ask.
+	registry.SetUnattended(true)
 	registry.SetPlanProgressHandler(func(id string, plan sessions.SessionPlan) {
 		pm.notify(id, plan, sessions.FormatPlanProgressShort(plan))
 	})
@@ -325,4 +352,3 @@ func rawMessagesToOllama(rawMessages []json.RawMessage) []ollama.Message {
 	}
 	return out
 }
-

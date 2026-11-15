@@ -169,6 +169,9 @@ func run(args []string) error {
 		schedulerMgr := scheduler.NewManager(cfgMgr, client, ms, mcpMgr)
 		schedulerMgr.Start(ctx)
 		defer schedulerMgr.Stop()
+		// Plans inside a task's run session belong to no one: a scheduled run
+		// approves its own plan, so the monitor must never resume it.
+		planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
 
 		// Warm up skills embeddings in the background on startup
 		if skillsPath := cfgMgr.Get().SkillsPath; skillsPath != "" {
@@ -426,6 +429,9 @@ func runServe(args []string, cfg *config.Manager, client *ollama.Client, runner 
 	schedulerMgr := scheduler.NewManager(cfg, client, ms, mcpMgr)
 	schedulerMgr.Start(context.Background())
 	defer schedulerMgr.Stop()
+	// Plans inside a task's run session belong to no one: a scheduled run
+	// approves its own plan, so the monitor must never resume it.
+	planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
 
 	// Warm up skills embeddings in the background on startup
 	if skillsPath := cfg.Get().SkillsPath; skillsPath != "" {

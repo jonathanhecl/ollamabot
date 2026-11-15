@@ -80,6 +80,7 @@ type Registry struct {
 	schedulerService        SchedulerService
 	scheduledAlertHandler   func(string)
 	channel                 string
+	unattended              bool
 	targetChatID            int64
 	telegramBotToken        string
 	telegramAuthorizedIDs   []string
@@ -1372,7 +1373,12 @@ func (r *Registry) Definitions() []ollama.Tool {
 	// tools there. send_files especially: the device cannot receive files, and
 	// a model that keeps calling it stalls the whole turn in the loop guard.
 	dropDeviceTools := r.channel == "device"
-	if !dropPlan && !dropDeviceTools {
+	// An unattended turn (scheduled task, background loop, plan resume) has
+	// nobody to ask either. A question there fails or is answered by a timer,
+	// and a plan is auto-approved and stored as an active plan no one will
+	// ever review, which the plan monitor then retries forever.
+	dropUnattendedTools := r.unattended
+	if !dropPlan && !dropDeviceTools && !dropUnattendedTools {
 		return r.defs
 	}
 	filtered := make([]ollama.Tool, 0, len(r.defs))
@@ -1384,6 +1390,12 @@ func (r *Registry) Definitions() []ollama.Tool {
 		if dropDeviceTools {
 			switch name {
 			case "ask_clarification", "present_plan", "send_voice", "send_files":
+				continue
+			}
+		}
+		if dropUnattendedTools {
+			switch name {
+			case "ask_clarification", "present_plan":
 				continue
 			}
 		}
@@ -1441,6 +1453,14 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			return "", fmt.Errorf("tool %q is not available on the device channel: put questions in the spoken reply and let the user answer by voice", name)
 		case "send_files":
 			return "", fmt.Errorf("tool %q is not available on the device channel: it has no way to receive files", name)
+		}
+	}
+	if r.unattended {
+		// Nobody is present during a scheduled or background run: asking would
+		// block the turn and a plan would be approved by the run itself.
+		switch name {
+		case "ask_clarification", "present_plan":
+			return "", fmt.Errorf("tool %q is not available in an unattended run: nobody can answer it. Act on your best judgment and report the assumption in your final answer", name)
 		}
 	}
 

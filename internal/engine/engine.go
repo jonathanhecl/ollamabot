@@ -59,9 +59,14 @@ type Deps struct {
 	ApprovalService         *sessions.ApprovalService
 	ClarificationHandler    tools.ClarificationHandler
 	PlanConfirmationHandler tools.PlanConfirmationHandler
-	StreamHandlerFactory    StreamHandlerFactory
-	ImageProgressFactory    ImageProgressHandlerFactory
-	AttachmentFactory       AttachmentHandlerFactory
+	// Unattended marks a run with nobody able to answer: a scheduled task, a
+	// background loop or a plan resume. Interactive tools (ask_clarification,
+	// present_plan) are removed so the turn cannot block on a person who is
+	// not there, and so it never auto-approves a plan of its own.
+	Unattended           bool
+	StreamHandlerFactory StreamHandlerFactory
+	ImageProgressFactory ImageProgressHandlerFactory
+	AttachmentFactory    AttachmentHandlerFactory
 
 	OnSleepActivity  func()
 	OnMediaResolved  func(router.ResolveResult)
@@ -316,6 +321,7 @@ func BuildRegistry(deps Deps, sessionID string, recorder *sessions.Recorder) *to
 	registry.SetSessionsPath(cfg.SessionsPath)
 	registry.SetSessionID(sessionID)
 	registry.SetSessionStore(deps.SessionStore)
+	registry.SetUnattended(deps.Unattended)
 	registry.SetApprovalProgressHandler(recorder)
 	if deps.SessionStore != nil && strings.TrimSpace(sessionID) != "" {
 		if sess, err := deps.SessionStore.Get(sessionID); err == nil && sessions.IsAutonomousSession(sess) {
