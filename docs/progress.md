@@ -1653,3 +1653,14 @@ A 1-second voice clip produced a runaway `sounds` loop ("p, t, r, d, ...") that 
 - Retries go up to 3 attempts; retries add temperature and `repeat_penalty` so the temperature-0 loop is not replayed.
 - The raw-text fallback no longer applies to broken JSON or degenerate text; if every attempt fails the audio is marked unreadable instead of injecting garbage.
 - Tests: degenerate detection, retry after a looping attempt, length-truncated output, no fallback for broken JSON.
+
+## 2026-11-15 — Forced runs: execute a scheduled task on demand
+
+A scheduled task could only prove itself at its scheduled time. Now it can be run on demand, with the real pipeline, so the user can verify what it does before trusting it:
+
+- `internal/scheduler`: `RunScheduledTaskNow(id)` forces a run of any task, ignoring its schedule and its paused/completed state. The run is the real one: same instruction, same tools, same model, same delivery channels and the same deny-all approval handler as an unattended run. A manual run records `last_run_at`, `run_count` and the observation (so the next scheduled run keeps its continuity) but never advances `next_run_at` and never completes or fails the task.
+- Manual runs execute on the interactive slot instead of the background one: the background slot refuses to start while a user turn is open, which is exactly when the request arrives. They hang off the manager context, so the run survives the tool or HTTP call that asked for it.
+- `runTask` / `recordRun` replaced the two copies of the post-run bookkeeping (`finishAgentRun` and `updateAfterRun`) and the outcome of each run is now returned, so a caller can read what the run produced.
+- `internal/tools`: new `schedule_run` tool with `task_id` and `wait_seconds` (default 90, max 300, `0` = fire and forget). In the same turn it returns the delivered text, the last observation, the run duration and the untouched next run; for `on_alert` tasks with nothing to report it states that the user would not have been notified. The tool timeout scales with the wait window so the handler reports the outcome instead of dying on the default 60s.
+- `schedule_list` points to `schedule_run` for immediate execution.
+- Tests: forced reminder keeps its schedule and still notifies, forced run of a paused task does not resume it, failed run records the error without touching schedule or status, concurrent run and unknown ID are rejected; tool output for real output, silent-without-alert, failure and a run that outlives the wait window.

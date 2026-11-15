@@ -1578,6 +1578,17 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		// Speech synthesis may include a cold model load on the Ollama host.
 		timeoutSec = 180
 	}
+	if name == "schedule_run" {
+		// A forced run waits for the real task to finish; give it room past the
+		// caller's wait window so the tool can report the outcome itself instead
+		// of dying on the default timeout.
+		if t := toInt(args["wait_seconds"]); t > 0 {
+			if t > maxManualRunWaitSeconds {
+				t = maxManualRunWaitSeconds
+			}
+			timeoutSec = t + 15
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
@@ -2867,6 +2878,8 @@ func (r *Registry) execute(ctx context.Context, name string, args map[string]any
 		return r.executeScheduleDelete(args)
 	case "schedule_cancel":
 		return r.executeScheduleCancel(args)
+	case "schedule_run":
+		return r.executeScheduleRun(ctx, args)
 	case "send_scheduled_alert":
 		return r.executeSendScheduledAlert(args)
 	case "send_telegram":

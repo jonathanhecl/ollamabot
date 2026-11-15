@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -11,7 +12,14 @@ import (
 )
 
 type mockSchedulerService struct {
-	tasks []ScheduledTaskInfo
+	tasks  []ScheduledTaskInfo
+	manual *mockManualRun
+}
+
+// mockManualRun scripts the outcome of a forced run.
+type mockManualRun struct {
+	outcome ManualRunOutcome
+	hold    bool // never deliver the outcome: the run keeps going
 }
 
 func (m *mockSchedulerService) CreateScheduledTask(spec ScheduledTaskSpec) (ScheduledTaskInfo, error) {
@@ -84,6 +92,40 @@ func (m *mockSchedulerService) RelatedTasks(query string, queryEmbedding []float
 
 func (m *mockSchedulerService) CancelTask(id string) error {
 	return m.DeleteScheduledTask(id)
+}
+
+func (m *mockSchedulerService) RunScheduledTaskNow(id string) (<-chan ManualRunOutcome, ScheduledTaskInfo, error) {
+	var info ScheduledTaskInfo
+	found := false
+	for _, t := range m.tasks {
+		if t.ID == id {
+			info = t
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, ScheduledTaskInfo{}, fmt.Errorf("task %q not found", id)
+	}
+
+	out := make(chan ManualRunOutcome, 1)
+	hold := m.manual != nil && m.manual.hold
+	switch {
+	case hold:
+		// The run never delivers: the caller has to time out.
+	case m.manual != nil:
+		outcome := m.manual.outcome
+		if outcome.Info.ID == "" {
+			outcome.Info = info
+		}
+		out <- outcome
+	default:
+		out <- ManualRunOutcome{Info: info, Answer: "The run produced an answer."}
+	}
+	if !hold {
+		close(out)
+	}
+	return out, info, nil
 }
 
 func TestSchedulerTools(t *testing.T) {
@@ -252,4 +294,123 @@ type denyApprovalHandler struct{}
 
 func (denyApprovalHandler) RequestApproval(ctx context.Context, toolName string, args map[string]any) (bool, error) {
 	return false, nil
+}
+
+func newSchedulerRunRegistry(t *testing.T, mock *mockSchedulerService) *Registry {
+	t.Helper()
+	r := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	r.SetSchedulerService(mock)
+	return r
+}
+
+func TestScheduleRunReportsTheRealOutcome(t *testing.T) {
+	mock := &mockSchedulerService{
+		tasks: []ScheduledTaskInfo{{
+			ID:             "task_news",
+			Type:           "agent_task",
+			Title:          "News watch",
+			Prompt:         "Check for news about X",
+			NotifyChannels: []string{"web", "telegram"},
+			NotifyMode:     "always",
+			SessionID:      "sess_run",
+			Status:         "pending",
+			NextRunAt:      time.Date(2026, 11, 16, 9, 0, 0, 0, time.Local),
+		}},
+		manual: &mockManualRun{outcome: ManualRunOutcome{
+			Answer:   "Nothing major happened today.",
+			Duration: 12 * time.Second,
+		}},
+	}
+	r := newSchedulerRunRegistry(t, mock)
+
+	res, err := r.execute(context.Background(), "schedule_run", map[string]any{"task_id": "task_news"})
+	if err != nil {
+		t.Fatalf("schedule_run failed: %v", err)
+	}
+	for _, want := range []string{"finished in 12s", "Nothing major happened today.", "sess_run", "web, telegram", "next run: 2026-11-16 09:00", "schedule was not changed"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("output missing %q:\n%s", want, res)
+		}
+	}
+}
+
+func TestScheduleRunExplainsSilentRunWithoutAlert(t *testing.T) {
+	mock := &mockSchedulerService{
+		tasks: []ScheduledTaskInfo{{
+			ID:             "task_silent",
+			Type:           "agent_task",
+			Title:          "Silent watch",
+			Prompt:         "Only tell me if something breaks",
+			NotifyChannels: []string{"web"},
+			NotifyMode:     "on_alert",
+			Status:         "pending",
+		}},
+		manual: &mockManualRun{outcome: ManualRunOutcome{Answer: "All quiet."}},
+	}
+	r := newSchedulerRunRegistry(t, mock)
+
+	res, err := r.execute(context.Background(), "schedule_run", map[string]any{"task_id": "task_silent"})
+	if err != nil {
+		t.Fatalf("schedule_run failed: %v", err)
+	}
+	if !strings.Contains(res, "would NOT have received a message") {
+		t.Errorf("silent run must state that nothing was delivered:\n%s", res)
+	}
+	if !strings.Contains(res, "All quiet.") {
+		t.Errorf("output should include the run report:\n%s", res)
+	}
+}
+
+func TestScheduleRunReportsFailure(t *testing.T) {
+	mock := &mockSchedulerService{
+		tasks: []ScheduledTaskInfo{{
+			ID:             "task_broken",
+			Type:           "agent_task",
+			Title:          "Broken task",
+			Prompt:         "Do something",
+			NotifyChannels: []string{"web"},
+			Status:         "pending",
+		}},
+		manual: &mockManualRun{outcome: ManualRunOutcome{Err: "no default model configured"}},
+	}
+	r := newSchedulerRunRegistry(t, mock)
+
+	res, err := r.execute(context.Background(), "schedule_run", map[string]any{"task_id": "task_broken"})
+	if err != nil {
+		t.Fatalf("schedule_run failed: %v", err)
+	}
+	if !strings.Contains(res, "FAILED") || !strings.Contains(res, "no default model configured") {
+		t.Errorf("failure must be reported with its reason:\n%s", res)
+	}
+}
+
+func TestScheduleRunWithoutWaitReturnsImmediately(t *testing.T) {
+	mock := &mockSchedulerService{
+		tasks: []ScheduledTaskInfo{{
+			ID:             "task_slow",
+			Type:           "agent_task",
+			Title:          "Slow task",
+			Prompt:         "Take your time",
+			NotifyChannels: []string{"web"},
+			Status:         "pending",
+		}},
+		manual: &mockManualRun{hold: true},
+	}
+	r := newSchedulerRunRegistry(t, mock)
+
+	start := time.Now()
+	res, err := r.execute(context.Background(), "schedule_run", map[string]any{"task_id": "task_slow", "wait_seconds": 1})
+	if err != nil {
+		t.Fatalf("schedule_run failed: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 900*time.Millisecond {
+		t.Errorf("returned after %v without waiting for the window", elapsed)
+	}
+	if !strings.Contains(res, "keeps running") {
+		t.Errorf("slow run must report that it keeps running:\n%s", res)
+	}
+
+	if _, err := r.execute(context.Background(), "schedule_run", map[string]any{"task_id": "unknown"}); err == nil {
+		t.Error("expected an unknown task to fail")
+	}
 }
