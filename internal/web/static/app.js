@@ -3519,7 +3519,6 @@ function removeQueuedMessage(queueId) {
       } else {
         els.prompt.value = removed.content;
       }
-      autoResizePrompt();
     }
     if (removed.attachments && removed.attachments.length > 0) {
       state.attachments = [...state.attachments, ...removed.attachments];
