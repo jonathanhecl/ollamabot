@@ -3,13 +3,19 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
+	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
@@ -423,13 +429,15 @@ func TestManager_ForcedRunOfReminderKeepsSchedule(t *testing.T) {
 		t.Fatalf("forced run failed: %s", outcome.Err)
 	}
 
+	// The requester asked for the run from a chat: the reminder comes back in
+	// the outcome and the task's channels are not touched.
+	if !strings.Contains(outcome.Answer, "Drink water") {
+		t.Fatalf("outcome = %q, want the reminder text", outcome.Answer)
+	}
 	select {
 	case msg := <-notified:
-		if !strings.Contains(msg, "Drink water") {
-			t.Fatalf("unexpected reminder %q", msg)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the reminder")
+		t.Fatalf("a forced run must not notify the task channels, got %q", msg)
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	after, err := mgr.GetTask(info.ID)
@@ -475,9 +483,9 @@ func TestManager_ForcedRunOfPausedTaskRunsWithoutResuming(t *testing.T) {
 	waitOutcome(t, outCh)
 
 	select {
-	case <-notified:
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for the reminder")
+	case msg := <-notified:
+		t.Fatalf("a forced run of a paused task must not notify, got %q", msg)
+	case <-time.After(200 * time.Millisecond):
 	}
 
 	after, err := mgr.GetTask(info.ID)
@@ -541,6 +549,132 @@ func TestManager_ForcedRunOfAgentTaskKeepsScheduleOnFailure(t *testing.T) {
 	if after.LastError == "" {
 		t.Fatal("expected the failure to be recorded")
 	}
+}
+
+// The prompt has to state what the run cannot do: a scheduled run writes the
+// report, it does not deliver it and it does not manage other tasks. A model
+// that plans to "send it to web and telegram" stalls or fails.
+func TestScheduledTaskPromptStatesDeliveryIsAutomatic(t *testing.T) {
+	prompt := scheduledTaskSystemPrompt(Task{Type: TaskTypeAgentTask, Prompt: "Summarise the news"})
+
+	for _, want := range []string{"final answer IS the delivery", "Never try to send it yourself", "do not create, modify or run scheduled tasks"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("scheduled task prompt must contain %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A scheduled run must not keep the tool output of every previous run in its
+// context: the history grows without bound and the run ends up answering
+// nothing at all.
+func TestManager_ScheduledRunStartsWithAFreshContext(t *testing.T) {
+	sessionsPath := filepath.Join(t.TempDir(), "sessions")
+	if err := os.MkdirAll(sessionsPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessions.NewStore(sessionsPath)
+
+	var mu sync.Mutex
+	var bodies []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			raw, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			bodies = append(bodies, string(raw))
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Digest ready."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		SessionsPath:       sessionsPath,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	})
+	mgr.sessionStore = store
+	mgr.client = ollama.NewClient(server.URL)
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Title:   "Digest",
+		Prompt:  "Summarise the news",
+		When:    "0 */6 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runOnce := func() {
+		outCh, _, err := mgr.RunScheduledTaskNow(info.ID)
+		if err != nil {
+			t.Fatalf("forced run rejected: %v", err)
+		}
+		waitOutcome(t, outCh)
+	}
+	runOnce()
+
+	task, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(task.SessionID) == "" {
+		t.Fatal("the run must log into a session")
+	}
+
+	// Simulate what a previous run leaves behind: a wall of tool output.
+	sess, err := store.Get(task.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := json.Marshal(sessions.RawMsg{
+		Role:    "assistant",
+		Content: "OLD-RUN-TOOL-OUTPUT " + strings.Repeat("arxiv entry ", 200),
+	})
+	sess.Messages = append(sess.Messages, stale)
+	if err := store.Save(sess); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	bodies = nil
+	mu.Unlock()
+
+	runOnce()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) == 0 {
+		t.Fatal("the second run never called the model")
+	}
+	for _, body := range bodies {
+		if strings.Contains(body, "OLD-RUN-TOOL-OUTPUT") {
+			t.Fatalf("the run reloaded the history of a previous run into its context:\n%s", truncateForTest(body))
+		}
+		if !strings.Contains(body, "Summarise the news") {
+			t.Fatalf("the run lost its own instruction:\n%s", truncateForTest(body))
+		}
+	}
+}
+
+func truncateForTest(s string) string {
+	if len(s) > 600 {
+		return s[:600] + "…"
+	}
+	return s
 }
 
 func TestManager_ForcedRunRejectsWhileRunning(t *testing.T) {

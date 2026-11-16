@@ -382,6 +382,13 @@ func TestScheduleRunReportsFailure(t *testing.T) {
 	if !strings.Contains(res, "FAILED") || !strings.Contains(res, "no default model configured") {
 		t.Errorf("failure must be reported with its reason:\n%s", res)
 	}
+	// The failure must be actionable: a failed task is the agent's job to fix,
+	// not only to relay.
+	for _, want := range []string{"session_read", "schedule_update", "schedule_run again"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("failure guidance must mention %q:\n%s", want, res)
+		}
+	}
 }
 
 func TestScheduleRunWithoutWaitReturnsImmediately(t *testing.T) {

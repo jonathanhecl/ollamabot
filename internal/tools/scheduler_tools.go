@@ -265,7 +265,7 @@ func (r *Registry) SetSchedulerService(sm SchedulerService) {
 		Type: "function",
 		Function: ollama.ToolDefinition{
 			Name:        "schedule_run",
-			Description: "Run a scheduled reminder or task right now, ignoring its schedule and its paused/completed state. Use it whenever the user asks to execute, test or verify a scheduled task immediately ('run it now', 'does it work?', 'show me how it would work'): the run is the real one, with the same instruction, tools, model and delivery channels, so whatever arrives is what the user would get at the scheduled time. The next scheduled run stays exactly where it was, and the run is recorded as the last observation. Without wait_seconds it returns immediately and the result arrives through the task's channels; with wait_seconds it also returns the actual output in the same turn. Do not use it to create or change a task.",
+			Description: "Run a scheduled reminder or task right now, ignoring its schedule and its paused/completed state. Use it whenever the user asks to execute, test or verify a scheduled task immediately ('run it now', 'does it work?', 'show me how it would work'): the run is the real one, with the same instruction, tools and model, so the output it produces is exactly what the user would get. The run is recorded in the task's run session and returned here instead of being delivered to the task's channels, because the user is already talking to you; the result says what a scheduled run would have sent. The next scheduled run stays exactly where it was. If the run fails, do not just relay the error: read the run session, find the cause, correct the task with schedule_update, and call schedule_run again to verify the fix. Do not use it to create or change a task.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -732,15 +732,22 @@ func describeManualRun(started ScheduledTaskInfo, outcome ManualRunOutcome, chan
 	var sb strings.Builder
 	if outcome.Err != "" {
 		fmt.Fprintf(&sb, "The forced run of task %q FAILED after %s.\nError: %s\n", title, outcome.Duration.Round(time.Second), outcome.Err)
-		sb.WriteString("A scheduled run would fail the same way. The failure notice was sent to: " + channels + ".\n")
-		fmt.Fprintf(&sb, "The schedule was not changed (next run: %s). Status stays %q. Explain the failure and what to fix.",
+		fmt.Fprintf(&sb, "Type: %s\nLog session: %s\n\n", manualRunTypeLabel(info), info.SessionID)
+		sb.WriteString("A scheduled run would fail the same way, so this is the task to fix, not only a result to report.\n")
+		sb.WriteString("Diagnose it and correct it:\n")
+		fmt.Fprintf(&sb, "1. Open the log session with session_read (%s): the error above is how the turn ended, the session shows which tool calls led there.\n", info.SessionID)
+		sb.WriteString("2. Name the cause: an instruction the model cannot follow, a source that times out or returns a format the run cannot parse, a prompt too long for the context, or a step that needs a person. Simplify or split the instruction, narrow the sources, or shorten the prompt with schedule_update.\n")
+		sb.WriteString("3. Call schedule_run again to prove the fix. Repeat once more if it still fails.\n")
+		sb.WriteString("4. Then tell the user what broke, what you changed and what the run now produces.\n\n")
+		fmt.Fprintf(&sb, "The schedule was not changed (next run: %s) and the status stays %q.",
 			nextRun, info.Status)
 		return sb.String()
 	}
 
-	fmt.Fprintf(&sb, "The forced run of task %q finished in %s. This was a real run: same instruction, same tools, same model, same channels.\n",
+	fmt.Fprintf(&sb, "The forced run of task %q finished in %s. This was a real run: same instruction, same tools, same model.\n",
 		title, outcome.Duration.Round(time.Second))
-	fmt.Fprintf(&sb, "Type: %s\nChannels: %s\nLog session: %s\n\n", manualRunTypeLabel(info), channels, info.SessionID)
+	fmt.Fprintf(&sb, "Type: %s\nRecorded in session: %s\n", manualRunTypeLabel(info), info.SessionID)
+	fmt.Fprintf(&sb, "The task's channels (%s) were left quiet because the user asked for this run from the chat: what follows is what a scheduled run would have delivered.\n\n", channels)
 
 	answer := strings.TrimSpace(outcome.Answer)
 	switch {

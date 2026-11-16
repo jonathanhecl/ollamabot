@@ -86,6 +86,12 @@ type TurnRequest struct {
 	// slot. Used by the scheduler so autonomous runs never compete with the
 	// user for the model.
 	Background bool
+	// FreshContext ignores the stored history and runs only with the messages
+	// given here, while still recording the turn into the session. A scheduled
+	// task needs its instruction and its last observation, not every tool output
+	// of every previous run: that history grows without bound and eventually
+	// fills the context until the run answers nothing at all.
+	FreshContext bool
 }
 
 // ErrBackgroundBusy reports that another background loop is already running.
@@ -192,7 +198,7 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	}
 
 	baseHistory := req.BaseHistory
-	if len(baseHistory) == 0 && deps.SessionStore != nil && strings.TrimSpace(req.SessionID) != "" {
+	if len(baseHistory) == 0 && !req.FreshContext && deps.SessionStore != nil && strings.TrimSpace(req.SessionID) != "" {
 		baseHistory = LoadSessionRawMessages(deps.SessionStore, req.SessionID)
 	}
 	if deps.SessionStore != nil && strings.TrimSpace(req.SessionID) != "" && len(mediaRes.Attachments) > 0 {

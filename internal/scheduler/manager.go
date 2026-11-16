@@ -49,8 +49,10 @@ type Manager struct {
 
 const scheduledTaskSystemPromptBase = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
 Use your available tools (web search, MCP tools, memory, files, etc.) to accomplish the task thoroughly.
+Your final answer IS the delivery: it is sent to the user as the task report. Never try to send it yourself, and ignore any step of the instruction that asks you to; delivery happens automatically on every configured channel.
+Work in one pass: fetch what you need, keep the tool output you ask for small, extract the relevant parts, then write the report. Do not build a plan, do not ask for confirmation, and do not create, modify or run scheduled tasks from inside a run.
 When finished, write a self-contained report the user can read without any other context: the answer first, then the key details.
-Do not ask questions and do not wait for confirmation; nobody will reply. If something is impossible, say exactly what failed.`
+If a source fails or something is impossible, say exactly what failed and still deliver what you did get.`
 
 // scheduledTaskSystemPrompt adds the silent-monitoring contract and the
 // previous observation so the model can decide whether something is new.
@@ -806,7 +808,11 @@ func (m *Manager) runTask(ctx context.Context, task Task, manual bool) runOutcom
 	if task.Type == TaskTypeAlert {
 		msg := fmt.Sprintf("⏰ **Reminder**: %s", task.Prompt)
 		m.recordRun(task, now, nil, manual, nil)
-		m.notify(task, msg)
+		if !manual {
+			// A forced run is asked for from a chat: the requester gets the
+			// reminder in the tool result, not on every channel of the task.
+			m.notify(task, msg)
+		}
 		return runOutcome{answer: msg}
 	}
 
@@ -888,6 +894,10 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		Channel:    "scheduler",
 		Background: !manual,
 		Messages:   messages,
+		// Each run starts from the task instruction and its last observation.
+		// Dragging the tool output of every previous run into the context makes
+		// the run slower and eventually unanswerable.
+		FreshContext: true,
 	})
 	if errors.Is(err, engine.ErrBackgroundBusy) {
 		// Another background loop (sleep, goal) is using the model. Leave the
@@ -924,9 +934,17 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 		return
 	}
 
+	if manual {
+		// The run was requested from a chat: its log stays in the run session and
+		// the requester reads the outcome from the tool result, so the task's
+		// channels (Telegram, web) are not spammed for a run nobody scheduled.
+		log.Printf("[scheduler] Forced run of task %s finished; channels left quiet", task.ID)
+		return
+	}
+
 	if runErr != nil {
 		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, runErr)
-		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed** (%s):\nError: %v", task.Prompt, runErr))
+		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed**\n**Task**: %s\n\nError: %v", deriveTaskTitle(current.Title, current.Prompt), runErr))
 		return
 	}
 
