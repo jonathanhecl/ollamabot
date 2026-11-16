@@ -734,6 +734,7 @@ func describeManualRun(started ScheduledTaskInfo, outcome ManualRunOutcome, chan
 		fmt.Fprintf(&sb, "The forced run of task %q FAILED after %s.\nError: %s\n", title, outcome.Duration.Round(time.Second), outcome.Err)
 		fmt.Fprintf(&sb, "Type: %s\nLog session: %s\n\n", manualRunTypeLabel(info), info.SessionID)
 		sb.WriteString("A scheduled run would fail the same way, so this is the task to fix, not only a result to report.\n")
+		sb.WriteString("Nothing is delivered on failure: the error is recorded on the task (last_error) and in the run session, and a scheduled run would stay just as quiet.\n")
 		sb.WriteString("Diagnose it and correct it:\n")
 		fmt.Fprintf(&sb, "1. Open the log session with session_read (%s): the error above is how the turn ended, the session shows which tool calls led there.\n", info.SessionID)
 		sb.WriteString("2. Name the cause: an instruction the model cannot follow, a source that times out or returns a format the run cannot parse, a prompt too long for the context, or a step that needs a person. Simplify or split the instruction, narrow the sources, or shorten the prompt with schedule_update.\n")
@@ -752,7 +753,7 @@ func describeManualRun(started ScheduledTaskInfo, outcome ManualRunOutcome, chan
 	answer := strings.TrimSpace(outcome.Answer)
 	switch {
 	case info.Type == "alert":
-		sb.WriteString("The user received this reminder:\n")
+		sb.WriteString("A scheduled run would send this reminder to the user:\n")
 		sb.WriteString(truncateRunes(answer, 2000))
 		sb.WriteString("\n")
 	case info.NotifyMode == "on_alert" && len(outcome.Alerts) == 0:
@@ -763,17 +764,18 @@ func describeManualRun(started ScheduledTaskInfo, outcome ManualRunOutcome, chan
 			sb.WriteString("\n")
 		}
 	case info.NotifyMode == "on_alert":
-		fmt.Fprintf(&sb, "Silent monitoring alerted the user with:\n%s\n", truncateRunes(strings.Join(outcome.Alerts, "\n\n"), 2000))
+		fmt.Fprintf(&sb, "Silent monitoring would have alerted the user with:\n%s\n", truncateRunes(strings.Join(outcome.Alerts, "\n\n"), 2000))
 		if answer != "" {
 			sb.WriteString("\nRun report:\n")
 			sb.WriteString(truncateRunes(answer, 2000))
 			sb.WriteString("\n")
 		}
 	default:
-		sb.WriteString("The user received this report:\n")
 		if answer == "" {
-			answer = "Task completed successfully with no additional output."
+			sb.WriteString("The run produced no output, so a scheduled run would have delivered nothing.\n")
+			break
 		}
+		sb.WriteString("A scheduled run would deliver the result alone, with no task header:\n")
 		sb.WriteString(truncateRunes(answer, 2500))
 		sb.WriteString("\n")
 	}

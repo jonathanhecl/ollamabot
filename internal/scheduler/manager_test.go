@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -667,6 +668,191 @@ func TestManager_ScheduledRunStartsWithAFreshContext(t *testing.T) {
 		if !strings.Contains(body, "Summarise the news") {
 			t.Fatalf("the run lost its own instruction:\n%s", truncateForTest(body))
 		}
+	}
+}
+
+// A scheduled run delivers its result and nothing else: no task header, no
+// restatement of the instruction, no run metadata.
+func TestManager_ScheduledRunDeliversOnlyTheResult(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_, _ = io.Copy(io.Discard, r.Body)
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Digest ready."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	})
+	mgr.client = ollama.NewClient(server.URL)
+
+	notified := make(chan string, 4)
+	mgr.RegisterNotifier("telegram", func(_ Task, message string) error {
+		notified <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:        "telegram",
+		Type:           "agent_task",
+		Title:          "Digest",
+		Prompt:         "Summarise the news",
+		When:           "0 */6 * * *",
+		NotifyChannels: []string{"telegram"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	res := mgr.runTask(context.Background(), task, false)
+	if res.err != nil {
+		t.Fatalf("scheduled run failed: %v", res.err)
+	}
+
+	select {
+	case msg := <-notified:
+		if msg != "Digest ready." {
+			t.Fatalf("delivered %q, want the result alone", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the result was never delivered")
+	}
+	select {
+	case extra := <-notified:
+		t.Fatalf("a second message was delivered: %q", extra)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// A failure is not pushed to the channels: it lives on the task and in the run
+// session, where the user and the agent read it.
+func TestManager_ScheduledRunFailureIsNotDelivered(t *testing.T) {
+	sessionsPath := filepath.Join(t.TempDir(), "sessions")
+	if err := os.MkdirAll(sessionsPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	store := sessions.NewStore(sessionsPath)
+
+	// The first run succeeds so the task gets its run session; the second one is
+	// then made to fail at the model.
+	var failNow atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+			return
+		}
+		if failNow.Load() {
+			http.Error(w, `{"error":"model runner has crashed"}`, http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.Copy(io.Discard, r.Body)
+		_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+			Done:    true,
+			Message: ollama.Message{Role: "assistant", Content: "Digest ready."},
+		})
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		SessionsPath:       sessionsPath,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	})
+	mgr.sessionStore = store
+	mgr.client = ollama.NewClient(server.URL)
+
+	notified := make(chan string, 4)
+	mgr.RegisterNotifier("telegram", func(_ Task, message string) error {
+		notified <- message
+		return nil
+	})
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel:        "telegram",
+		Type:           "agent_task",
+		Title:          "Digest",
+		Prompt:         "Summarise the news",
+		When:           "every 6h",
+		NotifyChannels: []string{"telegram"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runOnce := func() error {
+		task, err := mgr.GetTask(info.ID)
+		if err != nil {
+			return err
+		}
+		return mgr.runTask(context.Background(), task, false).err
+	}
+	if err := runOnce(); err != nil {
+		t.Fatalf("first run had to succeed: %v", err)
+	}
+	select {
+	case <-notified:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the first run delivered nothing")
+	}
+
+	failNow.Store(true)
+	if err := runOnce(); err == nil {
+		t.Fatal("the second run had to fail")
+	}
+
+	select {
+	case msg := <-notified:
+		t.Fatalf("a failure must not be delivered to the channels, got %q", msg)
+	case <-time.After(200 * time.Millisecond):
+	}
+
+	after, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(after.LastError) == "" {
+		t.Fatal("the cause must be recorded on the task")
+	}
+
+	// The failure has to be readable where the user and the agent look: the run
+	// session.
+	sess, err := store.Get(after.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var log strings.Builder
+	for _, raw := range sess.Messages {
+		var msg sessions.RawMsg
+		if err := json.Unmarshal(raw, &msg); err == nil {
+			log.WriteString(msg.Content)
+			log.WriteString("\n")
+		}
+	}
+	if !strings.Contains(log.String(), "Run failed") {
+		t.Fatalf("the run session must show the failure:\n%s", log.String())
 	}
 }
 

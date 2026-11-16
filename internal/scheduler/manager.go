@@ -934,6 +934,11 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 		return
 	}
 
+	if runErr != nil {
+		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, runErr)
+		m.logToRunSession(task, fmt.Sprintf("⚠️ **Run failed**\n\n%v", runErr))
+	}
+
 	if manual {
 		// The run was requested from a chat: its log stays in the run session and
 		// the requester reads the outcome from the tool result, so the task's
@@ -943,8 +948,10 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 	}
 
 	if runErr != nil {
-		log.Printf("[scheduler] Agent task %s failed: %v", task.ID, runErr)
-		m.notify(task, fmt.Sprintf("⚠️ **Scheduled Task Failed**\n**Task**: %s\n\nError: %v", deriveTaskTitle(current.Title, current.Prompt), runErr))
+		// What a task delivers is its result, not its state. The failure is
+		// recorded on the task (LastError) and in the run session, where the user
+		// reads it when opening the task and the agent reads it when asked, but it
+		// is not pushed to the task's channels.
 		return
 	}
 
@@ -958,11 +965,40 @@ func (m *Manager) finishAgentRun(task Task, now time.Time, runErr error, answer 
 		return
 	}
 
-	response := answer
+	// Only the result goes out: no task header, no restatement of the
+	// instruction, no run metadata. The user already knows which task this is.
+	response := strings.TrimSpace(answer)
 	if response == "" {
-		response = "Task completed successfully with no additional output."
+		log.Printf("[scheduler] Task %s finished with no output; nothing to deliver", task.ID)
+		return
 	}
-	m.notify(task, fmt.Sprintf("📋 **Scheduled Task Report**\n**Task**: %s\n\n%s", task.Prompt, response))
+	m.notify(task, response)
+}
+
+// logToRunSession appends a line to the task's run session so a failure stays
+// visible in the log the user opens and the agent can read back, without being
+// delivered to any channel.
+func (m *Manager) logToRunSession(task Task, text string) {
+	if m.sessionStore == nil || strings.TrimSpace(task.SessionID) == "" {
+		return
+	}
+	sess, err := m.sessionStore.Get(task.SessionID)
+	if err != nil {
+		return
+	}
+	raw, err := json.Marshal(sessions.RawMsg{
+		Role:      "assistant",
+		Content:   text,
+		Timestamp: time.Now().Format(time.RFC3339),
+	})
+	if err != nil {
+		return
+	}
+	sess.Messages = append(sess.Messages, raw)
+	if err := m.sessionStore.Save(sess); err != nil {
+		return
+	}
+	sessions.NotifyUpdate(task.SessionID)
 }
 
 // recordRun stores the outcome of a run and advances the schedule. It re-reads

@@ -1688,3 +1688,13 @@ Forcing a task from a chat delivered to every channel of the task and then faile
 - `internal/scheduler`: the scheduled prompt now says the final answer *is* the delivery, that the run must not send it and must not manage other tasks, and that it should work in one pass with small tool outputs. Task instructions often end with "send it to web and telegram", a step the run cannot perform and used to plan around.
 - `internal/tools`: a failed `schedule_run` now returns an explicit repair path — read the run session with `session_read`, name the cause, correct the instruction with `schedule_update`, run again with `schedule_run` to prove the fix — instead of asking the model to "explain the failure". The tool description states the same contract, and its success text says the channels were left quiet because the run was requested from the chat.
 - Tests: a forced reminder returns its text without touching the notifier, a forced run of a paused task stays silent, the scheduled prompt states the delivery contract, the failure output names the repair steps, and a second run of the same task never reloads the tool output of the first one.
+
+## 2026-11-15 — Task deliveries carry the result and nothing else
+
+Opening the task session showed the digest; Telegram showed the task's errors and a report whose heading was the whole instruction. A delivery is now the result: no task header, no restated prompt, no run metadata, and no failure notice.
+
+- `internal/scheduler`: a finished agent task delivers only its final answer (nothing when the run produced no output). Repeating the prompt in the message buried the result the user asked for.
+- `internal/scheduler`: a failed run is no longer pushed to the task's channels. It is recorded on the task (`last_error`, visible in the task list and through `schedule_list`) and appended to the run session, where the user reads it on opening the task and the agent reads it with `session_read`.
+- `internal/scheduler`: `logToRunSession` writes that line and wakes the web listeners, so the run log is the single place a failure lives — the tradeoff is that a task failing forever stays silent on Telegram until someone looks at the session.
+- `internal/tools`: `describeManualRun` says what a scheduled run *would* deliver instead of claiming it was delivered, and states that nothing goes out on failure.
+- Tests: a scheduled run delivers exactly its answer and nothing more, and a failed run notifies no channel while the run session shows the failure.
