@@ -17,7 +17,16 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/tools"
 )
 
-const defaultPlanStaleAfter = 10 * time.Minute
+const (
+	defaultPlanStaleAfter  = 10 * time.Minute
+	maxPlanMonitorAttempts = 3
+)
+
+type planAttemptState struct {
+	completed   int
+	failures    int
+	nextRetryAt time.Time
+}
 
 type PlanNotificationFunc func(sessionID string, plan sessions.SessionPlan, message string)
 
@@ -29,6 +38,7 @@ type PlanMonitor struct {
 	memoryStore     *memory.Store
 	approvalService *sessions.ApprovalService
 	isWorking       map[string]bool
+	attempts        map[string]planAttemptState
 	cancelFunc      context.CancelFunc
 	tickerDone      chan struct{}
 	interval        time.Duration
@@ -55,6 +65,7 @@ func NewPlanMonitor(cfg *config.Manager, client *ollama.Client, memoryStore *mem
 		memoryStore:     memoryStore,
 		approvalService: sessions.NewApprovalService(store, cfg),
 		isWorking:       make(map[string]bool),
+		attempts:        make(map[string]planAttemptState),
 		interval:        2 * time.Minute,
 		staleAfter:      defaultPlanStaleAfter,
 		notifiers:       make(map[string]PlanNotificationFunc),
@@ -210,11 +221,44 @@ func (pm *PlanMonitor) Tick(ctx context.Context) {
 		default:
 			continue
 		}
+		if pm.isInBackoff(meta.ID, plan.Completed, now) {
+			continue
+		}
 		if pm.tryStart(meta.ID) {
 			go pm.resumePlan(ctx, meta.ID, reason)
 			return
 		}
 	}
+}
+
+func (pm *PlanMonitor) isInBackoff(sessionID string, completed int, now time.Time) bool {
+	pm.mu.RLock()
+	st, ok := pm.attempts[sessionID]
+	pm.mu.RUnlock()
+	if !ok || st.completed != completed {
+		return false
+	}
+	return now.Before(st.nextRetryAt)
+}
+
+func (pm *PlanMonitor) clearAttempt(sessionID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	delete(pm.attempts, sessionID)
+}
+
+func (pm *PlanMonitor) recordFailure(sessionID string, completed int, now time.Time) int {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	st := pm.attempts[sessionID]
+	if st.completed != completed {
+		st = planAttemptState{completed: completed}
+	}
+	st.failures++
+	backoff := pm.staleAfter * time.Duration(st.failures)
+	st.nextRetryAt = now.Add(backoff)
+	pm.attempts[sessionID] = st
+	return st.failures
 }
 
 func (pm *PlanMonitor) tryStart(sessionID string) bool {
@@ -321,11 +365,33 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 			log.Printf("[PlanMonitor] agent run for session %s failed: %v", sessionID, err)
 			pm.notify(sessionID, plan, fmt.Sprintf("Plan monitor error: %v", err))
 		}
+		pm.handleResumeOutcome(sessionID, plan, current)
 		return
 	}
 	if _, err := recorder.FinalizeAndSave(finalHistory); err != nil {
 		log.Printf("[PlanMonitor] save final history for %s: %v", sessionID, err)
 	}
+	pm.handleResumeOutcome(sessionID, plan, current)
+}
+
+func (pm *PlanMonitor) handleResumeOutcome(sessionID string, prevPlan sessions.SessionPlan, current int) {
+	sess, err := pm.sessionStore.Get(sessionID)
+	if err == nil && (sess.ActivePlan == nil || sess.ActivePlan.Status != sessions.PlanStatusActive || sess.ActivePlan.Completed > prevPlan.Completed) {
+		pm.clearAttempt(sessionID)
+		return
+	}
+	failures := pm.recordFailure(sessionID, prevPlan.Completed, time.Now())
+	if failures < maxPlanMonitorAttempts {
+		return
+	}
+	reason := fmt.Sprintf("paused after %d consecutive resume attempts without progress on step %d/%d", failures, current, len(prevPlan.Steps))
+	if _, pauseErr := sessions.PauseActivePlan(pm.sessionStore, sessionID, reason); pauseErr != nil {
+		log.Printf("[PlanMonitor] pause stalled plan %s: %v", sessionID, pauseErr)
+		return
+	}
+	log.Printf("[PlanMonitor] %s (%s)", reason, sessionID)
+	pm.notify(sessionID, prevPlan, fmt.Sprintf("Plan monitor paused after %d attempts without progress on step %d/%d", failures, current, len(prevPlan.Steps)))
+	pm.clearAttempt(sessionID)
 }
 
 func rawMessagesToOllama(rawMessages []json.RawMessage) []ollama.Message {

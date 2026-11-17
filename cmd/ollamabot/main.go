@@ -164,14 +164,14 @@ func run(args []string) error {
 		defer autoMgr.Stop()
 		planMonitor := agent.NewPlanMonitor(cfgMgr, client, ms)
 		planMonitor.SetApprovalService(approvalService)
+		schedulerMgr := scheduler.NewManager(cfgMgr, client, ms, mcpMgr)
+		// Wire the unattended-session checker before starting PlanMonitor so
+		// ResumeActivePlans cannot race and resume a task session on startup.
+		planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
 		planMonitor.Start(ctx)
 		defer planMonitor.Stop()
-		schedulerMgr := scheduler.NewManager(cfgMgr, client, ms, mcpMgr)
 		schedulerMgr.Start(ctx)
 		defer schedulerMgr.Stop()
-		// Plans inside a task's run session belong to no one: a scheduled run
-		// approves its own plan, so the monitor must never resume it.
-		planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
 
 		// Warm up skills embeddings in the background on startup
 		if skillsPath := cfgMgr.Get().SkillsPath; skillsPath != "" {
@@ -418,8 +418,6 @@ func runServe(args []string, cfg *config.Manager, client *ollama.Client, runner 
 	defer autoMgr.Stop()
 	planMonitor := agent.NewPlanMonitor(cfg, client, ms)
 	planMonitor.SetApprovalService(approvalService)
-	planMonitor.Start(context.Background())
-	defer planMonitor.Stop()
 	mcpMgr := mcp.NewManager("mcp_config.json")
 	if err := mcpMgr.Start(context.Background()); err != nil {
 		log.Printf("[MCP] Warning: failed to start MCP manager: %v", err)
@@ -427,11 +425,13 @@ func runServe(args []string, cfg *config.Manager, client *ollama.Client, runner 
 	defer mcpMgr.Stop()
 
 	schedulerMgr := scheduler.NewManager(cfg, client, ms, mcpMgr)
+	// Wire the unattended-session checker before starting PlanMonitor so
+	// ResumeActivePlans cannot race and resume a task session on startup.
+	planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
+	planMonitor.Start(context.Background())
+	defer planMonitor.Stop()
 	schedulerMgr.Start(context.Background())
 	defer schedulerMgr.Stop()
-	// Plans inside a task's run session belong to no one: a scheduled run
-	// approves its own plan, so the monitor must never resume it.
-	planMonitor.SetUnattendedSessionChecker(schedulerMgr.IsTaskSession)
 
 	// Warm up skills embeddings in the background on startup
 	if skillsPath := cfg.Get().SkillsPath; skillsPath != "" {

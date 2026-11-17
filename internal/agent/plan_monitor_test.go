@@ -195,3 +195,89 @@ func TestPlanMonitorSkipsUnattendedSession(t *testing.T) {
 		t.Fatalf("expected the unattended plan to stay untouched, got %#v", loaded.ActivePlan)
 	}
 }
+
+func TestPlanMonitorPausesStalledPlanAfterMaxAttempts(t *testing.T) {
+	sessionsPath := t.TempDir()
+	memoryPath := t.TempDir()
+
+	store := sessions.NewStore(sessionsPath)
+	sess := sessions.Session{ID: "plan-monitor-stall", Title: "Stall", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	plan, err := sessions.ActivatePlan(store, sess.ID, "Stuck work", []string{"Step 1"})
+	if err != nil {
+		t.Fatalf("ActivatePlan: %v", err)
+	}
+	plan.LastProgressAt = time.Now().Add(-time.Hour)
+	sess, err = store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	sess.ActivePlan = &plan
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save active plan: %v", err)
+	}
+
+	chatCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/show" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+			return
+		}
+		if r.URL.Path == "/api/chat" {
+			chatCalls++
+			http.Error(w, "upstream error", http.StatusInternalServerError)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		Workspace:          t.TempDir(),
+		SessionsPath:       sessionsPath,
+		MemoryPath:         memoryPath,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+		PlanConfirmation:   "smart",
+	}
+	pm := NewPlanMonitor(config.NewManager(cfg), ollama.NewClient(server.URL), memory.NewStore(memoryPath))
+	pm.staleAfter = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	for i := 0; i < maxPlanMonitorAttempts; i++ {
+		pm.Tick(ctx)
+		deadline := time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			pm.mu.RLock()
+			working := pm.isWorking[sess.ID]
+			pm.mu.RUnlock()
+			if !working && chatCalls >= i+1 {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	loaded, err := store.Get(sess.ID)
+	if err != nil {
+		t.Fatalf("load session: %v", err)
+	}
+	if loaded.ActivePlan == nil || loaded.ActivePlan.Status != sessions.PlanStatusDeferred || loaded.ActivePlan.DeferredUntil != nil {
+		t.Fatalf("expected stalled plan to be paused indefinitely, got %#v", loaded.ActivePlan)
+	}
+
+	callsBeforeExtraTick := chatCalls
+	pm.Tick(ctx)
+	time.Sleep(100 * time.Millisecond)
+	if chatCalls != callsBeforeExtraTick {
+		t.Fatalf("expected no further model calls after plan paused, got %d -> %d", callsBeforeExtraTick, chatCalls)
+	}
+}
