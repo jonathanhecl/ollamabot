@@ -406,6 +406,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		registry.SetSessionsPath(g.config().SessionsPath)
 		registry.SetApprovalService(g.approvalService)
 		registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+		registry.SetUnattended(true)
 
 		a := NewAgent(g.cfgMgr, g.client, registry)
 
@@ -457,6 +458,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				registry.SetSessionsPath(g.config().SessionsPath)
 				registry.SetApprovalService(g.approvalService)
 				registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+				registry.SetUnattended(true)
 				a = NewAgent(g.cfgMgr, g.client, registry)
 			}
 		}

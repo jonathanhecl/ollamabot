@@ -376,9 +376,17 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 
 func (pm *PlanMonitor) handleResumeOutcome(sessionID string, prevPlan sessions.SessionPlan, current int) {
 	sess, err := pm.sessionStore.Get(sessionID)
-	if err == nil && (sess.ActivePlan == nil || sess.ActivePlan.Status != sessions.PlanStatusActive || sess.ActivePlan.Completed > prevPlan.Completed) {
-		pm.clearAttempt(sessionID)
-		return
+	if err == nil {
+		p := sess.ActivePlan
+		madeProgress := p == nil ||
+			p.Completed > prevPlan.Completed ||
+			p.Status == sessions.PlanStatusCompleted ||
+			p.Status == sessions.PlanStatusRejected ||
+			(p.Status == sessions.PlanStatusDeferred && p.DeferredUntil == nil)
+		if madeProgress {
+			pm.clearAttempt(sessionID)
+			return
+		}
 	}
 	failures := pm.recordFailure(sessionID, prevPlan.Completed, time.Now())
 	if failures < maxPlanMonitorAttempts {

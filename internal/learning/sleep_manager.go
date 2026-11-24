@@ -648,6 +648,7 @@ Provide a clear final summary of your reflection.`, len(validSessions), historyT
 	registry := tools.NewRegistry(false, sm.config().Workspace, sm.memoryStore, sm.client, sm.config().OllamaModelEmbed, tools.SearchConfig{})
 	registry.SetSkillsPath(sm.config().SkillsPath)
 	registry.SetSessionStore(sm.sessionStore)
+	registry.SetUnattended(true)
 
 	reflectorAgent := agent.NewAgent(sm.cfgMgr, sm.client, registry)
 	reflectorAgent.SetMaxIterations(6)

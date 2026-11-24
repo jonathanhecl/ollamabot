@@ -183,9 +183,10 @@ func DeferPlanContinuation(store *Store, sessionID string, reason string, resume
 	return *plan, message, nil
 }
 
-// PauseActivePlan pauses an active plan indefinitely (no auto-resume) when the
-// user explicitly stops the session. Unlike DeferPlanContinuation, no resume
-// time is scheduled: the plan monitor will skip it until the user resumes it.
+// PauseActivePlan pauses an active or scheduled-deferred plan indefinitely (no
+// auto-resume) when the user explicitly stops the session or the plan monitor
+// reaches its retry limit. Unlike DeferPlanContinuation, no resume time is
+// scheduled: the plan monitor will skip it until the user resumes it.
 func PauseActivePlan(store *Store, sessionID string, reason string) (SessionPlan, error) {
 	if store == nil {
 		return SessionPlan{}, fmt.Errorf("session store is required")
@@ -200,7 +201,8 @@ func PauseActivePlan(store *Store, sessionID string, reason string) (SessionPlan
 		unlock()
 		return SessionPlan{}, err
 	}
-	if sess.ActivePlan == nil || sess.ActivePlan.Status != PlanStatusActive {
+	isResumableDeferred := sess.ActivePlan != nil && sess.ActivePlan.Status == PlanStatusDeferred && sess.ActivePlan.DeferredUntil != nil
+	if sess.ActivePlan == nil || (sess.ActivePlan.Status != PlanStatusActive && !isResumableDeferred) {
 		unlock()
 		return SessionPlan{}, fmt.Errorf("no active plan for this session")
 	}

@@ -675,6 +675,7 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	registry.SetUnattended(true)
 
 	// Instantiate iterative agent
 	a := NewAgent(am.cfgMgr, am.client, registry)
@@ -765,6 +766,7 @@ Task Description: %s
 				TavilyAPIKey: am.config().TavilyAPIKey,
 			})
 			registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	registry.SetUnattended(true)
 			a = NewAgent(am.cfgMgr, am.client, registry)
 		}
 	}
@@ -964,6 +966,7 @@ func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task 
 		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	registry.SetUnattended(true)
 	a := NewAgent(am.cfgMgr, am.client, registry)
 
 	prompt := fmt.Sprintf(`You are a strict code reviewer verifying whether an autonomous task was completed correctly.

@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-11-24 — Scheduler loop, timeout, and contradictory prompt/tool fixes
+
+Fixed multiple loops, concurrency hazards, and contradictory tool/prompt configurations that could saturate Ollama during scheduled task runs:
+
+- **Completion-time rescheduling & minimum interval (`internal/scheduler/manager.go`)**: recurring tasks (`interval` / `cron`) now compute `NextRunAt` from run completion time instead of start time so slow runs cannot immediately re-trigger on the next 10s tick; `agent_task` intervals below 1 minute are rejected.
+- **Timeouts, iteration caps & tool isolation (`internal/scheduler/manager.go`, `internal/engine/engine.go`, `internal/tools/tools.go`, `internal/tools/voice.go`)**: scheduled runs now run under `agent.SubagentContext` with `MaxIterations: 15`, omit `SchedulerManager`, and hide/reject contradictory tools (`schedule_*`, `send_telegram`, `send_voice`, `send_files`, `defer_plan_continuation`) while aligning `schedule_run` execution timeout with its 90s default wait window and serializing forced agent runs (`manualAgentRunning`).
+- **Unattended prompts, denial detection & network cap (`internal/agent/loop.go`, `internal/agent/goal.go`, `internal/agent/autonomous.go`, `internal/learning/sleep_manager.go`)**: unattended/scheduler turns no longer inject `present_plan`, `ask_clarification`, `send_voice`, or `Scheduled Task Observations` instructions and ignore orphaned `active_plan` entries on `scheduler`; fixed case-sensitive `"Denied by user"` matching so denied tools abort after 2 attempts even with modified args; added a hard network-call cap (`10` unattended / `16` interactive); wired `SetUnattended(true)` across `GoalManager`, `AutonomousManager`, and `SleepManager`.
+- **PlanMonitor deferral cap (`internal/agent/plan_monitor.go`, `internal/sessions/plan.go`)**: repeated `defer_plan_continuation` calls without step progress no longer reset `PlanMonitor` failure counters and are paused indefinitely after `maxPlanMonitorAttempts`.
+
 ## 2026-11-02 — Device Mode sessions in the web timeline
 
 Device turns now render like any other channel in the web UI, and Device Mode is named and configured consistently:

@@ -97,6 +97,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	// expensive network tools that the model can spin through on many different
 	// URLs/queries without triggering the per-signature loop detector.
 	toolGlobalCounts := make(map[string]int)
+	toolDeniedCounts := make(map[string]int)
 
 	cfg := a.config()
 	limit := a.getContextLimit(ctx, model)
@@ -285,10 +286,14 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		})
 
 		// 1. Check Todo list status (only when no formal active execution plan is already running)
+		isScheduler := a.registry != nil && a.registry.Channel() == "scheduler"
 		todoStore := a.registry.TodoStore()
 		var todoNote string
 		hasPending := false
-		activePlan, _ := a.registry.ActiveSessionPlan()
+		var activePlan *sessions.SessionPlan
+		if !isScheduler && a.registry != nil {
+			activePlan, _ = a.registry.ActiveSessionPlan()
+		}
 		hasActivePlan := activePlan != nil && activePlan.Status == "active"
 
 		if todoStore != nil && !hasActivePlan {
@@ -315,6 +320,7 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		if planMode == "" {
 			planMode = "smart"
 		}
+		canOfferPlan := a.registry == nil || (!a.registry.Unattended() && a.registry.Channel() != "device")
 		hasActivePlanSteps := false
 		if hasActivePlan {
 			hasActivePlanSteps = activePlan.Completed < len(activePlan.Steps)
@@ -329,13 +335,13 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				Role:    "system",
 				Content: planReinforce,
 			})
-		} else if planMode == "always" {
+		} else if planMode == "always" && canOfferPlan {
 			planReinforce := "Before executing ANY multi-step task or calling any other tools (like editing files, running commands, or search), you MUST first call the 'present_plan' tool with a summary and ordered list of steps to present your plan for user approval. Do NOT start executing steps until the user has approved the plan. After approval, each listed step may require several sub-actions. Call 'complete_plan_step' exactly once only when a full top-level plan step is finished and you are ready to move to the next step; do not call it for sub-actions."
 			dynamicPrefix = append(dynamicPrefix, ollama.Message{
 				Role:    "system",
 				Content: planReinforce,
 			})
-		} else if planMode == "smart" {
+		} else if planMode == "smart" && canOfferPlan {
 			if isLikelyComplexTask(goal) {
 				planReinforce := "Present a plan with 'present_plan' ONLY for genuinely complex or risky work: modifying several files, running commands that change state, or a sequence of 3+ distinct tool actions whose order matters. Present a plan if the user explicitly asks for one. Otherwise, just execute directly — do NOT present a plan for simple questions, quick lookups, or anything you can finish in 1-2 tool calls (e.g. web_search for weather, read_file of one document, a single write_file/edit_file)."
 				dynamicPrefix = append(dynamicPrefix, ollama.Message{
@@ -822,6 +828,10 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 				// Proactive error recovery/assistance
 				lowerResult := strings.ToLower(result)
+				isError := terr != nil || strings.HasPrefix(result, "Error")
+				isDeniedOrTimeout := strings.Contains(lowerResult, "denied by user") || strings.Contains(lowerResult, "approval timeout") || strings.Contains(lowerResult, "approval failed") || strings.Contains(lowerResult, "deadline exceeded")
+				isMCPValidationError := strings.Contains(result, "MCP error -32602") || strings.Contains(result, "Input validation error")
+
 				if terr != nil || strings.HasPrefix(result, "Error") {
 					// 1. File Not Found Assistance
 					if strings.Contains(lowerResult, "not found") || strings.Contains(lowerResult, "no such file") {
@@ -908,18 +918,18 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					}
 
 					// 3. Command Execution / Script / Download Failure Assistance
-					if toolName == "execute_command" {
+					if toolName == "execute_command" && !isDeniedOrTimeout {
 						result = fmt.Sprintf("%s\n\n[PROACTIVE SYSTEM ASSISTANCE: Command execution failed, timed out, or was denied. To solve this task without repeating failed commands:\n1. Search the web using `web_search` for how to perform this task or download media from this specific provider.\n2. Write a custom Python script using `write_file` (e.g. script.py using standard libraries, requests, or yt-dlp) to extract/download programmatically.\n3. Execute your Python script via `execute_command` (e.g. `python script.py`).]", result)
 					}
 				}
 
-				// Detect error states, denials/timeouts, and MCP schema validation errors early
-				isError := terr != nil || strings.HasPrefix(result, "Error")
-				isDeniedOrTimeout := strings.Contains(result, "Denied by user") || strings.Contains(result, "approval timeout") || strings.Contains(result, "approval failed") || strings.Contains(result, "deadline exceeded")
-				isMCPValidationError := strings.Contains(result, "MCP error -32602") || strings.Contains(result, "Input validation error")
-
 				if isDeniedOrTimeout {
-					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Action or plan approval was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool or plan call. Inform the user that the action was not approved/timed out and ask how to proceed.]", result)
+					toolDeniedCounts[toolName]++
+					if a.registry != nil && a.registry.Unattended() {
+						result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Tool '%s' was denied because this is an unattended run with no user present. Do NOT retry '%s' with the same or modified arguments. Proceed without it or report the limitation in your final answer.]", result, toolName, toolName)
+					} else {
+						result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: Action or plan approval was DENIED or TIMED OUT by the user. Do NOT repeat the exact same tool or plan call. Inform the user that the action was not approved/timed out and ask how to proceed.]", result)
+					}
 				} else if isMCPValidationError {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The MCP tool rejected the provided arguments (schema validation error -32602). Do NOT retry with identical arguments; verify tool parameter schema or try a different approach.]", result)
 				} else if isError {
@@ -962,15 +972,22 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// a network tool too many times in one turn means the model is
 				// thrashing. Warn at networkWarnThreshold, abort at
 				// networkAbortThreshold.
-				// Many different URLs or queries are how real research looks, so
-				// this only nudges the model: the turn aborts on genuine repeats
-				// (same tool and same arguments), never on the tool name alone.
 				networkWarnThreshold := 8
-				if isNetworkTool && globalCount >= networkWarnThreshold {
+				networkAbortThreshold := 16
+				if a.registry != nil && a.registry.Unattended() {
+					networkAbortThreshold = 10
+				}
+				if isNetworkTool && globalCount >= networkAbortThreshold {
+					repetitiveLoopErr = fmt.Errorf("detected excessive network calls: %s called %d times in one turn", toolName, globalCount)
+					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
+				} else if isNetworkTool && globalCount >= networkWarnThreshold {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: You have called %s %d times in this turn. If you already have enough data, synthesize an answer instead of fetching more.]", result, toolName, globalCount)
 				}
 
-				if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
+				if repetitiveLoopErr == nil && isDeniedOrTimeout && toolDeniedCounts[toolName] >= 2 {
+					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s was denied/timed out %d times (%s)", toolName, toolDeniedCounts[toolName], label)
+					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
+				} else if repetitiveLoopErr == nil && repeatCount >= abortThreshold {
 					repetitiveLoopErr = fmt.Errorf("detected repetitive loop: %s called %d times without meaningful progress (%s)", toolName, repeatCount, label)
 					result = fmt.Sprintf("%s\n\nError: %v", result, repetitiveLoopErr)
 				} else if repetitiveLoopErr == nil && repeatCount >= 2 {
@@ -1144,7 +1161,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 		}
 
 		// 10. Enforce active plan execution: refuse to end loop while plan steps remain.
-		activePlan, _ = a.registry.ActiveSessionPlan()
+		if !isScheduler && a.registry != nil {
+			activePlan, _ = a.registry.ActiveSessionPlan()
+		} else {
+			activePlan = nil
+		}
 		hasActivePlanSteps = activePlan != nil && activePlan.Status == "active" && activePlan.Completed < len(activePlan.Steps)
 		if hasActivePlanSteps {
 			if planTextOnlyRetries >= 5 {
@@ -1388,6 +1409,10 @@ func buildTodoProgressNote(snap []tools.TodoItem) string {
 func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasksBlock, skillsBlock, pastSessionsBlock string) []ollama.Message {
 	var prefix []ollama.Message
 
+	unattended := a.registry != nil && a.registry.Unattended()
+	isDevice := a.registry != nil && a.registry.Channel() == "device"
+	isScheduler := a.registry != nil && a.registry.Channel() == "scheduler"
+
 	// Load SOUL.md once
 	if soul, err := LoadSoul(); err == nil && soul != "" {
 		prefix = append(prefix, ollama.Message{
@@ -1426,7 +1451,7 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasks
 	}
 
 	// Scheduled task observations guidance (static, only when scheduler tools exist)
-	if a.registry != nil && a.registry.SchedulerEnabled() {
+	if a.registry != nil && a.registry.SchedulerEnabled() && !isScheduler {
 		prefix = append(prefix, ollama.Message{
 			Role: "system",
 			Content: "## Scheduled Task Observations\n" +
@@ -1573,19 +1598,33 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasks
 
 	// Goal reinforcement (static for this Run)
 	if goal != "" {
-		goalReinforce := fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
+		var goalReinforce string
+		if isScheduler {
+			goalReinforce = fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nComplete it in one pass and write the final report.", goal)
+		} else {
+			goalReinforce = fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
+		}
 		prefix = append(prefix, ollama.Message{
 			Role:    "system",
 			Content: goalReinforce,
 		})
 	}
 
-	// Clarification reinforcement (static)
-	clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool. Put the question only in 'question'. Every entry in 'options' must be an affirmative statement the user can click, never another question. Good options: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad options: \"Do you want a plan?\", \"¿Quieres que revise tus gustos?\". Do not assume or guess if key details are missing."
-	prefix = append(prefix, ollama.Message{
-		Role:    "system",
-		Content: clarificationReinforce,
-	})
+	// Clarification reinforcement (static, interactive channels only)
+	if !unattended && !isDevice {
+		clarificationReinforce := "If the user's instructions are ambiguous, incomplete, or you need more details to plan or execute safely, you MUST use the 'ask_clarification' tool. Put the question only in 'question'. Every entry in 'options' must be an affirmative statement the user can click, never another question. Good options: \"Start a complex plan\", \"Respond with a cheerful tone\". Bad options: \"Do you want a plan?\", \"¿Quieres que revise tus gustos?\". Do not assume or guess if key details are missing."
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: clarificationReinforce,
+		})
+	}
+
+	if unattended {
+		prefix = append(prefix, ollama.Message{
+			Role:    "system",
+			Content: "Unattended run rules: no human is present right now. Ignore any general personality instructions above that tell you to call present_plan, ask_clarification, send_voice, send_files, or wait for user confirmation.",
+		})
+	}
 
 	return prefix
 }
