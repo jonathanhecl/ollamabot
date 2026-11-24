@@ -396,3 +396,117 @@ func TestPlanMonitorPausesRepeatedlyDeferredPlanWithoutProgress(t *testing.T) {
 		t.Fatalf("expected no further model calls after paused deferral loop, got %d -> %d", callsBeforeExtraTick, chatCalls)
 	}
 }
+
+func TestPlanMonitorRespectsShouldThinkAndReleasesSlotDuringApproval(t *testing.T) {
+	sessionsPath := t.TempDir()
+	workspace := t.TempDir()
+	memoryPath := t.TempDir()
+
+	store := sessions.NewStore(sessionsPath)
+	sess := sessions.Session{ID: "plan-approval-slot", Title: "Plan Slot Test", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	if _, err := sessions.ActivatePlan(store, sess.ID, "Deploy safely", []string{"Run command"}); err != nil {
+		t.Fatalf("activate plan: %v", err)
+	}
+
+	cfg := config.Config{
+		Workspace:          workspace,
+		SessionsPath:       sessionsPath,
+		MemoryPath:         memoryPath,
+		OllamaDefaultModel: "uncached-no-think-model",
+		OllamaThinkEnabled: true,
+		PlanConfirmation:   "smart",
+	}
+	approvalSvc := sessions.NewApprovalService(store, config.NewManager(cfg))
+
+	approvalReached := make(chan string, 1)
+	approvalSvc.RegisterNotifier(sess.ID, func(_ string, ap sessions.PendingApproval) {
+		approvalReached <- ap.ID
+	})
+
+	chatTurn := 0
+	sawThinkTrue := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			var req ollama.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if b, ok := req.Think.(bool); ok && b {
+				sawThinkTrue = true
+			}
+			chatTurn++
+			if chatTurn == 1 {
+				// Request risky tool (git push) so ApprovalService blocks awaiting user decision.
+				args, _ := json.Marshal(map[string]any{"command": "git", "args": []any{"push"}})
+				_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+					Done: true,
+					Message: ollama.Message{
+						Role: "assistant",
+						ToolCalls: []ollama.ToolCall{{
+							Type:     "function",
+							Function: ollama.ToolFunction{Name: "execute_command", Arguments: args},
+						}},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Stopped after denial."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	pm := NewPlanMonitor(config.NewManager(cfg), ollama.NewClient(server.URL), memory.NewStore(memoryPath))
+	pm.SetApprovalService(approvalSvc)
+	pm.staleAfter = time.Millisecond
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pm.Tick(ctx)
+
+	var approvalID string
+	select {
+	case approvalID = <-approvalReached:
+	case <-ctx.Done():
+		t.Fatalf("timed out waiting for approval request: %v", ctx.Err())
+	}
+
+	// While PlanMonitor waits on the user's approval decision, the background slot must be free.
+	if rel := sessions.TryAcquireBackgroundSlot(); rel == nil {
+		t.Fatal("expected global background slot to be released while waiting for approval")
+	} else {
+		rel()
+	}
+
+	if err := approvalSvc.RespondApproval(approvalID, sessions.ApprovalDecision{Approved: false}); err != nil {
+		t.Fatalf("respond approval: %v", err)
+	}
+
+	// Wait for resumePlan goroutine to finish.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pm.mu.RLock()
+		working := pm.isWorking[sess.ID]
+		pm.mu.RUnlock()
+		if !working {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if sawThinkTrue {
+		t.Fatal("expected PlanMonitor to respect ShouldThink and send think=false for model without confirmed thinking capability")
+	}
+}

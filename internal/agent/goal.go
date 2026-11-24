@@ -312,7 +312,9 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 
 	maxCycles := 20
 	const maxConsecutiveGoalTimeouts = 3
+	const maxConsecutiveGoalEvalErrors = 3
 	consecutiveTimeouts := 0
+	consecutiveEvalErrors := 0
 	cycleDelay := g.cycleDelay
 	if cycleDelay <= 0 {
 		cycleDelay = 5 * time.Second
@@ -350,17 +352,41 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		}
 
 		// Reload session to inspect status changes
+		releaseCurrentSlot := func() {
+			if releaseSlot != nil {
+				releaseSlot()
+				releaseSlot = nil
+			}
+		}
+		installApprovalHooks := func(reg *tools.Registry) {
+			reg.SetChannel("goal")
+			reg.SetUnattended(true)
+			reg.SetApprovalWaitHooks(
+				func() {
+					releaseCurrentSlot()
+				},
+				func(waitCtx context.Context) error {
+					slot, acqErr := sessions.AcquireBackgroundSlot(waitCtx)
+					if acqErr != nil {
+						return acqErr
+					}
+					releaseSlot = slot
+					return nil
+				},
+			)
+		}
+
 		sess, err := g.sessionStore.Get(sessionID)
 		if err != nil {
 			sessions.MarkIdle(sessionID)
-			releaseSlot()
+			releaseCurrentSlot()
 			log.Printf("[GoalManager] Error reloading session: %v. Stopping loop.", err)
 			return
 		}
 
 		if sess.GoalStatus != "active" {
 			sessions.MarkIdle(sessionID)
-			releaseSlot()
+			releaseCurrentSlot()
 			log.Printf("[GoalManager] GoalStatus changed to %s. Stopping loop.", sess.GoalStatus)
 			return
 		}
@@ -414,7 +440,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		registry.SetSessionsPath(g.config().SessionsPath)
 		registry.SetApprovalService(g.approvalService)
 		registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
-		registry.SetUnattended(true)
+		installApprovalHooks(registry)
 
 		a := NewAgent(g.cfgMgr, g.client, registry)
 
@@ -442,7 +468,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				break
 			}
 			log.Printf("[GoalManager] Error running cycle %d (attempt %d/%d): %v", cycle, retry+1, maxRunRetries, runErr)
-			if errors.Is(runErr, context.DeadlineExceeded) {
+			if isNonRetryableAgentError(runErr) {
 				break
 			}
 			if retry < maxRunRetries-1 {
@@ -450,7 +476,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				select {
 				case <-ctx.Done():
 					sessions.MarkIdle(sessionID)
-					releaseSlot()
+					releaseCurrentSlot()
 					return
 				case <-time.After(10 * time.Second):
 				}
@@ -459,7 +485,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				if err != nil {
 					log.Printf("[GoalManager] Error reloading session for retry: %v. Aborting.", err)
 					sessions.MarkIdle(sessionID)
-					releaseSlot()
+					releaseCurrentSlot()
 					return
 				}
 				// Re-instantiate agent and registry to ensure fresh state if needed
@@ -473,7 +499,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				registry.SetSessionsPath(g.config().SessionsPath)
 				registry.SetApprovalService(g.approvalService)
 				registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
-				registry.SetUnattended(true)
+				installApprovalHooks(registry)
 				a = NewAgent(g.cfgMgr, g.client, registry)
 			}
 		}
@@ -499,13 +525,13 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 					g.notify(sessionID, "❌ "+timeoutReason)
 					clearCycleFlag()
 					sessions.MarkIdle(sessionID)
-					releaseSlot()
+					releaseCurrentSlot()
 					return
 				}
 				g.notify(sessionID, fmt.Sprintf("⏱️ Goal cycle %d timed out after %d minutes, continuing...", cycle, g.config().SubagentTimeoutMinutes))
 				clearCycleFlag()
 				sessions.MarkIdle(sessionID)
-				releaseSlot()
+				releaseCurrentSlot()
 				select {
 				case <-ctx.Done():
 					return
@@ -517,7 +543,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				g.notify(sessionID, fmt.Sprintf("❌ Goal loop execution error: %v", runErr))
 				clearCycleFlag()
 				sessions.MarkIdle(sessionID)
-				releaseSlot()
+				releaseCurrentSlot()
 				return
 			}
 		}
@@ -537,8 +563,31 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		log.Printf("[GoalManager] Evaluating goal status after cycle %d...", cycle)
 		achieved, reasoning, err := g.evaluateProgress(ctx, objective, sess.Messages)
 		if err != nil {
-			log.Printf("[GoalManager] Evaluation error: %v. Retrying in next cycle.", err)
+			consecutiveEvalErrors++
+			log.Printf("[GoalManager] Evaluation error (%d/%d): %v", consecutiveEvalErrors, maxConsecutiveGoalEvalErrors, err)
 			reasoning = "Evaluation system error: " + err.Error()
+			if consecutiveEvalErrors >= maxConsecutiveGoalEvalErrors {
+				evalFailReason := fmt.Sprintf("Goal stopped after %d consecutive evaluation failures: %v", consecutiveEvalErrors, err)
+				if latestSess, loadErr := g.sessionStore.Get(sessionID); loadErr == nil {
+					latestSess.GoalStatus = "failed"
+					latestSess.GoalReasoning = evalFailReason
+					failureMsg := sessions.RawMsg{
+						Role:      "system",
+						Content:   "❌ *Goal Failed:* " + evalFailReason,
+						Timestamp: time.Now().Format(time.RFC3339),
+					}
+					rawFailMsg, _ := json.Marshal(failureMsg)
+					latestSess.Messages = append(latestSess.Messages, rawFailMsg)
+					_ = g.sessionStore.Save(latestSess)
+				}
+				g.notify(sessionID, "❌ "+evalFailReason)
+				clearCycleFlag()
+				sessions.MarkIdle(sessionID)
+				releaseCurrentSlot()
+				return
+			}
+		} else {
+			consecutiveEvalErrors = 0
 		}
 
 		sess, _ = g.sessionStore.Get(sessionID) // reload
@@ -559,7 +608,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			g.notify(sessionID, fmt.Sprintf("🎯 *Goal achieved!* \n%s", reasoning))
 			log.Printf("[GoalManager] Goal fully achieved: %s", reasoning)
 			sessions.MarkIdle(sessionID)
-			releaseSlot()
+			releaseCurrentSlot()
 			return
 		}
 
@@ -580,7 +629,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 			clearCycleFlag()
 			g.notify(sessionID, fmt.Sprintf("❌ *Goal failed.* Maximum cycles reached. last reason: %s", reasoning))
 			sessions.MarkIdle(sessionID)
-			releaseSlot()
+			releaseCurrentSlot()
 			return
 		}
 
@@ -609,7 +658,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		// Release session and background slot before waiting so other managers
 		// and user turns can interleave between goal cycles.
 		sessions.MarkIdle(sessionID)
-		releaseSlot()
+		releaseCurrentSlot()
 
 		// Wait before executing the next cycle
 		select {
@@ -707,6 +756,22 @@ Respond with a JSON object conforming to the schema.`, objective)
 
 // rawToRawMsgs decodes persisted session messages into RawMsg so they can be
 // used as the base history for a Recorder (background goal/plan turns).
+// isNonRetryableAgentError reports whether a background run failure should
+// abort immediately rather than retrying the exact same turn 3 times (timeouts,
+// cancellations, repetitive-loop aborts, excessive network calls, or max iterations).
+func isNonRetryableAgentError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "detected repetitive loop") ||
+		strings.Contains(msg, "detected excessive network calls") ||
+		strings.Contains(msg, "exceeded maximum tool iterations")
+}
+
 func rawToRawMsgs(raw []json.RawMessage) []sessions.RawMsg {
 	out := make([]sessions.RawMsg, 0, len(raw))
 	for _, r := range raw {

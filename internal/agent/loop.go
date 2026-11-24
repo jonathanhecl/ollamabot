@@ -932,10 +932,15 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 
 					// 3. Command Execution / Script / Download Failure Assistance
 					if toolName == "execute_command" && !isDeniedOrTimeout {
-						result = fmt.Sprintf("%s\n\n[PROACTIVE SYSTEM ASSISTANCE: Command execution failed, timed out, or was denied. To solve this task without repeating failed commands:\n1. Search the web using `web_search` for how to perform this task or download media from this specific provider.\n2. Write a custom Python script using `write_file` (e.g. script.py using standard libraries, requests, or yt-dlp) to extract/download programmatically.\n3. Execute your Python script via `execute_command` (e.g. `python script.py`).]", result)
+						if a.config().WebSearchEnabled {
+							result = fmt.Sprintf("%s\n\n[PROACTIVE SYSTEM ASSISTANCE: Command execution failed. To solve this task without repeating failed commands:\n1. Search the web using `web_search` for how to perform this task or download media from this specific provider.\n2. Write a custom Python script using `write_file` (e.g. script.py using standard libraries, requests, or yt-dlp) to extract/download programmatically.\n3. Execute your Python script via `execute_command` (e.g. `python script.py`).]", result)
+						} else {
+							result = fmt.Sprintf("%s\n\n[PROACTIVE SYSTEM ASSISTANCE: Command execution failed. To solve this task without repeating failed commands:\n1. Write a custom Python script using `write_file` (e.g. script.py using standard libraries) to accomplish the task programmatically.\n2. Execute your Python script via `execute_command` (e.g. `python script.py`), or inspect the error output and adapt your arguments.]", result)
+						}
 					}
 				}
 
+				noHuman := a.registry != nil && (a.registry.Unattended() || a.registry.Channel() == "device")
 				if isDeniedOrTimeout {
 					toolDeniedCounts[toolName]++
 					if a.registry != nil && a.registry.Unattended() {
@@ -946,7 +951,11 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				} else if isMCPValidationError {
 					result = fmt.Sprintf("%s\n\n[SYSTEM WARNING: The MCP tool rejected the provided arguments (schema validation error -32602). Do NOT retry with identical arguments; verify tool parameter schema or try a different approach.]", result)
 				} else if isError {
-					hint := fmt.Sprintf("\n\n[SYSTEM HINT: Tool '%s' execution failed. Do NOT repeat the exact same call with identical arguments. Review the error above and decide: (1) correct your parameters, (2) try an alternative tool, or (3) ask the user for clarification / inform them of the error.]", toolName)
+					stepThree := "(3) ask the user for clarification / inform them of the error"
+					if noHuman {
+						stepThree = "(3) report the error clearly in your final answer"
+					}
+					hint := fmt.Sprintf("\n\n[SYSTEM HINT: Tool '%s' execution failed. Do NOT repeat the exact same call with identical arguments. Review the error above and decide: (1) correct your parameters, (2) try an alternative tool, or %s.]", toolName, stepThree)
 					if toolName == "list_files" || toolName == "read_file" {
 						hint = fmt.Sprintf("\n\n[SYSTEM HINT: Tool '%s' failed. If you intended to inspect the workspace directory, use path \".\". Do NOT repeat the exact same call.]", toolName)
 					}
@@ -1455,8 +1464,8 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasks
 			"Before sending a reply, re-read it: language, units, numbers and formats must match the user. When the user corrects a unit, language or format, apply it for the rest of the conversation and store it as a preference with memory_add.",
 	})
 
-	// Memory tools instruction (static)
-	if a.config().OllamaModelEmbed != "" {
+	// Memory tools instruction (static, only when a memory store is available)
+	if a.config().OllamaModelEmbed != "" && (a.registry == nil || a.registry.MemoryStore() != nil) {
 		prefix = append(prefix, ollama.Message{
 			Role:    "system",
 			Content: "You have access to long-term memory tools (memory_add, memory_search, memory_delete, memory_list). Manage your own memory proactively:\n\n## What to Store\n- Permanent user preferences, personality traits, and communication style.\n- Technical decisions and architectural choices with rationale.\n- Lessons learned from debugging: error patterns, root causes, and working solutions.\n- Workspace-specific setups: missing dependencies, required env vars, unique build steps.\n- Durable facts about the user or project that apply across sessions.\n- Write self-contained, descriptive entries with enough context (technologies, file paths, exact solution) to be useful in isolation.\n\n## What NOT to Store\n- Current dates, times, or temporal context (the system already injects this).\n- Greetings, acknowledgments, or conversational filler.\n- Transient task state or progress (e.g. 'currently working on X', 'step 2 done').\n- Information that only applies to the current session.\n- Trivial or obvious facts that any model would know.\n- Anything you would not search for in a future conversation.\n\n## Rules\n- Before adding any memory, ask yourself: 'Will this be useful in a future session?' If no, do not store it.\n- Always search memory first (memory_search) before adding new memories.\n- Delete outdated or incorrect information using memory_delete.\n- Review stored memories with memory_list before deciding what to add, update, or remove.\n- Consolidate & Deduplicate: ALWAYS search for related facts first. If you learn updated information, DELETE the old version BEFORE adding the new one. Do not store near-identical or overlapping facts.\n- Lessons Learned: When you solve a difficult error or discover workspace-specific setups, store a concise 'lesson learned' memory so you do not repeat the mistake.",
@@ -1513,8 +1522,8 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasks
 		})
 	}
 
-	// Image generation instruction (static)
-	if strings.TrimSpace(a.config().OllamaModelImage) != "" {
+	// Image generation instruction (static, interactive channels only)
+	if strings.TrimSpace(a.config().OllamaModelImage) != "" && !unattended && !isDevice {
 		prefix = append(prefix, ollama.Message{
 			Role:    "system",
 			Content: "You have access to image generation via the `generate_image` tool. When the user requests image creation (e.g., 'generate an image of...', 'create a picture of...', 'draw...', 'imagine...'), use this tool. Choose appropriate resolution based on context: 512x512 for standard square images, 1024x512 for landscape, 512x1024 for portrait. You can also specify custom smaller or aspect-ratio dimensions (like 64, 128, 256, etc.) directly when generating specific UI assets like icons, buttons, or logos. Important: The prompt passed to the generate_image tool must be in English for the best results, so you must translate the user's prompt to detailed, descriptive English if it is in another language. Do NOT output the generated image filename, path, or reference (e.g. do not say 'Reference: generated_...' or 'Referencia: ...') in your response to the user, as the user interface automatically renders the generated image bubble under your message. Simply confirm that the image is ready.",
@@ -1611,8 +1620,9 @@ func buildStaticSystemPrefix(a *Agent, goal, recalledMemoriesBlock, relatedTasks
 
 	// Goal reinforcement (static for this Run)
 	if goal != "" {
+		isPlanMonitor := a.registry != nil && a.registry.Channel() == "plan_monitor"
 		var goalReinforce string
-		if isScheduler {
+		if isScheduler || isDevice || (unattended && !isPlanMonitor) {
 			goalReinforce = fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nComplete it in one pass and write the final report.", goal)
 		} else {
 			goalReinforce = fmt.Sprintf("Your current user goal is:\n<<<USER_GOAL>>>\n%s\n<<<END_USER_GOAL>>>\nKeep executing until all steps are done. If an approved plan is active, do not stop until the plan is completed or you explicitly defer it with defer_plan_continuation and notify the user.", goal)
@@ -1753,6 +1763,12 @@ func loopCallKey(toolName string, params map[string]any) string {
 }
 
 func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
+	noHuman := registry != nil && (registry.Unattended() || registry.Channel() == "device")
+	fallbackAction := "or ask the user for clarification"
+	if noHuman {
+		fallbackAction = "or report the limitation in your final answer"
+	}
+
 	// If the tool is an MCP tool, suggest checking the MCP server or using a
 	// different MCP tool instead of looping.
 	if registry != nil && registry.MCPManager() != nil && registry.MCPManager().HasTool(toolName) {
@@ -1764,15 +1780,19 @@ func repetitiveLoopHint(toolName string, registry *tools.Registry) string {
 	}
 	switch toolName {
 	case "list_files", "search_files":
-		return "Repeatedly listing the same directory will not produce different results. The files you are looking for may not exist in the workspace — if they came from an MCP tool (e.g. vault_list), use the matching MCP read tool instead. Otherwise, change your approach or ask the user for clarification."
+		return fmt.Sprintf("Repeatedly listing the same directory will not produce different results. The files you are looking for may not exist in the workspace — if they came from an MCP tool (e.g. vault_list), use the matching MCP read tool instead. Otherwise, change your approach %s.", fallbackAction)
 	case "read_file":
 		return "You already read this file. Re-reading it will return the same content. Use the content you already have, or if the file does not exist, check whether it lives in an MCP service (use the MCP read tool, not read_file)."
 	case "web_search", "fetch_webpage":
 		return "You already ran this search/fetch. Repeating it will return the same results. Use the data you already have, refine your query, or try a different source."
 	case "execute_command":
-		return "Repeatedly executing the same command will fail again or trigger approval timeouts. Stop repeating this command. Instead, write a custom Python script (`write_file` + `execute_command python script.py`), search the web (`web_search`) for alternative techniques/tools (like `yt-dlp`), or ask the user for guidance."
+		guidance := "or ask the user for guidance"
+		if noHuman {
+			guidance = "or report the limitation in your final answer"
+		}
+		return fmt.Sprintf("Repeatedly executing the same command will fail again or trigger approval timeouts. Stop repeating this command. Instead, write a custom Python script (`write_file` + `execute_command python script.py`), search the web (`web_search`) for alternative techniques/tools (like `yt-dlp`), %s.", guidance)
 	default:
-		return "To avoid a repetitive loop, change your arguments, use a different tool, or ask the user for clarification. Do NOT repeat the exact same call."
+		return fmt.Sprintf("To avoid a repetitive loop, change your arguments, use a different tool, %s. Do NOT repeat the exact same call.", fallbackAction)
 	}
 }
 

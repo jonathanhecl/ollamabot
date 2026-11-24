@@ -214,3 +214,37 @@ func TestInteractiveSlotWaitsForBackgroundWork(t *testing.T) {
 		t.Fatalf("interactive slot was not released: %v", ctx.Err())
 	}
 }
+
+func TestAcquireBackgroundSlotWaitsAndRespectsCancel(t *testing.T) {
+	first := TryAcquireBackgroundSlot()
+	if first == nil {
+		t.Fatal("expected initial TryAcquireBackgroundSlot to succeed")
+	}
+
+	cancelCtx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	if rel, err := AcquireBackgroundSlot(cancelCtx); err == nil {
+		rel()
+		t.Fatal("expected AcquireBackgroundSlot to fail on cancelled context while slot busy")
+	}
+
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), time.Second)
+	defer waitCancel()
+	acquired := make(chan func(), 1)
+	go func() {
+		rel, err := AcquireBackgroundSlot(waitCtx)
+		if err == nil {
+			acquired <- rel
+		}
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	first()
+
+	select {
+	case rel := <-acquired:
+		rel()
+	case <-waitCtx.Done():
+		t.Fatalf("expected AcquireBackgroundSlot to unblock after release: %v", waitCtx.Err())
+	}
+}

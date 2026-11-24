@@ -405,3 +405,96 @@ func TestAutonomousManager_TickMarksProjectFailedWhenTodosFailed(t *testing.T) {
 		t.Fatalf("expected project status %q when todos failed, got %q", "failed", proj.Status)
 	}
 }
+
+func TestAutonomousManager_TickDoesNotCompleteZeroTodoProject(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Config{
+		Workspace:          workspace,
+		OllamaDefaultModel: "test-model",
+	}
+	am := NewAutonomousManager(config.NewManager(cfg), ollama.NewClient("http://127.0.0.1:1"), nil)
+
+	helperSaveProject(t, workspace, "proj-empty", Project{
+		ID:     "proj-empty",
+		Name:   "Empty Project",
+		Goal:   "Plan work",
+		Status: "pending",
+		Todos:  nil,
+	})
+
+	am.Tick(context.Background())
+
+	proj, err := am.LoadProject("proj-empty")
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	if proj.Status == "completed" {
+		t.Fatalf("expected 0-todo project not to be marked completed, got %q", proj.Status)
+	}
+}
+
+func TestAutonomousManager_ExecuteTaskDoesNotRetryRepetitiveLoopAbortAndResetsStatus(t *testing.T) {
+	workspace := t.TempDir()
+	chatCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			chatCalls++
+			args, _ := json.Marshal(map[string]any{"path": "."})
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role: "assistant",
+					ToolCalls: []ollama.ToolCall{{
+						Type:     "function",
+						Function: ollama.ToolFunction{Name: "list_files", Arguments: args},
+					}},
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		Workspace:          workspace,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	}
+	am := NewAutonomousManager(config.NewManager(cfg), ollama.NewClient(server.URL), nil)
+
+	helperSaveProject(t, workspace, "proj-loop", Project{
+		ID:     "proj-loop",
+		Name:   "Looping Project",
+		Goal:   "Build app",
+		Status: "active",
+		Todos: []ProjectTodo{
+			{ID: "t1", Content: "Inspect workspace", Status: "pending"},
+		},
+	})
+
+	err := am.ExecuteTask(context.Background(), "proj-loop", 0)
+	if err == nil || !strings.Contains(err.Error(), "detected repetitive loop") {
+		t.Fatalf("expected repetitive loop abort, got %v", err)
+	}
+	// Single attempt only (aborts on 3rd call in attempt 1/3, NOT 9 calls across 3 retries).
+	if chatCalls != 3 {
+		t.Fatalf("expected 3 chat calls from a single aborted attempt without retry amplification, got %d", chatCalls)
+	}
+
+	proj, err := am.LoadProject("proj-loop")
+	if err != nil {
+		t.Fatalf("reload project: %v", err)
+	}
+	if proj.CurrentTask != "" {
+		t.Fatalf("expected CurrentTask cleared on failure, got %q", proj.CurrentTask)
+	}
+	if proj.Status != "failed" {
+		t.Fatalf("expected project status %q after last task failed, got %q", "failed", proj.Status)
+	}
+}

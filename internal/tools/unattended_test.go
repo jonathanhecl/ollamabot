@@ -3,10 +3,15 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
+	"github.com/jonathanhecl/ollamabot/internal/sessions"
 )
 
 func unattendedToolCall(name string, args map[string]any) ollama.ToolCall {
@@ -116,5 +121,126 @@ func TestUnattendedHidesAndRejectsVoice(t *testing.T) {
 	_, err := registry.Execute(context.Background(), unattendedToolCall("send_voice", map[string]any{"text": "hi"}))
 	if err == nil || !strings.Contains(err.Error(), "unattended run") {
 		t.Fatalf("expected send_voice to be rejected in unattended run, got %v", err)
+	}
+}
+
+func TestUnattendedEnforcesRiskGateWithoutHandler(t *testing.T) {
+	ws := t.TempDir()
+	registry := NewRegistry(false, ws, nil, nil, "", SearchConfig{})
+	registry.SetApprovalPolicy(ApprovalPolicyAutonomous)
+	registry.SetChannel("autonomous")
+	registry.SetUnattended(true)
+
+	// RiskNeedsApproval (git push) must be blocked when no approval handler/service exists.
+	_, err := registry.Execute(context.Background(), unattendedToolCall("execute_command", map[string]any{
+		"command": "git",
+		"args":    []any{"push"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "requires approval") {
+		t.Fatalf("expected risky command without approval handler to be blocked, got %v", err)
+	}
+
+	// RiskBlocked (disallowed executable) must also be blocked.
+	_, err = registry.Execute(context.Background(), unattendedToolCall("execute_command", map[string]any{
+		"command": "bash",
+		"args":    []any{"-c", "echo hi"},
+	}))
+	if err == nil || !strings.Contains(err.Error(), "blocked") {
+		t.Fatalf("expected disallowed command to be blocked, got %v", err)
+	}
+
+	// RiskSafe workspace write still runs cleanly without interactive approval.
+	out, err := registry.Execute(context.Background(), unattendedToolCall("write_file", map[string]any{
+		"file_path": "ok.txt",
+		"contents":  "safe write",
+	}))
+	if err != nil {
+		t.Fatalf("expected safe workspace write to succeed, got %v", err)
+	}
+	if !strings.Contains(out, "Write successful") {
+		t.Fatalf("unexpected write_file output: %q", out)
+	}
+	if raw, readErr := os.ReadFile(filepath.Join(ws, "ok.txt")); readErr != nil || string(raw) != "safe write" {
+		t.Fatalf("expected workspace file written, got err=%v content=%q", readErr, string(raw))
+	}
+}
+
+func TestApprovalWaitHooksWrapRequestApproval(t *testing.T) {
+	ws := t.TempDir()
+	store := sessions.NewStore(t.TempDir())
+	sess := sessions.Session{ID: "hook-sess", Title: "Hook Test"}
+	if err := store.Save(sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	cfgMgr := config.NewManager(config.Config{Workspace: ws})
+	svc := sessions.NewApprovalService(store, cfgMgr)
+
+	events := make(chan string, 4)
+	svc.RegisterNotifier(sess.ID, func(_ string, approval sessions.PendingApproval) {
+		events <- "notify"
+		_ = svc.RespondApproval(approval.ID, sessions.ApprovalDecision{Approved: false})
+	})
+
+	registry := NewRegistry(false, ws, nil, nil, "", SearchConfig{})
+	registry.SetSessionID(sess.ID)
+	registry.SetApprovalService(svc)
+	registry.SetApprovalWaitHooks(
+		func() { events <- "wait_start" },
+		func(context.Context) error { events <- "wait_end"; return nil },
+	)
+
+	res, err := registry.Execute(context.Background(), unattendedToolCall("execute_command", map[string]any{
+		"command": "git",
+		"args":    []any{"push"},
+	}))
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if !strings.Contains(res, "denied by user") {
+		t.Fatalf("expected denial message, got %q", res)
+	}
+
+	close(events)
+	var order []string
+	for ev := range events {
+		order = append(order, ev)
+	}
+	got := strings.Join(order, ",")
+	if got != "wait_start,notify,wait_end" {
+		t.Fatalf("unexpected hook sequence: got %q, want wait_start,notify,wait_end", got)
+	}
+}
+
+func TestAutonomousAndSleepChannelsHideContradictoryTools(t *testing.T) {
+	for _, tc := range []struct {
+		channel   string
+		forbidden []string
+	}{
+		{
+			channel:   "autonomous",
+			forbidden: []string{"send_files", "defer_plan_continuation", "ask_clarification", "present_plan", "send_voice"},
+		},
+		{
+			channel:   "sleep",
+			forbidden: []string{"send_files", "defer_plan_continuation", "send_telegram", "generate_image", "schedule_task", "schedule_reminder", "schedule_run"},
+		},
+	} {
+		t.Run(tc.channel, func(t *testing.T) {
+			reg := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+			reg.SetSchedulerService(&mockSchedulerService{})
+			reg.SetTelegramConfig("tok", []string{"1"})
+			reg.SetChannel(tc.channel)
+			reg.SetUnattended(true)
+
+			for _, name := range tc.forbidden {
+				if hasTool(reg, name) {
+					t.Fatalf("%s should not be offered on %s channel", name, tc.channel)
+				}
+				if _, err := reg.Execute(context.Background(), unattendedToolCall(name, map[string]any{})); err == nil {
+					t.Fatalf("expected %s to be rejected on %s channel", name, tc.channel)
+				}
+			}
+			_ = time.Second
+		})
 	}
 }

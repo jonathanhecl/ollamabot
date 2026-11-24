@@ -566,3 +566,127 @@ func TestGoalManager_StopsAfterConsecutiveTimeoutsAndRespectsThinkConfig(t *test
 		t.Fatalf("expected think=false when OllamaThinkEnabled=false")
 	}
 }
+
+func TestGoalManager_DoesNotRetryRepetitiveLoopAndCapsEvalErrors(t *testing.T) {
+	t.Run("stops retrying on repetitive loop abort", func(t *testing.T) {
+		tempDir := t.TempDir()
+		sessionsPath := filepath.Join(tempDir, "sessions")
+		store := sessions.NewStore(sessionsPath)
+		msgRaw, _ := json.Marshal(sessions.RawMsg{Role: "user", Content: "List"})
+		_ = store.Save(sessions.Session{
+			ID:            "goal_loop_sess",
+			Title:         "Goal Loop",
+			GoalObjective: "Inspect files",
+			GoalStatus:    "active",
+			Messages:      []json.RawMessage{msgRaw},
+		})
+
+		chatCalls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/show":
+				_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+					ModelInfo: map[string]any{"general.context_length": float64(8192)},
+				})
+			case "/api/chat":
+				chatCalls++
+				args, _ := json.Marshal(map[string]any{"path": "."})
+				_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+					Done: true,
+					Message: ollama.Message{
+						Role: "assistant",
+						ToolCalls: []ollama.ToolCall{{
+							Type:     "function",
+							Function: ollama.ToolFunction{Name: "list_files", Arguments: args},
+						}},
+					},
+				})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		cfg := config.Config{
+			Workspace:          tempDir,
+			SessionsPath:       sessionsPath,
+			MemoryPath:         filepath.Join(tempDir, "memory"),
+			OllamaDefaultModel: "test-model",
+		}
+		gm := NewGoalManager(config.NewManager(cfg), ollama.NewClient(server.URL))
+		gm.cycleDelay = 5 * time.Millisecond
+		gm.runGoalLoop(context.Background(), "goal_loop_sess", "Inspect files")
+
+		// Should abort after 1 cycle * 2 calls = 2 calls (not 3 retries = 6 calls).
+		if chatCalls != 2 {
+			t.Fatalf("expected 2 chat calls without 3x retry amplification, got %d", chatCalls)
+		}
+	})
+
+	t.Run("stops after 3 consecutive evaluation failures", func(t *testing.T) {
+		tempDir := t.TempDir()
+		sessionsPath := filepath.Join(tempDir, "sessions")
+		store := sessions.NewStore(sessionsPath)
+		msgRaw, _ := json.Marshal(sessions.RawMsg{Role: "user", Content: "Work"})
+		_ = store.Save(sessions.Session{
+			ID:            "goal_eval_fail_sess",
+			Title:         "Goal Eval Fail",
+			GoalObjective: "Finish work",
+			GoalStatus:    "active",
+			Messages:      []json.RawMessage{msgRaw},
+		})
+
+		evalCalls := 0
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/show":
+				_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+					ModelInfo: map[string]any{"general.context_length": float64(8192)},
+				})
+			case "/api/chat":
+				var req ollama.ChatRequest
+				_ = json.NewDecoder(r.Body).Decode(&req)
+				// evaluateProgress sets req.Format (structured output)
+				if req.Format != nil {
+					evalCalls++
+					_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+						Done:    true,
+						Message: ollama.Message{Role: "assistant", Content: "not valid json"},
+					})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+					Done:    true,
+					Message: ollama.Message{Role: "assistant", Content: "Attempted step."},
+				})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		cfg := config.Config{
+			Workspace:          tempDir,
+			SessionsPath:       sessionsPath,
+			MemoryPath:         filepath.Join(tempDir, "memory"),
+			OllamaDefaultModel: "test-model",
+		}
+		gm := NewGoalManager(config.NewManager(cfg), ollama.NewClient(server.URL))
+		gm.cycleDelay = 5 * time.Millisecond
+		gm.runGoalLoop(context.Background(), "goal_eval_fail_sess", "Finish work")
+
+		if evalCalls != 3 {
+			t.Fatalf("expected goal loop to stop after 3 consecutive eval errors, got %d", evalCalls)
+		}
+		sess, err := store.Get("goal_eval_fail_sess")
+		if err != nil {
+			t.Fatalf("reload session: %v", err)
+		}
+		if sess.GoalStatus != "failed" {
+			t.Fatalf("expected goal status %q, got %q", "failed", sess.GoalStatus)
+		}
+		if !strings.Contains(sess.GoalReasoning, "consecutive evaluation failures") {
+			t.Fatalf("expected evaluation failure reason, got %q", sess.GoalReasoning)
+		}
+	})
+}

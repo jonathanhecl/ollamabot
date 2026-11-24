@@ -158,6 +158,40 @@ func TryAcquireBackgroundSlot() func() {
 	}
 }
 
+// AcquireBackgroundSlot blocks until the single global background slot is
+// available (no background work running, no active interactive turns or waiting
+// interactive turns) or ctx is cancelled.
+func AcquireBackgroundSlot(ctx context.Context) (func(), error) {
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		backgroundWorkMu.Lock()
+		if !backgroundWorkBusy && interactiveWorkCount == 0 && interactiveWorkWaiters == 0 {
+			backgroundWorkBusy = true
+			backgroundWorkMu.Unlock()
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					backgroundWorkMu.Lock()
+					backgroundWorkBusy = false
+					close(workAvailabilityChangedCh)
+					workAvailabilityChangedCh = make(chan struct{})
+					backgroundWorkMu.Unlock()
+				})
+			}, nil
+		}
+		changed := workAvailabilityChangedCh
+		backgroundWorkMu.Unlock()
+
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-changed:
+		}
+	}
+}
+
 func AcquireInteractiveSlot(ctx context.Context) (func(), error) {
 	backgroundWorkMu.Lock()
 	interactiveWorkWaiters++

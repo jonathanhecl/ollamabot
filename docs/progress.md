@@ -1,5 +1,14 @@
 # Progress
 
+## 2026-11-24 — Autonomous risk gate, approval slot release, and prompt alignment
+
+Closed six remaining autonomous safety, retry-amplification, and prompt/tool alignment gaps:
+
+- **Unattended risk gate enforcement (`internal/tools/tools.go`)**: unattended registries without interactive approval handlers (`AutonomousManager`, `SleepManager`) no longer bypass `ClassifyToolRisk`, blocking `RiskBlocked` and `RiskNeedsApproval` actions while allowing workspace-scoped `RiskSafe` operations.
+- **Background slot release during approvals (`internal/sessions/processing.go`, `internal/tools/tools.go`, `internal/agent/plan_monitor.go`, `internal/agent/goal.go`)**: added blocking `AcquireBackgroundSlot` and `Registry.SetApprovalWaitHooks` so `PlanMonitor` and `GoalManager` release the global background slot while waiting on `ApprovalService` and re-acquire it upon user decision.
+- **Think capability & non-retryable abort guards (`internal/agent/plan_monitor.go`, `internal/agent/goal.go`, `internal/agent/autonomous.go`)**: wired `ShouldThink` into `PlanMonitor`; added `isNonRetryableAgentError` so `GoalManager` and `AutonomousManager` do not retry 3× when a turn already aborted for loops, excessive network calls, or max iterations; capped consecutive `GoalManager` evaluation errors at 3; fixed `AutonomousManager` failed task status reset and 0-todo project completion in `Tick()`.
+- **Channel tool isolation & prompt cleanup (`internal/tools/tools.go`, `internal/learning/sleep_manager.go`, `internal/agent/loop.go`)**: assigned `"autonomous"`, `"sleep"`, `"goal"`, and `"plan_monitor"` channel identities; hid/rejected contradictory tools per channel; removed remaining interactive/image/memory/web-search instructions when unavailable or unattended.
+
 ## 2026-11-24 — Agent loop, deadlock, MCP lifecycle, and channel stability fixes
 
 Resolved 11 additional loop, deadlock, retry-amplification, and VRAM-safety bugs across the agent runtime and channels:

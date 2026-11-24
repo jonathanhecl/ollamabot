@@ -454,6 +454,10 @@ func (am *AutonomousManager) Tick(ctx context.Context) {
 			continue
 		}
 
+		if len(proj.Todos) == 0 {
+			continue
+		}
+
 		// Find the next task to process
 		taskIdx := -1
 		for i, todo := range proj.Todos {
@@ -669,6 +673,8 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 	if model == "" {
 		task.Status = "failed"
 		task.Result = "No default model configured in settings. Cannot execute."
+		proj.CurrentTask = ""
+		proj.Status = recalcAutonomousProjectStatus(proj.Todos)
 		_ = am.SaveProject(proj)
 		err := fmt.Errorf("missing Ollama default model")
 		am.notifyTaskCompletion(proj, *task, err)
@@ -688,6 +694,7 @@ func (am *AutonomousManager) ExecuteTask(ctx context.Context, projectID string, 
 		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	registry.SetChannel("autonomous")
 	registry.SetUnattended(true)
 
 	// Instantiate iterative agent
@@ -764,7 +771,7 @@ Task Description: %s
 			break
 		}
 		log.Printf("[autonomous] Error running agent turn for project %s (attempt %d/%d): %v", projectID, retry+1, maxRunRetries, runErr)
-		if errors.Is(runErr, context.DeadlineExceeded) {
+		if isNonRetryableAgentError(runErr) {
 			break
 		}
 		if retry < maxRunRetries-1 {
@@ -780,7 +787,8 @@ Task Description: %s
 				TavilyAPIKey: am.config().TavilyAPIKey,
 			})
 			registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
-	registry.SetUnattended(true)
+			registry.SetChannel("autonomous")
+			registry.SetUnattended(true)
 			a = NewAgent(am.cfgMgr, am.client, registry)
 		}
 	}
@@ -793,6 +801,8 @@ Task Description: %s
 		} else {
 			task.Result = fmt.Sprintf("Error running agent turn: %v", runErr)
 		}
+		proj.CurrentTask = ""
+		proj.Status = recalcAutonomousProjectStatus(proj.Todos)
 		_ = am.SaveProject(proj)
 		am.notifyTaskCompletion(proj, *task, runErr)
 		return runErr
@@ -989,6 +999,7 @@ func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task 
 		TavilyAPIKey: am.config().TavilyAPIKey,
 	})
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
+	registry.SetChannel("autonomous")
 	registry.SetUnattended(true)
 	a := NewAgent(am.cfgMgr, am.client, registry)
 	a.SetMaxIterations(12)
@@ -1042,4 +1053,21 @@ Respond with a JSON object conforming to the schema:
 		return verificationResponse{Success: true, Evidence: fmt.Sprintf("verification response unparseable: %v", err)}
 	}
 	return vr
+}
+
+func recalcAutonomousProjectStatus(todos []ProjectTodo) string {
+	for _, t := range todos {
+		if t.Status == "pending" || t.Status == "in_progress" {
+			return "pending"
+		}
+	}
+	for _, t := range todos {
+		if t.Status == "failed" {
+			return "failed"
+		}
+	}
+	if len(todos) == 0 {
+		return "pending"
+	}
+	return "completed"
 }

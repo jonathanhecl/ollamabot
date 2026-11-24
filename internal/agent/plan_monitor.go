@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -291,7 +292,11 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 		log.Printf("[PlanMonitor] Background slot busy, deferring plan resume for session %s", sessionID)
 		return
 	}
-	defer releaseSlot()
+	defer func() {
+		if releaseSlot != nil {
+			releaseSlot()
+		}
+	}()
 
 	sess, err := pm.sessionStore.Get(sessionID)
 	if err != nil {
@@ -340,7 +345,24 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	registry.SetApprovalService(pm.approvalService)
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 	// The resume runs with nobody watching: it must execute the step, not ask.
+	registry.SetChannel("plan_monitor")
 	registry.SetUnattended(true)
+	registry.SetApprovalWaitHooks(
+		func() {
+			if releaseSlot != nil {
+				releaseSlot()
+				releaseSlot = nil
+			}
+		},
+		func(waitCtx context.Context) error {
+			slot, err := sessions.AcquireBackgroundSlot(waitCtx)
+			if err != nil {
+				return err
+			}
+			releaseSlot = slot
+			return nil
+		},
+	)
 	registry.SetPlanProgressHandler(func(id string, plan sessions.SessionPlan) {
 		pm.notify(id, plan, sessions.FormatPlanProgressShort(plan))
 	})
@@ -354,7 +376,8 @@ func (pm *PlanMonitor) resumePlan(ctx context.Context, sessionID string, reason 
 	handler := NewRecorderStreamHandler(recorder)
 	runCtx, runCancel := SubagentContext(ctx, pm.config())
 	sessions.RegisterCancel(sessionID, runCancel)
-	finalHistory, err := a.Run(runCtx, model, ollamaMessages, pm.config().OllamaThinkEnabled, handler)
+	think := ShouldThink(model, pm.config().OllamaThinkEnabled, cache.DefaultPath())
+	finalHistory, err := a.Run(runCtx, model, ollamaMessages, think, handler)
 	runCancel()
 	sessions.UnregisterCancel(sessionID)
 	if err != nil {

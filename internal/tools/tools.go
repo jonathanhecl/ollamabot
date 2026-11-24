@@ -85,6 +85,16 @@ type Registry struct {
 	telegramBotToken        string
 	telegramAuthorizedIDs   []string
 	customTelegramSender    TelegramSenderClient
+	onApprovalWaitStart     func()
+	onApprovalWaitEnd       func(context.Context) error
+}
+
+// SetApprovalWaitHooks installs callbacks invoked before and after blocking on
+// ApprovalService during a background run, allowing callers to release and
+// re-acquire the global background slot while a user decides.
+func (r *Registry) SetApprovalWaitHooks(onStart func(), onEnd func(context.Context) error) {
+	r.onApprovalWaitStart = onStart
+	r.onApprovalWaitEnd = onEnd
 }
 
 func (r *Registry) SetTelegramConfig(botToken string, authorizedIDs []string) {
@@ -1399,7 +1409,9 @@ func (r *Registry) Definitions() []ollama.Tool {
 	// send messages directly, spawn voice/file attachments, defer themselves, or
 	// create/modify/trigger scheduled tasks.
 	dropSchedulerTools := r.channel == "scheduler"
-	if !dropPlan && !dropDeviceTools && !dropUnattendedTools && !dropSchedulerTools {
+	dropAutonomousTools := r.channel == "autonomous" || r.channel == "sleep"
+	dropSleepTools := r.channel == "sleep"
+	if !dropPlan && !dropDeviceTools && !dropUnattendedTools && !dropSchedulerTools && !dropAutonomousTools {
 		return r.defs
 	}
 	filtered := make([]ollama.Tool, 0, len(r.defs))
@@ -1423,6 +1435,20 @@ func (r *Registry) Definitions() []ollama.Tool {
 		if dropSchedulerTools {
 			switch name {
 			case "send_telegram", "send_voice", "send_files", "defer_plan_continuation",
+				"schedule_task", "schedule_reminder", "schedule_list",
+				"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run":
+				continue
+			}
+		}
+		if dropAutonomousTools {
+			switch name {
+			case "send_files", "defer_plan_continuation":
+				continue
+			}
+		}
+		if dropSleepTools {
+			switch name {
+			case "send_telegram", "generate_image",
 				"schedule_task", "schedule_reminder", "schedule_list",
 				"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run":
 				continue
@@ -1502,6 +1528,20 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			return "", fmt.Errorf("tool %q is not available in an unattended run: no user is present to hear voice replies", name)
 		}
 	}
+	if r.channel == "autonomous" || r.channel == "sleep" {
+		switch name {
+		case "send_files", "defer_plan_continuation":
+			return "", fmt.Errorf("tool %q is not available on the %s channel", name, r.channel)
+		}
+	}
+	if r.channel == "sleep" {
+		switch name {
+		case "send_telegram", "generate_image",
+			"schedule_task", "schedule_reminder", "schedule_list",
+			"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run":
+			return "", fmt.Errorf("tool %q is not available during sleep reflection", name)
+		}
+	}
 
 	args, parseErr := ParseJSONArgs(call.Function.Arguments)
 	if parseErr != nil {
@@ -1573,7 +1613,7 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 		assessment = classifyScheduleCreation(name, args)
 	}
 
-	if (r.approvalService != nil || r.approvalHandler != nil) && needsApprovalCheck {
+	if (r.approvalService != nil || r.approvalHandler != nil || r.unattended) && needsApprovalCheck {
 		if assessment.Level == RiskBlocked {
 			return "", fmt.Errorf("tool %q blocked: %s", name, assessment.Summary)
 		}
@@ -1591,7 +1631,15 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 					if r.approvalProgressHandler != nil {
 						r.approvalProgressHandler.OnApprovalPending(name, args, assessment.Label)
 					}
+					if r.onApprovalWaitStart != nil {
+						r.onApprovalWaitStart()
+					}
 					approved, err := r.approvalService.RequestApprovalWithRisk(ctx, r.sessionID, name, args, assessment.Summary)
+					if err == nil && r.onApprovalWaitEnd != nil {
+						if waitErr := r.onApprovalWaitEnd(ctx); waitErr != nil {
+							return "", fmt.Errorf("tool approval resume failed: %w", waitErr)
+						}
+					}
 					remembered := approved && r.approvalService.HasGrant(r.sessionID, name, args)
 					if r.approvalProgressHandler != nil {
 						r.approvalProgressHandler.OnApprovalResolved(name, approved, remembered)
