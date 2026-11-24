@@ -163,6 +163,7 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 		s.mu.Lock()
 		delete(s.waiters, approval.ID)
 		delete(s.pending, approval.ID)
+		delete(s.remember, approval.ID)
 		s.mu.Unlock()
 	}()
 
@@ -178,8 +179,29 @@ func (s *ApprovalService) RequestApprovalWithRisk(ctx context.Context, sessionID
 		}
 		return decision.Approved, nil
 	case <-ctx.Done():
+		s.clearPendingIfMatch(sessionID, approval.ID)
 		return false, ctx.Err()
 	}
+}
+
+func (s *ApprovalService) clearPendingIfMatch(sessionID, approvalID string) {
+	if s == nil || s.store == nil || strings.TrimSpace(sessionID) == "" || strings.TrimSpace(approvalID) == "" {
+		return
+	}
+	unlock := lockSession(sessionID)
+	sess, err := s.store.Get(sessionID)
+	if err != nil {
+		unlock()
+		return
+	}
+	if sess.PendingApproval != nil && sess.PendingApproval.ID == approvalID {
+		sess.PendingApproval = nil
+		_ = s.store.Save(sess)
+		unlock()
+		NotifyUpdate(sessionID)
+		return
+	}
+	unlock()
 }
 
 func (s *ApprovalService) RespondApproval(id string, decision ApprovalDecision) error {

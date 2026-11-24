@@ -43,6 +43,7 @@ type Deps struct {
 	CachePath        string
 	MCPManager       *mcp.Manager
 	SchedulerManager tools.SchedulerService
+	OnSleepActivity  func()
 }
 
 // Channel serves the device API. Mount it under /api/device/ on the web mux.

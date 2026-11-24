@@ -189,3 +189,80 @@ func TestProcessTurnUsesConfiguredMainModel(t *testing.T) {
 		t.Fatalf("Ollama request model = %q, want configured-main", requestedModel)
 	}
 }
+
+func TestTelegramOOMRecoveryReleasesInteractiveSlotDuringWait(t *testing.T) {
+	oom := errors.New("mlx runner failed: Insufficient Memory (00000008:kIOGPUCommandBufferCallbackErrorOutOfMemory)")
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{Capabilities: []string{"completion"}})
+		case "/api/chat":
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"` + oom.Error() + `"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer ts.Close()
+
+	cfg := config.Config{
+		OllamaBaseURL:      ts.URL,
+		OllamaDefaultModel: "main-model",
+		Workspace:          t.TempDir(),
+		SessionsPath:       t.TempDir(),
+		MemoryPath:         t.TempDir(),
+		SkillsPath:         t.TempDir(),
+	}
+
+	waitEntered := make(chan struct{})
+	var notifyOnce sync.Once
+	var bgSucceededDuringWait bool
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := ProcessTurn(ctx, Deps{
+			ConfigMgr:     config.NewManager(cfg),
+			Client:        ollama.NewClient(ts.URL),
+			OOMRetryDelay: 300 * time.Millisecond,
+			OnRecoveryStatus: func(msg string) {
+				if msg == "The main model ran out of memory. I will retry once in 10 minutes." {
+					notifyOnce.Do(func() { close(waitEntered) })
+				}
+			},
+		}, TurnRequest{
+			Channel:  "telegram",
+			Messages: []router.MediaMessage{{Message: ollama.Message{Role: "user", Content: "hi"}}},
+		})
+		done <- err
+	}()
+
+	select {
+	case <-waitEntered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("did not enter OOM wait")
+	}
+
+	// Wait briefly for beforeWait() to release the interactive slot before checking background slot.
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		if rel := sessions.TryAcquireBackgroundSlot(); rel != nil {
+			bgSucceededDuringWait = true
+			rel()
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ProcessTurn did not return")
+	}
+	if !bgSucceededDuringWait {
+		t.Fatal("expected background slot to become available while Telegram OOM recovery waited")
+	}
+}

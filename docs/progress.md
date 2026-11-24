@@ -1,5 +1,13 @@
 # Progress
 
+## 2026-11-24 — Agent loop, deadlock, MCP lifecycle, and channel stability fixes
+
+Resolved 11 additional loop, deadlock, retry-amplification, and VRAM-safety bugs across the agent runtime and channels:
+
+- **Agent, Goal, Autonomous & Sleep loops (`internal/agent/loop.go`, `internal/agent/goal.go`, `internal/agent/autonomous.go`, `internal/learning/sleep_manager.go`)**: stopped infinite re-summarization on empty summary responses; bounded malformed XML tool-call retries to 3 while keeping assistant output in history; capped consecutive GoalManager timeouts at 3, added timeout + `CanUseAuxiliaryModel` guards to `evaluateProgress`/`verifyTask`, and respected `ShouldThink`; stopped `AutonomousManager.Tick` from marking projects with failed tasks as `completed`; cached negative `tools` probes in `SleepManager` for 1h and preserved queued subagent sessions.
+- **MCP lifecycle & cancellable Ollama retries (`internal/mcp/client.go`, `internal/mcp/manager.go`, `internal/mcp/stdio.go`, `internal/ollama/client.go`, `internal/router/router.go`)**: decoupled long-lived MCP transport lifecycles from ephemeral HTTP/turn contexts so dynamically added/reconnected servers stay alive, evicted dead clients so lazy reconnect triggers, fixed the `stdioTransport.close()` `ProcessState` data race and `validateServerNoLock` transport close ordering, made `ollama.Client` retry backoffs respect `ctx.Done()`, and stopped `TranscribeAudio` from multiplying transient `client.Chat` failures across attempts.
+- **Channel & slot correctness (`internal/web/server.go`, `internal/sessions/approval.go`, `internal/device/`, `internal/engine/engine.go`, `internal/telegram/bot.go`)**: prevented `webPlanConfirmationHandler` from replacing cancelled contexts with `context.Background()` and leaking the global interactive slot; cleared stale `PendingApproval` on disk when cancelled; removed `SchedulerManager` from `device` engine dependencies (contradicting `denyApprovals`) and wired `OnSleepActivity`; released the interactive slot during Telegram's 10-minute OOM sleep; added timeout + `CanUseAuxiliaryModel` guards to `checkMessagesRelationship`.
+
 ## 2026-11-24 — Scheduler loop, timeout, and contradictory prompt/tool fixes
 
 Fixed multiple loops, concurrency hazards, and contradictory tool/prompt configurations that could saturate Ollama during scheduled task runs:

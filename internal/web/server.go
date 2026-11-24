@@ -187,6 +187,7 @@ func NewServerWithEnv(cfg *config.Manager, client *ollama.Client, runner *probe.
 // deviceDeps exposes the live server dependencies to the device channel.
 func (s *Server) deviceDeps() device.Deps {
 	s.mu.RLock()
+	sm := s.sleepMgr
 	defer s.mu.RUnlock()
 	return device.Deps{
 		ConfigMgr:        s.cfgMgr,
@@ -196,6 +197,11 @@ func (s *Server) deviceDeps() device.Deps {
 		CachePath:        s.cachePath,
 		MCPManager:       s.mcpManager,
 		SchedulerManager: s.schedulerMgr,
+		OnSleepActivity: func() {
+			if sm != nil {
+				sm.NotifyUserActivity()
+			}
+		},
 	}
 }
 
@@ -2869,10 +2875,8 @@ func (h *webPlanConfirmationHandler) RequestPlanApproval(ctx context.Context, su
 				h.flusher.Flush()
 			}
 		case <-ctx.Done():
-			// Keep waiting for the user's card response when possible. The SSE
-			// request may be interrupted while the UI still has the approval card.
-			log.Printf("[Web] Plan confirmation request context closed; continuing until response.")
-			ctx = context.Background()
+			log.Printf("[Web] Plan confirmation cancelled: %v", ctx.Err())
+			return false, ctx.Err()
 		}
 	}
 }

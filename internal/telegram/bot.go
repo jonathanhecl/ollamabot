@@ -728,9 +728,18 @@ func (b *Bot) checkMessagesRelationship(ctx context.Context, history []rawMsg, n
 		}
 	}
 
-	modelToUse := b.config().OllamaModelSubagent
-	if strings.TrimSpace(modelToUse) == "" {
-		modelToUse = b.config().OllamaDefaultModel
+	relCtx, cancelRel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelRel()
+
+	mainModel := strings.TrimSpace(b.config().OllamaDefaultModel)
+	modelToUse := strings.TrimSpace(b.config().OllamaModelSubagent)
+	if modelToUse == "" {
+		modelToUse = mainModel
+	} else if modelToUse != mainModel && mainModel != "" && b.client != nil {
+		if safe, err := b.client.CanUseAuxiliaryModel(relCtx, modelToUse); err != nil || !safe {
+			log.Printf("[Telegram Relation Check] Skipping subagent model %q (safe=%v, err=%v); falling back to main model %q", modelToUse, safe, err, mainModel)
+			modelToUse = mainModel
+		}
 	}
 
 	var sb strings.Builder
@@ -758,7 +767,7 @@ Conversation History:
 New User Message:
 %s`, sb.String(), newMessage)
 
-	resp, err := b.client.Chat(ctx, ollama.ChatRequest{
+	resp, err := b.client.Chat(relCtx, ollama.ChatRequest{
 		Model: modelToUse,
 		Messages: []ollama.Message{
 			{

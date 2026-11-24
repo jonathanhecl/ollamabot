@@ -585,3 +585,24 @@ func TestTurnStageHandlerReportsToolWork(t *testing.T) {
 		t.Fatalf("stage after tool result = %q/%q, want thinking/empty", view.Stage, view.Activity)
 	}
 }
+
+func TestEngineDepsOmitsSchedulerAndWiresSleepActivity(t *testing.T) {
+	called := false
+	ch := NewChannel(func() Deps {
+		return Deps{
+			ConfigMgr:       config.NewManager(config.Config{}),
+			OnSleepActivity: func() { called = true },
+		}
+	})
+	ed := ch.engineDeps("turn-1")
+	if ed.SchedulerManager != nil {
+		t.Fatalf("expected device engineDeps to omit SchedulerManager, got %#v", ed.SchedulerManager)
+	}
+	if ed.OnSleepActivity == nil {
+		t.Fatal("expected device engineDeps to forward OnSleepActivity")
+	}
+	ed.OnSleepActivity()
+	if !called {
+		t.Fatal("expected OnSleepActivity callback to be invoked")
+	}
+}

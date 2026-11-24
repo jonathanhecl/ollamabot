@@ -112,6 +112,10 @@ type TurnResult struct {
 type agentRunFunc func(string) ([]ollama.Message, error)
 
 func runTelegramWithOOMRecovery(ctx context.Context, mainModel, subagentModel string, delay time.Duration, notify func(string), beforeFallback func(), run agentRunFunc) ([]ollama.Message, string, error) {
+	return runTelegramWithOOMRecoveryWithSlot(ctx, mainModel, subagentModel, delay, notify, nil, nil, beforeFallback, run)
+}
+
+func runTelegramWithOOMRecoveryWithSlot(ctx context.Context, mainModel, subagentModel string, delay time.Duration, notify func(string), beforeWait func(), afterWait func(context.Context) error, beforeFallback func(), run agentRunFunc) ([]ollama.Message, string, error) {
 	history, err := run(mainModel)
 	if !ollama.IsOutOfMemoryError(err) {
 		return history, mainModel, err
@@ -122,12 +126,20 @@ func runTelegramWithOOMRecovery(ctx context.Context, mainModel, subagentModel st
 	if notify != nil {
 		notify("The main model ran out of memory. I will retry once in 10 minutes.")
 	}
+	if beforeWait != nil {
+		beforeWait()
+	}
 	timer := time.NewTimer(delay)
-	defer timer.Stop()
 	select {
 	case <-ctx.Done():
+		timer.Stop()
 		return history, mainModel, ctx.Err()
 	case <-timer.C:
+	}
+	if afterWait != nil {
+		if err := afterWait(ctx); err != nil {
+			return history, mainModel, err
+		}
 	}
 
 	history, err = run(mainModel)
@@ -170,6 +182,12 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		deps.OnSleepActivity()
 	}
 
+	var releaseInteractiveSlot func()
+	defer func() {
+		if releaseInteractiveSlot != nil {
+			releaseInteractiveSlot()
+		}
+	}()
 	if req.Background {
 		releaseBackgroundSlot := sessions.TryAcquireBackgroundSlot()
 		if releaseBackgroundSlot == nil {
@@ -177,11 +195,11 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 		}
 		defer releaseBackgroundSlot()
 	} else {
-		releaseInteractiveSlot, err := sessions.AcquireInteractiveSlot(ctx)
+		slot, err := sessions.AcquireInteractiveSlot(ctx)
 		if err != nil {
 			return TurnResult{}, err
 		}
-		defer releaseInteractiveSlot()
+		releaseInteractiveSlot = slot
 	}
 
 	if strings.TrimSpace(req.SessionID) != "" {
@@ -251,6 +269,20 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	var runErr error
 	if strings.EqualFold(strings.TrimSpace(req.Channel), "telegram") {
 		delay := deps.OOMRetryDelay
+		beforeWait := func() {
+			if releaseInteractiveSlot != nil {
+				releaseInteractiveSlot()
+				releaseInteractiveSlot = nil
+			}
+		}
+		afterWait := func(waitCtx context.Context) error {
+			slot, acqErr := sessions.AcquireInteractiveSlot(waitCtx)
+			if acqErr != nil {
+				return acqErr
+			}
+			releaseInteractiveSlot = slot
+			return nil
+		}
 		beforeFallback := func() {
 			unloadCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -258,7 +290,7 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 				log.Printf("[Engine] Failed to unload main model %q before subagent fallback: %v", model, err)
 			}
 		}
-		finalHistory, result.ModelUsed, runErr = runTelegramWithOOMRecovery(ctx, model, config.ResolveModel(cfg, config.ModelRoleSubagent), delay, deps.OnRecoveryStatus, beforeFallback, runAgent)
+		finalHistory, result.ModelUsed, runErr = runTelegramWithOOMRecoveryWithSlot(ctx, model, config.ResolveModel(cfg, config.ModelRoleSubagent), delay, deps.OnRecoveryStatus, beforeWait, afterWait, beforeFallback, runAgent)
 	} else {
 		finalHistory, runErr = runAgent(model)
 	}

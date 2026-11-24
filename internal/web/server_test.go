@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -860,5 +862,50 @@ func TestGetSessionIncludesFolder(t *testing.T) {
 	}
 	if view.Folder != filepath.Join(tmpDir, sess.ID) {
 		t.Fatalf("folder = %q", view.Folder)
+	}
+}
+
+func TestWebPlanConfirmationHandlerReturnsOnCancel(t *testing.T) {
+	s := &Server{
+		planConfirmations: make(map[string]pendingWebPlanConfirmation),
+	}
+	rec := httptest.NewRecorder()
+	h := &webPlanConfirmationHandler{
+		server:    s,
+		w:         rec,
+		flusher:   rec,
+		sessionID: "plan-cancel-sess",
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(25 * time.Millisecond)
+		cancel()
+	}()
+
+	done := make(chan error, 1)
+	go func() {
+		approved, err := h.RequestPlanApproval(ctx, "Plan summary", []string{"Step 1"})
+		if approved {
+			done <- errors.New("expected approved=false on cancellation")
+			return
+		}
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("RequestPlanApproval hung after context cancellation")
+	}
+
+	s.planConfirmationsMu.Lock()
+	remaining := len(s.planConfirmations)
+	s.planConfirmationsMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("expected planConfirmations map cleaned up, got %d entries", remaining)
 	}
 }

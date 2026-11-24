@@ -593,14 +593,16 @@ func audioExtension(audioType string) string {
 func (c *Channel) engineDeps(turnID string) engine.Deps {
 	deps := c.deps()
 	return engine.Deps{
-		ConfigMgr:        deps.ConfigMgr,
-		Client:           deps.Client,
-		SessionStore:     deps.SessionStore,
-		MemoryStore:      deps.MemoryStore,
-		CachePath:        deps.CachePath,
-		MCPManager:       deps.MCPManager,
-		SchedulerManager: deps.SchedulerManager,
-		ApprovalHandler:  denyApprovals{},
+		ConfigMgr:    deps.ConfigMgr,
+		Client:       deps.Client,
+		SessionStore: deps.SessionStore,
+		MemoryStore:  deps.MemoryStore,
+		CachePath:    deps.CachePath,
+		MCPManager:   deps.MCPManager,
+		// Omit SchedulerManager because device turns deny all approval-gated
+		// tools; exposing schedule_task/schedule_reminder would contradict that policy.
+		ApprovalHandler: denyApprovals{},
+		OnSleepActivity: deps.OnSleepActivity,
 		// Device turns have no transport to stream to, but the session still
 		// needs the recorder so the web timeline receives the tool steps,
 		// timings and metrics of a normal turn.
