@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -720,4 +721,27 @@ type badReader struct{}
 
 func (badReader) Read(p []byte) (int, error) {
 	return 0, errors.New("bad read")
+}
+
+func TestTranscribeAudioDoesNotMultiplyChatRetries(t *testing.T) {
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("server error"))
+	}))
+	defer server.Close()
+
+	client := ollama.NewClient(server.URL)
+	r := New(client, Config{MainModel: "main", AudioModel: "audio"})
+
+	_, err := r.TranscribeAudio(context.Background(), "ZmFrZS1hdWRpbw==")
+	if err == nil {
+		t.Fatal("expected error from TranscribeAudio")
+	}
+	// client.Chat retries 3 times internally; TranscribeAudio must NOT multiply
+	// those 3 retries across all 3 transcriptionAttempts (9 total).
+	if got := hits.Load(); got != 3 {
+		t.Fatalf("expected exactly 3 HTTP attempts (from ollama.Client), got %d", got)
+	}
 }

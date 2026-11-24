@@ -47,10 +47,13 @@ type Manager struct {
 	statusErrors map[string]string       // serverName -> last start error
 	configs      map[string]ServerConfig // serverName -> last known config (for lazy reconnect)
 	degraded     map[string]bool         // serverName -> tools registered from cache, no live connection
+	baseCtx      context.Context
+	baseCancel   context.CancelFunc
 	mu           sync.RWMutex
 }
 
 func NewManager(configPath string) *Manager {
+	baseCtx, baseCancel := context.WithCancel(context.Background())
 	return &Manager{
 		configPath:   configPath,
 		clients:      make(map[string]*Client),
@@ -60,7 +63,16 @@ func NewManager(configPath string) *Manager {
 		statusErrors: make(map[string]string),
 		configs:      make(map[string]ServerConfig),
 		degraded:     make(map[string]bool),
+		baseCtx:      baseCtx,
+		baseCancel:   baseCancel,
 	}
+}
+
+func (m *Manager) lifecycleCtx() context.Context {
+	if m.baseCtx != nil {
+		return m.baseCtx
+	}
+	return context.Background()
 }
 
 // resolveConfigPath returns the absolute path to the MCP config file.
@@ -175,7 +187,7 @@ func (m *Manager) startServerNoLock(ctx context.Context, name string, srvCfg Ser
 	log.Printf("[MCP] Initializing server %q (transport=%s)", name, transportLabel(srvCfg.Type))
 	client, err := NewClient(name, srvCfg)
 	if err == nil {
-		err = client.Start(ctx)
+		err = client.StartWithLifecycle(m.lifecycleCtx(), ctx)
 	}
 	var listResult ListToolsResult
 	if err == nil {
@@ -248,10 +260,14 @@ func (m *Manager) Stop() {
 }
 
 func (m *Manager) stopNoLock() {
+	if m.baseCancel != nil {
+		m.baseCancel()
+	}
 	for name, client := range m.clients {
 		log.Printf("[MCP] Stopping server %q...", name)
 		_ = client.Close()
 	}
+	m.baseCtx, m.baseCancel = context.WithCancel(context.Background())
 	m.clients = make(map[string]*Client)
 	m.tools = make(map[string]MCPTool)
 	m.toolServer = make(map[string]string)
@@ -328,6 +344,9 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 	}
 
 	if err := client.Call(ctx, "tools/call", params, &callResult); err != nil {
+		if ctx.Err() == nil {
+			m.evictDeadClient(serverName, client, err)
+		}
 		return "", fmt.Errorf("mcp execution failed: %w", err)
 	}
 
@@ -348,6 +367,23 @@ func (m *Manager) Execute(ctx context.Context, toolName string, args map[string]
 	}
 
 	return output, nil
+}
+
+// evictDeadClient removes a failed client from m.clients and marks the server
+// degraded so subsequent tool calls trigger lazy reconnect instead of hitting
+// the same broken transport forever.
+func (m *Manager) evictDeadClient(serverName string, failed *Client, callErr error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur, ok := m.clients[serverName]; !ok || cur != failed {
+		return
+	}
+	_ = failed.Close()
+	delete(m.clients, serverName)
+	if callErr != nil {
+		m.statusErrors[serverName] = callErr.Error()
+	}
+	m.degraded[serverName] = true
 }
 
 // reconnectServer attempts to start a server that has no live client, using
@@ -540,10 +576,11 @@ func (m *Manager) validateServerNoLock(ctx context.Context, name string, srvCfg 
 	if err != nil {
 		return err
 	}
+	defer client.Close()
+
 	if err := client.Start(ctx); err != nil {
 		return err
 	}
-	defer client.Close()
 
 	var listResult ListToolsResult
 	if err := client.Call(ctx, "tools/list", nil, &listResult); err != nil {

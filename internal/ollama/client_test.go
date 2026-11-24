@@ -541,3 +541,25 @@ func TestClientStreamingAdditionalEdgeCases(t *testing.T) {
 		t.Errorf("expected context.Canceled, got: %v", err)
 	}
 }
+
+func TestBackoffRespectsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("transient failure"))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err := client.Chat(ctx, ChatRequest{Model: "test"})
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context.DeadlineExceeded, got %v", err)
+	}
+	if elapsed >= 450*time.Millisecond {
+		t.Fatalf("expected backoff to abort promptly on context cancel, took %v", elapsed)
+	}
+}

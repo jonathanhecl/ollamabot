@@ -176,6 +176,17 @@ func SanitizeMessages(messages []Message) []Message {
 	return nonSystem
 }
 
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (ChatResponse, error) {
 	req.Stream = boolPtr(false)
 	req.Messages = SanitizeMessages(req.Messages)
@@ -241,7 +252,9 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -253,7 +266,9 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 			resp.Body.Close()
 			bodyText := strings.TrimSpace(string(body))
 			if !isOutOfMemoryMessage(bodyText) && (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -286,7 +301,9 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onChunk func(C
 		resp.Body.Close()
 
 		if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
-			time.Sleep(backoff)
+			if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+				return sleepErr
+			}
 			backoff *= 2
 			continue
 		}
@@ -337,7 +354,9 @@ func (c *Client) Speech(ctx context.Context, req SpeechRequest) (SpeechResponse,
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return SpeechResponse{}, sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -348,7 +367,9 @@ func (c *Client) Speech(ctx context.Context, req SpeechRequest) (SpeechResponse,
 		resp.Body.Close()
 		if readErr != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return SpeechResponse{}, sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -358,7 +379,9 @@ func (c *Client) Speech(ctx context.Context, req SpeechRequest) (SpeechResponse,
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			message := speechErrorMessage(body)
 			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return SpeechResponse{}, sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -438,7 +461,9 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 		resp, err := c.httpClient.Do(httpReq)
 		if err != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -449,7 +474,9 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			if (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -482,7 +509,9 @@ func (c *Client) GenerateStream(ctx context.Context, req GenerateRequest, onChun
 		resp.Body.Close()
 
 		if decodedCount == 0 && attempt < maxRetries-1 && ctx.Err() == nil {
-			time.Sleep(backoff)
+			if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+				return sleepErr
+			}
 			backoff *= 2
 			continue
 		}
@@ -525,7 +554,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -536,7 +567,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		resp.Body.Close()
 		if err != nil {
 			if attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}
@@ -546,7 +579,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, out any)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			bodyText := strings.TrimSpace(string(respBody))
 			if !isOutOfMemoryMessage(bodyText) && (resp.StatusCode >= 500 || resp.StatusCode == 429) && attempt < maxRetries-1 && ctx.Err() == nil {
-				time.Sleep(backoff)
+				if sleepErr := sleepWithContext(ctx, backoff); sleepErr != nil {
+					return sleepErr
+				}
 				backoff *= 2
 				continue
 			}

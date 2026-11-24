@@ -241,13 +241,16 @@ func (s *stdioTransport) close() error {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = s.cmd.Process.Signal(os.Interrupt)
 
+		waitDone := make(chan struct{})
 		go func() {
-			time.Sleep(2 * time.Second)
-			if s.cmd.ProcessState == nil || !s.cmd.ProcessState.Exited() {
+			select {
+			case <-waitDone:
+			case <-time.After(2 * time.Second):
 				_ = s.cmd.Process.Kill()
 			}
 		}()
 		_ = s.cmd.Wait()
+		close(waitDone)
 	}
 	return nil
 }

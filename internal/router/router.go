@@ -259,10 +259,9 @@ func (r *Router) TranscribeAudio(ctx context.Context, base64data string) (AudioT
 		if err != nil {
 			log.Printf("[Router] TranscribeAudio FAILED (attempt %d): %v", attempt, err)
 			lastErr = fmt.Errorf("audio transcription (%s): %w", model, err)
-			if ctx.Err() != nil {
-				break
-			}
-			continue
+			// client.Chat already retries transient HTTP/network failures internally;
+			// break immediately instead of multiplying retries across attempts.
+			break
 		}
 		raw := strings.TrimSpace(resp.Message.Content)
 		if resp.DoneReason == "length" {

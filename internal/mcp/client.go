@@ -72,10 +72,24 @@ func NewClient(name string, cfg ServerConfig) (*Client, error) {
 	return &Client{name: name, transport: t}, nil
 }
 
-// Start performs the initialize handshake. The transport must have been
-// prepared (via its start method) before calling.
+// Start performs the initialize handshake using ctx for both transport
+// lifetime and handshake timeout.
 func (c *Client) Start(ctx context.Context) error {
-	if err := c.transport.start(ctx); err != nil {
+	return c.StartWithLifecycle(ctx, ctx)
+}
+
+// StartWithLifecycle prepares the transport under lifecycleCtx (so long-lived
+// subprocesses or SSE streams outlive an individual HTTP request or chat turn)
+// while bounding the initialize handshake with handshakeCtx.
+func (c *Client) StartWithLifecycle(lifecycleCtx, handshakeCtx context.Context) error {
+	if lifecycleCtx == nil {
+		lifecycleCtx = context.Background()
+	}
+	if handshakeCtx == nil {
+		handshakeCtx = lifecycleCtx
+	}
+	if err := c.transport.start(lifecycleCtx); err != nil {
+		_ = c.transport.close()
 		return err
 	}
 
@@ -89,14 +103,14 @@ func (c *Client) Start(ctx context.Context) error {
 	}
 
 	var initResult InitializeResult
-	if err := c.transport.call(ctx, "initialize", initParams, &initResult); err != nil {
+	if err := c.transport.call(handshakeCtx, "initialize", initParams, &initResult); err != nil {
 		_ = c.transport.close()
 		return fmt.Errorf("mcp initialize failed: %w", err)
 	}
 
 	// Send initialized notification. We send an empty params object because some
 	// servers (e.g. Obsidian Local REST API) expect a params field to be present.
-	if err := c.transport.notify(ctx, "notifications/initialized", map[string]any{}); err != nil {
+	if err := c.transport.notify(handshakeCtx, "notifications/initialized", map[string]any{}); err != nil {
 		_ = c.transport.close()
 		return fmt.Errorf("mcp notifications/initialized failed: %w", err)
 	}

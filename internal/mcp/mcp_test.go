@@ -417,3 +417,71 @@ func TestManagerToolsCacheWritten(t *testing.T) {
 		t.Errorf("unexpected cached tool: %+v", cache.Servers["mock"][0])
 	}
 }
+
+func TestManagerAddOrUpdateOutlivesRequestContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := NewManager(filepath.Join(tmpDir, "mcp_config.json"))
+	defer manager.Stop()
+
+	reqCtx, cancelReq := context.WithTimeout(context.Background(), 5*time.Second)
+	srv := ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		Safe:    true,
+	}
+	if err := manager.AddOrUpdateServer(reqCtx, "mock", srv); err != nil {
+		cancelReq()
+		t.Fatalf("AddOrUpdateServer failed: %v", err)
+	}
+	// Cancel the HTTP/turn request context right after registration.
+	cancelReq()
+	time.Sleep(25 * time.Millisecond)
+
+	out, err := manager.Execute(context.Background(), "echo", map[string]any{"msg": "still-alive"})
+	if err != nil {
+		t.Fatalf("expected MCP server to survive request context cancellation, got error: %v", err)
+	}
+	if out != "echo: still-alive" {
+		t.Fatalf("unexpected output %q", out)
+	}
+}
+
+func TestManagerEvictsDeadClientAndReconnects(t *testing.T) {
+	tmpDir := t.TempDir()
+	manager := NewManager(filepath.Join(tmpDir, "mcp_config.json"))
+	defer manager.Stop()
+
+	srv := ServerConfig{
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestHelperProcess"},
+		Env:     map[string]string{"GO_WANT_HELPER_PROCESS": "1"},
+		Safe:    true,
+	}
+	if err := manager.AddOrUpdateServer(context.Background(), "mock", srv); err != nil {
+		t.Fatalf("AddOrUpdateServer failed: %v", err)
+	}
+
+	// Simulate an unexpected subprocess crash.
+	manager.mu.RLock()
+	cur := manager.clients["mock"]
+	manager.mu.RUnlock()
+	if cur == nil {
+		t.Fatal("expected live client")
+	}
+	_ = cur.Close()
+
+	_, err := manager.Execute(context.Background(), "echo", map[string]any{"msg": "after-crash"})
+	if err == nil {
+		t.Fatal("expected initial Execute on dead client to fail")
+	}
+
+	// Next Execute should lazily reconnect and succeed.
+	out, err := manager.Execute(context.Background(), "echo", map[string]any{"msg": "recovered"})
+	if err != nil {
+		t.Fatalf("expected Execute after dead client eviction to reconnect and succeed, got %v", err)
+	}
+	if out != "echo: recovered" {
+		t.Fatalf("unexpected output %q", out)
+	}
+}
