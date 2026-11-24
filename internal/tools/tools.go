@@ -1350,6 +1350,23 @@ func NewRegistry(webSearch bool, workspace string, memoryStore *memory.Store, cl
 	return r
 }
 
+// scheduleRunExecTimeout returns the execution timeout (in seconds) for
+// schedule_run, aligning with executeScheduleRun's default wait window when
+// wait_seconds is omitted.
+func scheduleRunExecTimeout(args map[string]any) int {
+	wait := defaultManualRunWaitSeconds
+	if v, ok := args["wait_seconds"]; ok && v != nil {
+		wait = toInt(v)
+		if wait < 0 {
+			wait = 0
+		}
+		if wait > maxManualRunWaitSeconds {
+			wait = maxManualRunWaitSeconds
+		}
+	}
+	return wait + 15
+}
+
 // toInt converts a map[string]any value to int, handling float64/int/int64.
 func toInt(v any) int {
 	switch n := v.(type) {
@@ -1378,7 +1395,11 @@ func (r *Registry) Definitions() []ollama.Tool {
 	// and a plan is auto-approved and stored as an active plan no one will
 	// ever review, which the plan monitor then retries forever.
 	dropUnattendedTools := r.unattended
-	if !dropPlan && !dropDeviceTools && !dropUnattendedTools {
+	// Scheduled task runs deliver their final answer automatically and must not
+	// send messages directly, spawn voice/file attachments, defer themselves, or
+	// create/modify/trigger scheduled tasks.
+	dropSchedulerTools := r.channel == "scheduler"
+	if !dropPlan && !dropDeviceTools && !dropUnattendedTools && !dropSchedulerTools {
 		return r.defs
 	}
 	filtered := make([]ollama.Tool, 0, len(r.defs))
@@ -1395,7 +1416,15 @@ func (r *Registry) Definitions() []ollama.Tool {
 		}
 		if dropUnattendedTools {
 			switch name {
-			case "ask_clarification", "present_plan":
+			case "ask_clarification", "present_plan", "send_voice":
+				continue
+			}
+		}
+		if dropSchedulerTools {
+			switch name {
+			case "send_telegram", "send_voice", "send_files", "defer_plan_continuation",
+				"schedule_task", "schedule_reminder", "schedule_list",
+				"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run":
 				continue
 			}
 		}
@@ -1455,12 +1484,22 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 			return "", fmt.Errorf("tool %q is not available on the device channel: it has no way to receive files", name)
 		}
 	}
+	if r.channel == "scheduler" {
+		switch name {
+		case "send_telegram", "send_voice", "send_files", "defer_plan_continuation",
+			"schedule_task", "schedule_reminder", "schedule_list",
+			"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run":
+			return "", fmt.Errorf("tool %q is not available during a scheduled task run: delivery is automatic and tasks cannot manage schedules", name)
+		}
+	}
 	if r.unattended {
 		// Nobody is present during a scheduled or background run: asking would
 		// block the turn and a plan would be approved by the run itself.
 		switch name {
 		case "ask_clarification", "present_plan":
 			return "", fmt.Errorf("tool %q is not available in an unattended run: nobody can answer it. Act on your best judgment and report the assumption in your final answer", name)
+		case "send_voice":
+			return "", fmt.Errorf("tool %q is not available in an unattended run: no user is present to hear voice replies", name)
 		}
 	}
 
@@ -1600,14 +1639,10 @@ func (r *Registry) Execute(ctx context.Context, call ollama.ToolCall) (string, e
 	}
 	if name == "schedule_run" {
 		// A forced run waits for the real task to finish; give it room past the
-		// caller's wait window so the tool can report the outcome itself instead
-		// of dying on the default timeout.
-		if t := toInt(args["wait_seconds"]); t > 0 {
-			if t > maxManualRunWaitSeconds {
-				t = maxManualRunWaitSeconds
-			}
-			timeoutSec = t + 15
-		}
+		// caller's wait window (defaulting to defaultManualRunWaitSeconds when
+		// omitted) so the tool can report the outcome itself instead of dying
+		// on the 60s default timeout.
+		timeoutSec = scheduleRunExecTimeout(args)
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
 	defer cancel()

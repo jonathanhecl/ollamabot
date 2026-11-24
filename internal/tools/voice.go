@@ -77,7 +77,13 @@ func (r *Registry) SetSpeechModel(model string) {
 
 // VoiceEnabled reports whether send_voice is exposed to the model.
 func (r *Registry) VoiceEnabled() bool {
-	return r.enabled["send_voice"]
+	if r == nil || !r.enabled["send_voice"] {
+		return false
+	}
+	if r.unattended || r.channel == "device" || r.channel == "scheduler" {
+		return false
+	}
+	return true
 }
 
 // SpeechModel returns the configured text-to-speech model, if any.

@@ -421,3 +421,15 @@ func TestScheduleRunWithoutWaitReturnsImmediately(t *testing.T) {
 		t.Error("expected an unknown task to fail")
 	}
 }
+
+func TestScheduleRunExecTimeoutDefaultsToManualWaitWindow(t *testing.T) {
+	if got := scheduleRunExecTimeout(map[string]any{}); got != defaultManualRunWaitSeconds+15 {
+		t.Fatalf("default timeout = %d, want %d", got, defaultManualRunWaitSeconds+15)
+	}
+	if got := scheduleRunExecTimeout(map[string]any{"wait_seconds": 0}); got != 15 {
+		t.Fatalf("zero-wait timeout = %d, want 15", got)
+	}
+	if got := scheduleRunExecTimeout(map[string]any{"wait_seconds": 999}); got != maxManualRunWaitSeconds+15 {
+		t.Fatalf("clamped timeout = %d, want %d", got, maxManualRunWaitSeconds+15)
+	}
+}

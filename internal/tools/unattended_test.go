@@ -70,3 +70,51 @@ func TestInteractiveRunsKeepInteractiveTools(t *testing.T) {
 		}
 	}
 }
+
+func TestSchedulerChannelHidesAndRejectsContradictoryTools(t *testing.T) {
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSchedulerService(&mockSchedulerService{})
+	registry.SetSpeechModel("test-speech")
+	registry.SetTelegramConfig("bot-token", []string{"123"})
+	registry.SetPlanConfirmMode("always")
+	registry.SetChannel("scheduler")
+	registry.SetUnattended(true)
+
+	if registry.VoiceEnabled() {
+		t.Fatal("VoiceEnabled must be false on scheduler channel")
+	}
+
+	forbidden := []string{
+		"ask_clarification", "present_plan", "defer_plan_continuation",
+		"send_telegram", "send_voice", "send_files",
+		"schedule_task", "schedule_reminder", "schedule_list",
+		"schedule_update", "schedule_delete", "schedule_cancel", "schedule_run",
+	}
+	for _, name := range forbidden {
+		if hasTool(registry, name) {
+			t.Fatalf("%s should not be offered on scheduler channel", name)
+		}
+		_, err := registry.Execute(context.Background(), unattendedToolCall(name, map[string]any{}))
+		if err == nil {
+			t.Fatalf("expected %s execution to be rejected on scheduler channel", name)
+		}
+	}
+}
+
+func TestUnattendedHidesAndRejectsVoice(t *testing.T) {
+	registry := NewRegistry(false, ".", nil, nil, "", SearchConfig{})
+	registry.SetSpeechModel("test-speech")
+	registry.SetChannel("web")
+	registry.SetUnattended(true)
+
+	if registry.VoiceEnabled() {
+		t.Fatal("VoiceEnabled must be false in unattended runs")
+	}
+	if hasTool(registry, "send_voice") {
+		t.Fatal("send_voice should not be offered in unattended runs")
+	}
+	_, err := registry.Execute(context.Background(), unattendedToolCall("send_voice", map[string]any{"text": "hi"}))
+	if err == nil || !strings.Contains(err.Error(), "unattended run") {
+		t.Fatalf("expected send_voice to be rejected in unattended run, got %v", err)
+	}
+}

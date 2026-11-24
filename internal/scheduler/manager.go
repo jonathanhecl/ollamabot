@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/agent"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/engine"
 	"github.com/jonathanhecl/ollamabot/internal/mcp"
@@ -20,6 +21,11 @@ import (
 	"github.com/jonathanhecl/ollamabot/internal/router"
 	"github.com/jonathanhecl/ollamabot/internal/sessions"
 	"github.com/jonathanhecl/ollamabot/internal/tools"
+)
+
+const (
+	minAgentTaskInterval  = time.Minute
+	scheduledTaskMaxIters = 15
 )
 
 // NotificationFunc is called when a task triggers and needs to deliver a message to a user/channel.
@@ -42,9 +48,10 @@ type Manager struct {
 	notifiers      map[string]NotificationFunc
 	rootCtx        context.Context
 	cancelFunc     context.CancelFunc
-	tickerDone     chan struct{}
-	interval       time.Duration
-	isExecuting    map[string]bool
+	tickerDone         chan struct{}
+	interval           time.Duration
+	isExecuting        map[string]bool
+	manualAgentRunning bool
 }
 
 const scheduledTaskSystemPromptBase = `You are OllamaBot executing a scheduled task on behalf of the user, who is not present right now.
@@ -396,6 +403,11 @@ func (m *Manager) CreateScheduledTask(spec tools.ScheduledTaskSpec) (tools.Sched
 	default:
 		return tools.ScheduledTaskInfo{}, fmt.Errorf("unknown task type %q", spec.Type)
 	}
+	if tType == TaskTypeAgentTask && schedType == ScheduleTypeInterval {
+		if dur, ok := parseCustomDuration(expr); ok && dur < minAgentTaskInterval {
+			return tools.ScheduledTaskInfo{}, fmt.Errorf("autonomous agent task interval must be at least %s", minAgentTaskInterval)
+		}
+	}
 
 	origin := strings.TrimSpace(spec.OriginSessionID)
 	task := Task{
@@ -453,6 +465,12 @@ func (m *Manager) UpdateScheduledTask(id string, patch tools.ScheduledTaskPatch)
 		if err != nil {
 			m.mu.Unlock()
 			return tools.ScheduledTaskInfo{}, fmt.Errorf("invalid schedule format %q: %w", patch.When, err)
+		}
+		if task.Type == TaskTypeAgentTask && schedType == ScheduleTypeInterval {
+			if dur, ok := parseCustomDuration(expr); ok && dur < minAgentTaskInterval {
+				m.mu.Unlock()
+				return tools.ScheduledTaskInfo{}, fmt.Errorf("autonomous agent task interval must be at least %s", minAgentTaskInterval)
+			}
 		}
 		task.ScheduleType = schedType
 		task.NextRunAt = nextRun
@@ -759,14 +777,28 @@ func (m *Manager) RunScheduledTaskNow(id string) (<-chan tools.ManualRunOutcome,
 		m.mu.Unlock()
 		return nil, task.ToInfo(), fmt.Errorf("task %q is already running", id)
 	}
+	if task.Type == TaskTypeAgentTask && m.manualAgentRunning {
+		m.mu.Unlock()
+		return nil, task.ToInfo(), fmt.Errorf("another forced agent task is already running")
+	}
 	// Claim the slot before the goroutine starts so a tick or a second request
 	// cannot launch the same task twice.
 	m.isExecuting[task.ID] = true
+	if task.Type == TaskTypeAgentTask {
+		m.manualAgentRunning = true
+	}
 	m.mu.Unlock()
 
 	out := make(chan tools.ManualRunOutcome, 1)
 	go func() {
 		defer close(out)
+		if task.Type == TaskTypeAgentTask {
+			defer func() {
+				m.mu.Lock()
+				m.manualAgentRunning = false
+				m.mu.Unlock()
+			}()
+		}
 		start := time.Now()
 		res := m.runTask(m.runContext(), task, true)
 		info := task.ToInfo()
@@ -803,9 +835,8 @@ func (m *Manager) runTask(ctx context.Context, task Task, manual bool) runOutcom
 		m.mu.Unlock()
 	}()
 
-	now := time.Now()
-
 	if task.Type == TaskTypeAlert {
+		now := time.Now()
 		msg := fmt.Sprintf("⏰ **Reminder**: %s", task.Prompt)
 		m.recordRun(task, now, nil, manual, nil)
 		if !manual {
@@ -816,10 +847,10 @@ func (m *Manager) runTask(ctx context.Context, task Task, manual bool) runOutcom
 		return runOutcome{answer: msg}
 	}
 
-	return m.executeAgentTask(ctx, task, now, manual)
+	return m.executeAgentTask(ctx, task, manual)
 }
 
-func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time, manual bool) runOutcome {
+func (m *Manager) executeAgentTask(ctx context.Context, task Task, manual bool) runOutcome {
 	m.mu.RLock()
 	_, exists := m.tasks[task.ID]
 	m.mu.RUnlock()
@@ -834,7 +865,7 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 	}
 	if strings.TrimSpace(model) == "" {
 		err := fmt.Errorf("no default model configured")
-		m.recordRun(task, now, err, manual, nil)
+		m.recordRun(task, time.Now(), err, manual, nil)
 		return runOutcome{err: err}
 	}
 
@@ -846,7 +877,7 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		}
 		if err := m.sessionStore.Save(sess); err != nil {
 			err = fmt.Errorf("failed to create run session: %w", err)
-			m.recordRun(task, now, err, manual, nil)
+			m.recordRun(task, time.Now(), err, manual, nil)
 			return runOutcome{err: err}
 		}
 		task.SessionID = sess.ID
@@ -865,12 +896,13 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 	var alerts []string
 
 	deps := engine.Deps{
-		ConfigMgr:        m.cfgMgr,
-		Client:           m.client,
-		SessionStore:     m.sessionStore,
-		MemoryStore:      m.memoryStore,
-		MCPManager:       m.mcpMgr,
-		SchedulerManager: m,
+		ConfigMgr:    m.cfgMgr,
+		Client:       m.client,
+		SessionStore: m.sessionStore,
+		MemoryStore:  m.memoryStore,
+		MCPManager:   m.mcpMgr,
+		// Do not wire SchedulerManager inside scheduled runs: tasks must not
+		// create, modify, list, or trigger scheduled tasks recursively.
 		// Nobody is present to approve risky tools during a scheduled run.
 		ApprovalHandler: denyApprovals{},
 		// No plan confirmations, no clarifications: the run answers to nobody.
@@ -889,7 +921,10 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		{Message: ollama.Message{Role: "user", Content: task.Prompt}},
 	}
 
-	result, err := engine.ProcessTurn(ctx, deps, engine.TurnRequest{
+	runCtx, runCancel := agent.SubagentContext(ctx, cfg)
+	defer runCancel()
+
+	result, err := engine.ProcessTurn(runCtx, deps, engine.TurnRequest{
 		SessionID:  task.SessionID,
 		Channel:    "scheduler",
 		Background: !manual,
@@ -897,7 +932,8 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 		// Each run starts from the task instruction and its last observation.
 		// Dragging the tool output of every previous run into the context makes
 		// the run slower and eventually unanswerable.
-		FreshContext: true,
+		FreshContext:  true,
+		MaxIterations: scheduledTaskMaxIters,
 	})
 	if errors.Is(err, engine.ErrBackgroundBusy) {
 		// Another background loop (sleep, goal) is using the model. Leave the
@@ -910,7 +946,7 @@ func (m *Manager) executeAgentTask(ctx context.Context, task Task, now time.Time
 	if err == nil {
 		answer = strings.TrimSpace(result.FinalAnswer)
 	}
-	m.finishAgentRun(task, now, err, answer, alerts, manual)
+	m.finishAgentRun(task, time.Now(), err, answer, alerts, manual)
 	return runOutcome{answer: answer, alerts: alerts, err: err}
 }
 
@@ -1043,6 +1079,9 @@ func (m *Manager) recordRun(task Task, now time.Time, runErr error, manual bool,
 	return current, true
 }
 
+// advanceOrComplete updates the schedule after a run finishes. Callers must
+// pass completion time so NextRunAt is always strictly in the future and a slow
+// run does not re-trigger back-to-back on the next tick.
 func (m *Manager) advanceOrComplete(task *Task, now time.Time) {
 	switch task.ScheduleType {
 	case ScheduleTypeOnce:

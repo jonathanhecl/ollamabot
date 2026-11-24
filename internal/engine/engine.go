@@ -92,6 +92,9 @@ type TurnRequest struct {
 	// of every previous run: that history grows without bound and eventually
 	// fills the context until the run answers nothing at all.
 	FreshContext bool
+	// MaxIterations overrides agent.MaxIterations when positive (e.g. to cap
+	// unattended scheduled runs).
+	MaxIterations int
 }
 
 // ErrBackgroundBusy reports that another background loop is already running.
@@ -239,6 +242,9 @@ func ProcessTurn(ctx context.Context, deps Deps, req TurnRequest) (TurnResult, e
 	runAgent := func(runModel string) ([]ollama.Message, error) {
 		runThink := agent.ShouldThink(runModel, cfg.OllamaThinkEnabled, SnapshotPath(deps.CachePath))
 		a := agent.NewAgent(deps.ConfigMgr, deps.Client, registry)
+		if req.MaxIterations > 0 {
+			a.SetMaxIterations(req.MaxIterations)
+		}
 		return a.Run(ctx, runModel, ollamaMessages, runThink, handler)
 	}
 	var finalHistory []ollama.Message

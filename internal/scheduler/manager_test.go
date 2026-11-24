@@ -928,3 +928,272 @@ func TestManager_IsTaskSession(t *testing.T) {
 		t.Fatal("expected another session to be ignored")
 	}
 }
+
+func TestManager_RecurringTaskReschedulesFromCompletionTime(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_, _ = io.Copy(io.Discard, r.Body)
+			time.Sleep(150 * time.Millisecond)
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Done."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	})
+	mgr.client = ollama.NewClient(server.URL)
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Title:   "Slow check",
+		Prompt:  "Check status",
+		When:    "every 1m",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	started := time.Now()
+	res := mgr.runTask(context.Background(), task, false)
+	if res.err != nil {
+		t.Fatalf("run failed: %v", res.err)
+	}
+
+	updated, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	minExpected := started.Add(time.Minute + 120*time.Millisecond)
+	if updated.NextRunAt.Before(minExpected) {
+		t.Fatalf("NextRunAt = %v, expected >= %v (completion-based reschedule)", updated.NextRunAt, minExpected)
+	}
+}
+
+func TestManager_AgentTaskRejectsSubMinuteInterval(t *testing.T) {
+	mgr := newTestManager(t, config.Config{ServerEnabled: true})
+
+	if _, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "Poll rapidly",
+		When:    "every 10s",
+	}); err == nil {
+		t.Fatal("expected sub-minute interval for agent_task to be rejected")
+	}
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "Poll normally",
+		When:    "every 1m",
+	})
+	if err != nil {
+		t.Fatalf("expected 1m interval for agent_task to succeed: %v", err)
+	}
+	if _, err := mgr.UpdateScheduledTask(info.ID, tools.ScheduledTaskPatch{When: "every 30s"}); err == nil {
+		t.Fatal("expected sub-minute interval update for agent_task to be rejected")
+	}
+
+	if _, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "alert",
+		Prompt:  "Quick reminder",
+		When:    "every 10s",
+	}); err != nil {
+		t.Fatalf("expected 10s interval for simple alert to remain valid: %v", err)
+	}
+}
+
+func TestManager_ScheduledRunHidesContradictoryToolsAndPrompts(t *testing.T) {
+	var mu sync.Mutex
+	var captured ollama.ChatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			raw, _ := io.ReadAll(r.Body)
+			mu.Lock()
+			_ = json.Unmarshal(raw, &captured)
+			mu.Unlock()
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Report complete."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		WebSearchEnabled:   true,
+		PlanConfirmation:   "always",
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+		OllamaModelSpeech:  "test-speech",
+		TelegramBotToken:   "bot:token",
+	})
+	mgr.client = ollama.NewClient(server.URL)
+
+	info, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Title:   "Morning check",
+		Prompt:  "Check the news every day at 9:00 and send a summary",
+		When:    "0 9 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := mgr.GetTask(info.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res := mgr.runTask(context.Background(), task, false); res.err != nil {
+		t.Fatalf("scheduled run failed: %v", res.err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	forbiddenTools := map[string]bool{
+		"schedule_task": true, "schedule_reminder": true, "schedule_list": true,
+		"schedule_update": true, "schedule_delete": true, "schedule_cancel": true,
+		"schedule_run": true, "send_telegram": true, "send_voice": true,
+		"send_files": true, "present_plan": true, "ask_clarification": true,
+		"defer_plan_continuation": true,
+	}
+	for _, def := range captured.Tools {
+		if forbiddenTools[def.Function.Name] {
+			t.Fatalf("forbidden contradictory tool %q exposed in scheduled run", def.Function.Name)
+		}
+	}
+
+	var sysPrompt strings.Builder
+	for _, msg := range captured.Messages {
+		if msg.Role == "system" {
+			sysPrompt.WriteString(msg.Content)
+			sysPrompt.WriteString("\n")
+		}
+	}
+	for _, banned := range []string{
+		"MUST first call the 'present_plan' tool",
+		"MUST use the 'ask_clarification' tool",
+		"You can answer with your voice",
+		"## Scheduled Task Observations",
+	} {
+		if strings.Contains(sysPrompt.String(), banned) {
+			t.Fatalf("scheduled run system prompt contains contradictory instruction %q", banned)
+		}
+	}
+}
+
+func TestManager_RejectsConcurrentManualAgentRuns(t *testing.T) {
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_, _ = io.Copy(io.Discard, r.Body)
+			select {
+			case <-started:
+			default:
+				close(started)
+			}
+			<-gate
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Finished."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	mgr := newTestManager(t, config.Config{
+		ServerEnabled:      true,
+		OllamaBaseURL:      server.URL,
+		OllamaDefaultModel: "test-model",
+	})
+	mgr.client = ollama.NewClient(server.URL)
+
+	t1, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "Task 1",
+		When:    "0 9 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t2, err := mgr.CreateScheduledTask(tools.ScheduledTaskSpec{
+		Channel: "web",
+		Type:    "agent_task",
+		Prompt:  "Task 2",
+		When:    "0 10 * * *",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out1, _, err := mgr.RunScheduledTaskNow(t1.ID)
+	if err != nil {
+		t.Fatalf("first forced run failed: %v", err)
+	}
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		close(gate)
+		t.Fatal("timed out waiting for first forced run to hit model")
+	}
+
+	if _, _, err := mgr.RunScheduledTaskNow(t2.ID); err == nil {
+		close(gate)
+		t.Fatal("expected second concurrent forced agent task to be rejected")
+	}
+
+	close(gate)
+	if res := waitOutcome(t, out1); res.Err != "" {
+		t.Fatalf("first forced run failed: %s", res.Err)
+	}
+
+	out2, _, err := mgr.RunScheduledTaskNow(t2.ID)
+	if err != nil {
+		t.Fatalf("forced run after completion failed: %v", err)
+	}
+	if res := waitOutcome(t, out2); res.Err != "" {
+		t.Fatalf("second forced run failed: %s", res.Err)
+	}
+}
