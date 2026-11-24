@@ -329,6 +329,69 @@ func TestLearningCycleSkipsWhenModelLacksTools(t *testing.T) {
 	}
 }
 
+func TestLearningCycleCachesNegativeToolsProbeAndRequeuesSubagentSessions(t *testing.T) {
+	tmpDir := t.TempDir()
+	chatCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/chat" {
+			chatCalls++
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Model: "uncached-no-tools-model",
+				Message: ollama.Message{
+					Role:    "assistant",
+					Content: "No tools supported.",
+				},
+				Done: true,
+			})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+
+	sessionsPath := filepath.Join(tmpDir, "sessions")
+	store := sessions.NewStore(sessionsPath)
+	msg1, _ := json.Marshal(map[string]string{"role": "user", "content": "q1"})
+	msg2, _ := json.Marshal(map[string]string{"role": "assistant", "content": "a1"})
+	msg3, _ := json.Marshal(map[string]string{"role": "user", "content": "q2"})
+	_ = store.Save(sessions.Session{
+		ID:       "sub-sess-1",
+		Title:    "Subagent Session",
+		Messages: []json.RawMessage{msg1, msg2, msg3},
+	})
+
+	cfg := config.Config{
+		Workspace:                 filepath.Join(tmpDir, "workspace"),
+		SessionsPath:              sessionsPath,
+		SkillsPath:                filepath.Join(tmpDir, "skills"),
+		SleepModeEnabled:          true,
+		SleepModeSubagentsEnabled: true,
+		OllamaModelLearning:       "uncached-no-tools-model",
+	}
+
+	sm := NewSleepManager(config.NewManager(cfg), ollama.NewClient(server.URL), nil)
+	sm.runLearningCycleForSessionsWithModel(context.Background(), []string{"sub-sess-1"}, "uncached-no-tools-model")
+	if chatCalls == 0 {
+		t.Fatalf("expected initial probe call to Ollama")
+	}
+	firstCallCount := chatCalls
+
+	// Session must have been re-queued in subagent mode instead of dropped.
+	sm.mu.RLock()
+	queuedLen := len(sm.taskQueue)
+	sm.mu.RUnlock()
+	if queuedLen != 1 || sm.taskQueue[0].TargetID != "sub-sess-1" {
+		t.Fatalf("expected sub-sess-1 to be re-queued, got %+v", sm.taskQueue)
+	}
+
+	// Second call within TTL must hit the in-memory negative probe cache and not call Ollama.
+	sm.runLearningCycleForSessionsWithModel(context.Background(), []string{"sub-sess-1"}, "uncached-no-tools-model")
+	if chatCalls != firstCallCount {
+		t.Fatalf("expected second cycle to hit negative probe cache (0 new calls), got %d -> %d", firstCallCount, chatCalls)
+	}
+}
+
 func TestTrivialSessionAutoAnalyzed(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "sleep-mgr-test-*")
 	if err != nil {

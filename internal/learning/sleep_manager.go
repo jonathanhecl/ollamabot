@@ -31,10 +31,17 @@ type LearningState struct {
 }
 
 const (
-	defaultCycleCooldown = 15 * time.Minute // minimum rest between completed learning cycles
-	defaultDeferBackoff  = 3 * time.Minute  // wait time when VRAM/hardware or background slot is busy
-	maxSessionFailures   = 3                // max retries before skipping a failing session
+	defaultCycleCooldown         = 15 * time.Minute // minimum rest between completed learning cycles
+	defaultDeferBackoff          = 3 * time.Minute  // wait time when VRAM/hardware or background slot is busy
+	defaultUnsupportedToolsBackoff = 1 * time.Hour    // backoff when learning model does not support tool calls
+	toolsProbeCacheTTL           = 1 * time.Hour    // in-memory TTL for positive/negative tools probe results
+	maxSessionFailures           = 3                // max retries before skipping a failing session
 )
+
+type toolsProbeEntry struct {
+	supported bool
+	checkedAt time.Time
+}
 
 type Subtask struct {
 	Type     string `json:"type"`      // "analyze_session"
@@ -59,6 +66,7 @@ type SleepManager struct {
 	resumeNotBefore time.Time         // don't re-enter sleep before this (resume delay)
 	cooldownUntil   time.Time         // don't start next learning cycle before this time
 	failedAttempts  map[string]int    // track failures per session to prevent infinite retry loops
+	toolsProbeCache map[string]toolsProbeEntry
 }
 
 func (sm *SleepManager) config() config.Config {
@@ -73,13 +81,14 @@ func (sm *SleepManager) setCooldown(d time.Duration) {
 
 func NewSleepManager(cfg *config.Manager, client *ollama.Client, memoryStore *memory.Store) *SleepManager {
 	return &SleepManager{
-		cfgMgr:         cfg,
-		client:         client,
-		sessionStore:   sessions.NewStore(cfg.Get().SessionsPath),
-		memoryStore:    memoryStore,
-		lastActivity:   time.Now(),
-		statePath:      filepath.Join(cfg.Get().SessionsPath, "learning_state.json"),
-		failedAttempts: make(map[string]int),
+		cfgMgr:          cfg,
+		client:          client,
+		sessionStore:    sessions.NewStore(cfg.Get().SessionsPath),
+		memoryStore:     memoryStore,
+		lastActivity:    time.Now(),
+		statePath:       filepath.Join(cfg.Get().SessionsPath, "learning_state.json"),
+		failedAttempts:  make(map[string]int),
+		toolsProbeCache: make(map[string]toolsProbeEntry),
 	}
 }
 
@@ -592,15 +601,40 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 	// support it loops uselessly until MaxIterations.
 	probePath := cache.DefaultPath()
 	if !cache.SupportsCapability(probePath, learningModel, "tools") {
-		// Model not in cache or lacks tools — run a lightweight probe.
-		if sm.client != nil {
+		sm.mu.RLock()
+		cachedProbe, hasCachedProbe := sm.toolsProbeCache[learningModel]
+		sm.mu.RUnlock()
+
+		if hasCachedProbe && time.Since(cachedProbe.checkedAt) < toolsProbeCacheTTL {
+			if !cachedProbe.supported {
+				log.Printf("[sleep] Learning model %q marked unsupported for tools in probe cache, skipping reflection cycle for %v", learningModel, defaultUnsupportedToolsBackoff)
+				if sm.config().SleepModeSubagentsEnabled {
+					sm.requeueSessions(sessionsToAnalyze)
+				}
+				sm.setCooldown(defaultUnsupportedToolsBackoff)
+				return
+			}
+		} else if sm.client != nil {
 			probeCtx, probeCancel := context.WithTimeout(ctx, 30*time.Second)
 			runner := probe.NewRunner(sm.client)
 			result, err := runner.Tools(probeCtx, learningModel)
 			probeCancel()
-			if err != nil || result.Status != capabilities.Confirmed {
-				log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
-				sm.setCooldown(defaultDeferBackoff)
+			supported := err == nil && result.Status == capabilities.Confirmed
+			sm.mu.Lock()
+			if sm.toolsProbeCache == nil {
+				sm.toolsProbeCache = make(map[string]toolsProbeEntry)
+			}
+			sm.toolsProbeCache[learningModel] = toolsProbeEntry{
+				supported: supported,
+				checkedAt: time.Now(),
+			}
+			sm.mu.Unlock()
+			if !supported {
+				log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle for %v", learningModel, defaultUnsupportedToolsBackoff)
+				if sm.config().SleepModeSubagentsEnabled {
+					sm.requeueSessions(sessionsToAnalyze)
+				}
+				sm.setCooldown(defaultUnsupportedToolsBackoff)
 				return
 			}
 			_ = cache.SaveProbeRun(probePath, cache.ProbeRun{
@@ -611,8 +645,11 @@ func (sm *SleepManager) runLearningCycleForSessionsWithModel(parentCtx context.C
 				RunAt:   time.Now(),
 			})
 		} else {
-			log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle", learningModel)
-			sm.setCooldown(defaultDeferBackoff)
+			log.Printf("[sleep] Learning model %q does not support tools, skipping reflection cycle for %v", learningModel, defaultUnsupportedToolsBackoff)
+			if sm.config().SleepModeSubagentsEnabled {
+				sm.requeueSessions(sessionsToAnalyze)
+			}
+			sm.setCooldown(defaultUnsupportedToolsBackoff)
 			return
 		}
 	}

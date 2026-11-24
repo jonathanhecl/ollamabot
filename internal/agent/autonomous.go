@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -462,12 +463,24 @@ func (am *AutonomousManager) Tick(ctx context.Context) {
 			}
 		}
 
-		// If no pending tasks are left, complete the project!
+		// If no pending/in_progress tasks remain, mark failed if any failed, else completed.
 		if taskIdx == -1 {
-			proj.Status = "completed"
+			hasFailed := false
+			for _, todo := range proj.Todos {
+				if todo.Status == "failed" {
+					hasFailed = true
+					break
+				}
+			}
+			if hasFailed {
+				proj.Status = "failed"
+				log.Printf("[autonomous] Project %q marked as FAILED (no pending tasks remaining; some tasks failed)", proj.Name)
+			} else {
+				proj.Status = "completed"
+				log.Printf("[autonomous] Project %q marked as COMPLETED!", proj.Name)
+			}
 			proj.CurrentTask = ""
 			_ = am.SaveProject(proj)
-			log.Printf("[autonomous] Project %q marked as COMPLETED!", proj.Name)
 			continue
 		}
 
@@ -740,11 +753,12 @@ Task Description: %s
 	var finalHistory []ollama.Message
 	var runErr error
 	var collector *autonomousStepCollector
+	think := ShouldThink(model, am.config().OllamaThinkEnabled, cache.DefaultPath())
 	maxRunRetries := 3
 	for retry := 0; retry < maxRunRetries; retry++ {
 		collector = newAutonomousStepCollector()
 		runCtx, runCancel := SubagentContext(ctx, am.config())
-		finalHistory, runErr = a.Run(runCtx, model, messages, true, collector)
+		finalHistory, runErr = a.Run(runCtx, model, messages, think, collector)
 		runCancel()
 		if runErr == nil {
 			break
@@ -951,9 +965,18 @@ func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task 
 		return verificationResponse{Success: true, Evidence: "verification disabled"}
 	}
 
-	verifyModel := am.config().OllamaModelSubagent
-	if strings.TrimSpace(verifyModel) == "" {
-		verifyModel = am.config().OllamaDefaultModel
+	verifyCtx, cancel := SubagentContext(ctx, am.config())
+	defer cancel()
+
+	mainModel := strings.TrimSpace(am.config().OllamaDefaultModel)
+	verifyModel := strings.TrimSpace(am.config().OllamaModelSubagent)
+	if verifyModel == "" {
+		verifyModel = mainModel
+	} else if verifyModel != mainModel && mainModel != "" && am.client != nil {
+		if safe, err := am.client.CanUseAuxiliaryModel(verifyCtx, verifyModel); err != nil || !safe {
+			log.Printf("[autonomous] Skipping subagent verifier model %q (safe=%v, err=%v); falling back to main model %q", verifyModel, safe, err, mainModel)
+			verifyModel = mainModel
+		}
 	}
 	if verifyModel == "" {
 		return verificationResponse{Success: true, Evidence: "no model available for verification"}
@@ -968,6 +991,7 @@ func (am *AutonomousManager) verifyTask(ctx context.Context, proj Project, task 
 	registry.SetApprovalPolicy(tools.ApprovalPolicyAutonomous)
 	registry.SetUnattended(true)
 	a := NewAgent(am.cfgMgr, am.client, registry)
+	a.SetMaxIterations(12)
 
 	prompt := fmt.Sprintf(`You are a strict code reviewer verifying whether an autonomous task was completed correctly.
 
@@ -990,9 +1014,6 @@ Respond with a JSON object conforming to the schema:
 		{Role: "system", Content: "You are a verification agent. Inspect files and report structured JSON only."},
 		{Role: "user", Content: prompt},
 	}
-
-	verifyCtx, cancel := SubagentContext(ctx, am.config())
-	defer cancel()
 
 	finalHistory, err := a.Run(verifyCtx, verifyModel, messages, false, &dummyStreamHandler{})
 	if err != nil {

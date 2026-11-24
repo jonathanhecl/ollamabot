@@ -219,6 +219,8 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 	todoTextOnlyRetries := 0
 	completedCleanly := false
 	contextOptimizationFailed := false
+	malformedXMLRetries := 0
+	const maxMalformedXMLRetries = 3
 	lengthRetries := 0
 	toolsExecutedThisTurn := 0
 
@@ -485,8 +487,12 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 					if handler != nil {
 						handler.OnContextOptimizationEnd(tokensAfter, percentAfter, durationSeconds)
 					}
-				} else if err != nil {
-					log.Printf("[Agent Run] Context optimization failed: %v", err)
+				} else {
+					if err != nil {
+						log.Printf("[Agent Run] Context optimization failed: %v", err)
+					} else {
+						log.Printf("[Agent Run] Context optimization returned empty summary; skipping further retries this turn")
+					}
 					contextOptimizationFailed = true
 				}
 			} else {
@@ -669,15 +675,22 @@ func (a *Agent) Run(ctx context.Context, model string, messages []ollama.Message
 				// tool call on the next iteration and re-issue it endlessly.
 				assistantText = StripToolCallEnvelopes(assistantText)
 			} else if errMsg, malformed := detectMalformedXMLFallback(assistantText); malformed {
-				messages = append(messages, ollama.Message{
-					Role:    "system",
-					Content: errMsg,
-				})
-				if handler != nil {
-					handler.OnContent("\n\n" + errMsg)
-					handler.OnDone(lastChunk)
+				malformedXMLRetries++
+				if malformedXMLRetries <= maxMalformedXMLRetries {
+					messages = append(messages, ollama.Message{
+						Role:    "assistant",
+						Content: assistantText,
+					}, ollama.Message{
+						Role:    "system",
+						Content: errMsg,
+					})
+					if handler != nil {
+						handler.OnContent("\n\n" + errMsg)
+						handler.OnDone(lastChunk)
+					}
+					continue
 				}
-				continue
+				log.Printf("[Agent Run] Malformed XML tool call retries exhausted (%d); terminating turn", maxMalformedXMLRetries)
 			}
 		}
 

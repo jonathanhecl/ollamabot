@@ -486,3 +486,83 @@ func TestGoalManager_ResumeActiveGoals_RestartLimit(t *testing.T) {
 		t.Errorf("expected no active loop for session that exceeded restart limit")
 	}
 }
+
+func TestGoalManager_StopsAfterConsecutiveTimeoutsAndRespectsThinkConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	sessionsPath := filepath.Join(tempDir, "sessions")
+	memoryPath := filepath.Join(tempDir, "memory")
+
+	store := sessions.NewStore(sessionsPath)
+	msgRaw, _ := json.Marshal(sessions.RawMsg{Role: "user", Content: "Work on goal"})
+	if err := store.Save(sessions.Session{
+		ID:            "goal_timeout_sess",
+		Title:         "Timeout Goal",
+		GoalObjective: "Never finishes",
+		GoalStatus:    "active",
+		Messages:      []json.RawMessage{msgRaw},
+	}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	var mu sync.Mutex
+	chatCalls := 0
+	sawThinkTrue := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			var req ollama.ChatRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			mu.Lock()
+			chatCalls++
+			if b, ok := req.Think.(bool); ok && b {
+				sawThinkTrue = true
+			}
+			mu.Unlock()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(5 * time.Second):
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		Workspace:          tempDir,
+		SessionsPath:       sessionsPath,
+		MemoryPath:         memoryPath,
+		OllamaDefaultModel: "test-model",
+		OllamaThinkEnabled: false,
+	}
+
+	goalMgr := NewGoalManager(config.NewManager(cfg), ollama.NewClient(server.URL))
+	goalMgr.runTimeout = 40 * time.Millisecond
+	goalMgr.cycleDelay = 5 * time.Millisecond
+
+	goalMgr.runGoalLoop(context.Background(), "goal_timeout_sess", "Never finishes")
+
+	sess, err := store.Get("goal_timeout_sess")
+	if err != nil {
+		t.Fatalf("reload session: %v", err)
+	}
+	if sess.GoalStatus != "failed" {
+		t.Fatalf("expected goal status %q after consecutive timeouts, got %q", "failed", sess.GoalStatus)
+	}
+	if !strings.Contains(sess.GoalReasoning, "consecutive execution timeouts") {
+		t.Fatalf("expected timeout reasoning, got %q", sess.GoalReasoning)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if chatCalls != 3 {
+		t.Fatalf("expected exactly 3 consecutive timeout cycles (not 20), got %d", chatCalls)
+	}
+	if sawThinkTrue {
+		t.Fatalf("expected think=false when OllamaThinkEnabled=false")
+	}
+}

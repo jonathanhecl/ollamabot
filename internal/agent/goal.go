@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jonathanhecl/ollamabot/internal/cache"
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/memory"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -29,6 +30,8 @@ type GoalManager struct {
 	activeLoops     map[string]context.CancelFunc
 	notifiers       map[string]func(message string)
 	notifiersMu     sync.RWMutex
+	runTimeout      time.Duration // optional override for SubagentContext in tests
+	cycleDelay      time.Duration // optional override for inter-cycle delay in tests
 }
 
 func (g *GoalManager) config() config.Config {
@@ -308,7 +311,12 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 	log.Printf("[GoalManager] Starting background loop for session: %s, goal: %q", sessionID, objective)
 
 	maxCycles := 20
-	cycleDelay := 5 * time.Second
+	const maxConsecutiveGoalTimeouts = 3
+	consecutiveTimeouts := 0
+	cycleDelay := g.cycleDelay
+	if cycleDelay <= 0 {
+		cycleDelay = 5 * time.Second
+	}
 
 	for cycle := 1; cycle <= maxCycles; cycle++ {
 		select {
@@ -414,13 +422,20 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 		var finalHistory []ollama.Message
 		var runErr error
 		var recorder *sessions.Recorder
+		think := ShouldThink(g.config().OllamaDefaultModel, g.config().OllamaThinkEnabled, cache.DefaultPath())
 		maxRunRetries := 3
 		for retry := 0; retry < maxRunRetries; retry++ {
 			recorder = sessions.NewRecorder(g.sessionStore, sessionID, rawToRawMsgs(sess.Messages), g.config().OllamaDefaultModel, "goal")
 			handler := NewRecorderStreamHandler(recorder)
-			runCtx, runCancel := SubagentContext(ctx, g.config())
+			var runCtx context.Context
+			var runCancel context.CancelFunc
+			if g.runTimeout > 0 {
+				runCtx, runCancel = context.WithTimeout(ctx, g.runTimeout)
+			} else {
+				runCtx, runCancel = SubagentContext(ctx, g.config())
+			}
 			sessions.RegisterCancel(sessionID, runCancel)
-			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, true, handler)
+			finalHistory, runErr = a.Run(runCtx, g.config().OllamaDefaultModel, ollamaMessages, think, handler)
 			runCancel()
 			sessions.UnregisterCancel(sessionID)
 			if runErr == nil {
@@ -465,7 +480,28 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 
 		if runErr != nil {
 			if errors.Is(runErr, context.DeadlineExceeded) {
-				log.Printf("[GoalManager] Cycle %d timed out after %d minutes", cycle, g.config().SubagentTimeoutMinutes)
+				consecutiveTimeouts++
+				log.Printf("[GoalManager] Cycle %d timed out after %d minutes (%d/%d consecutive timeouts)", cycle, g.config().SubagentTimeoutMinutes, consecutiveTimeouts, maxConsecutiveGoalTimeouts)
+				if consecutiveTimeouts >= maxConsecutiveGoalTimeouts {
+					timeoutReason := fmt.Sprintf("Goal stopped after %d consecutive execution timeouts (%d minutes each).", maxConsecutiveGoalTimeouts, g.config().SubagentTimeoutMinutes)
+					if latestSess, loadErr := g.sessionStore.Get(sessionID); loadErr == nil {
+						latestSess.GoalStatus = "failed"
+						latestSess.GoalReasoning = timeoutReason
+						failureMsg := sessions.RawMsg{
+							Role:      "system",
+							Content:   "❌ *Goal Failed:* " + timeoutReason,
+							Timestamp: time.Now().Format(time.RFC3339),
+						}
+						rawFailMsg, _ := json.Marshal(failureMsg)
+						latestSess.Messages = append(latestSess.Messages, rawFailMsg)
+						_ = g.sessionStore.Save(latestSess)
+					}
+					g.notify(sessionID, "❌ "+timeoutReason)
+					clearCycleFlag()
+					sessions.MarkIdle(sessionID)
+					releaseSlot()
+					return
+				}
 				g.notify(sessionID, fmt.Sprintf("⏱️ Goal cycle %d timed out after %d minutes, continuing...", cycle, g.config().SubagentTimeoutMinutes))
 				clearCycleFlag()
 				sessions.MarkIdle(sessionID)
@@ -485,6 +521,7 @@ func (g *GoalManager) runGoalLoop(ctx context.Context, sessionID string, objecti
 				return
 			}
 		}
+		consecutiveTimeouts = 0
 
 		// Sync final history with session (including tool steps in the timeline).
 		if recorder != nil {
@@ -604,9 +641,18 @@ type progressEvaluation struct {
 }
 
 func (g *GoalManager) evaluateProgress(ctx context.Context, objective string, messages []json.RawMessage) (bool, string, error) {
-	modelToUse := g.config().OllamaModelSubagent
-	if strings.TrimSpace(modelToUse) == "" {
-		modelToUse = g.config().OllamaDefaultModel
+	evalCtx, cancel := SubagentContext(ctx, g.config())
+	defer cancel()
+
+	mainModel := strings.TrimSpace(g.config().OllamaDefaultModel)
+	modelToUse := strings.TrimSpace(g.config().OllamaModelSubagent)
+	if modelToUse == "" {
+		modelToUse = mainModel
+	} else if modelToUse != mainModel && mainModel != "" && g.client != nil {
+		if safe, err := g.client.CanUseAuxiliaryModel(evalCtx, modelToUse); err != nil || !safe {
+			log.Printf("[GoalManager] Skipping subagent evaluator model %q (safe=%v, err=%v); falling back to main model %q", modelToUse, safe, err, mainModel)
+			modelToUse = mainModel
+		}
 	}
 
 	var historyText strings.Builder
@@ -639,7 +685,7 @@ Respond with a JSON object conforming to the schema.`, objective)
 		Format: progressEvaluationSchema, // Enforce structured output from Ollama with schema
 	}
 
-	resp, err := g.client.Chat(ctx, req)
+	resp, err := g.client.Chat(evalCtx, req)
 	if err != nil {
 		return false, "", err
 	}

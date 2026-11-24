@@ -375,3 +375,33 @@ func TestWriteAutonomousStep(t *testing.T) {
 		t.Fatalf("expected event content, got:\n%s", eventSB.String())
 	}
 }
+
+func TestAutonomousManager_TickMarksProjectFailedWhenTodosFailed(t *testing.T) {
+	workspace := t.TempDir()
+	cfg := config.Config{
+		Workspace:          workspace,
+		OllamaDefaultModel: "test-model",
+	}
+	am := NewAutonomousManager(config.NewManager(cfg), ollama.NewClient("http://127.0.0.1:1"), nil)
+
+	helperSaveProject(t, workspace, "proj-failed", Project{
+		ID:     "proj-failed",
+		Name:   "Failed Project",
+		Goal:   "Build feature",
+		Status: "active",
+		Todos: []ProjectTodo{
+			{ID: "t1", Content: "Step 1", Status: "completed"},
+			{ID: "t2", Content: "Step 2", Status: "failed", Result: "build broke"},
+		},
+	})
+
+	am.Tick(context.Background())
+
+	proj, err := am.LoadProject("proj-failed")
+	if err != nil {
+		t.Fatalf("load project: %v", err)
+	}
+	if proj.Status != "failed" {
+		t.Fatalf("expected project status %q when todos failed, got %q", "failed", proj.Status)
+	}
+}

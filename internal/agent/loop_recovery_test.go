@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jonathanhecl/ollamabot/internal/config"
 	"github.com/jonathanhecl/ollamabot/internal/ollama"
@@ -236,5 +237,134 @@ func TestAgentUnattendedAbortsExcessiveNetworkCalls(t *testing.T) {
 	}
 	if calls != 10 {
 		t.Fatalf("expected abort at 10 unattended network calls, got %d", calls)
+	}
+}
+
+func TestContextOptimizationEmptySummaryDoesNotLoop(t *testing.T) {
+	summaryCalls := 0
+	chatCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(1000)},
+			})
+		case "/api/chat":
+			var req ollama.ChatRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			// Summarization request is non-streaming with "Summarize this conversation".
+			isSummary := false
+			for _, m := range req.Messages {
+				if strings.Contains(m.Content, "Summarize this conversation") {
+					isSummary = true
+					break
+				}
+			}
+			if isSummary {
+				summaryCalls++
+				_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+					Done:    true,
+					Message: ollama.Message{Role: "assistant", Content: "   "},
+				})
+				return
+			}
+			chatCalls++
+			if chatCalls < 3 {
+				args, _ := json.Marshal(map[string]any{"path": "."})
+				_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+					Done: true,
+					Message: ollama.Message{
+						Role: "assistant",
+						ToolCalls: []ollama.ToolCall{{
+							Type:     "function",
+							Function: ollama.ToolFunction{Name: "list_files", Arguments: args},
+						}},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done:    true,
+				Message: ollama.Message{Role: "assistant", Content: "Done."},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{Workspace: t.TempDir()}
+	client := ollama.NewClient(server.URL)
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	largeContent := strings.Repeat("abcd ", 800)
+	msgs := []ollama.Message{
+		{Role: "user", Content: "Previous work: " + largeContent},
+		{Role: "assistant", Content: "Ack: " + largeContent},
+		{Role: "user", Content: "Continue"},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := a.Run(ctx, "test-model", msgs, false, nil)
+	if err != nil {
+		t.Fatalf("a.Run failed: %v", err)
+	}
+	if summaryCalls != 1 {
+		t.Fatalf("expected exactly 1 summarization attempt after empty summary, got %d", summaryCalls)
+	}
+}
+
+func TestMalformedXMLFallbackStopsAfterMaxRetries(t *testing.T) {
+	chatCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/show":
+			_ = json.NewEncoder(w).Encode(ollama.ShowResponse{
+				ModelInfo: map[string]any{"general.context_length": float64(8192)},
+			})
+		case "/api/chat":
+			_, _ = io.Copy(io.Discard, r.Body)
+			chatCalls++
+			_ = json.NewEncoder(w).Encode(ollama.ChatResponse{
+				Done: true,
+				Message: ollama.Message{
+					Role:    "assistant",
+					Content: `<invoke name="list_files">broken unclosed xml`,
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{Workspace: t.TempDir()}
+	client := ollama.NewClient(server.URL)
+	registry := tools.NewRegistry(false, cfg.Workspace, nil, client, "", tools.SearchConfig{})
+	a := NewAgent(config.NewManager(cfg), client, registry)
+
+	history, err := a.Run(context.Background(), "test-model", []ollama.Message{{Role: "user", Content: "List files"}}, false, nil)
+	if err != nil {
+		t.Fatalf("a.Run failed: %v", err)
+	}
+	// Initial attempt + 3 retries = 4 calls total, NOT 50.
+	if chatCalls != 4 {
+		t.Fatalf("expected 4 chat calls (1 + 3 malformed XML retries), got %d", chatCalls)
+	}
+	assistantCount := 0
+	for _, msg := range history {
+		if msg.Role == "assistant" {
+			assistantCount++
+		}
+	}
+	if assistantCount < 2 {
+		t.Fatalf("expected malformed assistant outputs to be preserved in history, got %d assistant messages", assistantCount)
 	}
 }
